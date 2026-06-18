@@ -1,14 +1,14 @@
-# Ralph
+# Ralph Loop
 
 Harness engineering for autonomous issue execution via coding agents.
 
-Ralph reads issues from a target repo's `.scratch/` directory, resolves intra-repo dependencies, spins up git worktrees, and dispatches one Copilot agent per issue in parallel waves.
+Ralph Loop reads issue files from a target repo's `.scratch/` directory, resolves intra-repo dependencies, spins up isolated git worktrees, and dispatches one GitHub Copilot agent per issue in parallel waves. Each wave blocks until all issues in it are merged, then the next wave begins.
 
 ## Prerequisites
 
-- `copilot` CLI (GitHub Copilot CLI agent)
+- `copilot` CLI (GitHub Copilot agent)
 - Git 2.38+ (worktree support)
-- [mattpocock/skills](https://github.com/mattpocock/skills) installed at user level:
+- [mattpocock/skills](https://github.com/mattpocock/skills) installed at user level (provides the `/tdd` skill):
   ```bash
   npx skills@latest add mattpocock/skills
   ```
@@ -17,18 +17,61 @@ Ralph reads issues from a target repo's `.scratch/` directory, resolves intra-re
 
 ```bash
 # Validate a target repo before running
-./validate.sh /path/to/target-repo
+./src/validate.sh /path/to/target-repo
 
-# Run all issues from a target repo's .scratch directory
-./parallel.sh /path/to/target-repo/.scratch
+# Optionally specify a custom issues directory
+./src/validate.sh /path/to/target-repo /path/to/issues-dir
 
-# Run a single issue
-./once.sh /path/to/target-repo/.scratch/01-my-issue.md
+# Run all issues from a .scratch directory in dependency-ordered waves
+./src/parallel.sh /path/to/target-repo/.scratch
+
+# Run a single issue (auto-detects git root from the file path)
+./src/once.sh /path/to/target-repo/.scratch/01-my-issue.md
 ```
 
-## Design Principles
+## Issue format
 
-1. **Target repos stay agnostic** — Ralph never modifies repo structure. It reads `.scratch/` for issues and `CLAUDE.md` for project context.
-2. **Single-repo scope** — Ralph handles intra-repo dependencies only. Cross-repo sequencing is the user's job.
-3. **Skills as references** — Ralph's prompt invokes `/tdd` by name. Skills must be installed at user level, not bundled.
-4. **Worktree isolation** — Each issue runs in its own git worktree. Parallel agents can't conflict.
+Issues are Markdown files inside the target repo's `.scratch/` directory:
+
+```markdown
+# 01 — Add user authentication
+
+Status: not-started
+
+Brief description of the task.
+
+## Acceptance criteria
+- [ ] Users can sign in with email/password
+- [ ] Invalid credentials return a 401
+
+## Blocked by
+- #00 (database schema)
+```
+
+**Status values:** `not-started` → `ready-for-agent` → `in-progress` → `done`
+
+`parallel.sh` sets `Status: done` automatically after a successful merge. Do not set it manually.
+
+**Dependencies:** list blockers in a `## Blocked by` section using `#N` numeric references (matched to `N-*.md` files) or bare filenames. An issue runs only when all its blockers are `done`.
+
+## PRD support
+
+If your issues live inside a subdirectory (e.g. `.scratch/phase-1/issues/`), place a `PRD.md` one level above the issues directory. Both `once.sh` and `parallel.sh` automatically inject it as design context into each agent invocation.
+
+## Failure recovery
+
+Failed worktrees are preserved at `<repo>/.worktrees/failed/<slug>` for inspection. Active worktrees live at `<repo>/.worktrees/active/`. Merge conflicts also move the worktree to `failed/` rather than corrupting the branch.
+
+## Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `COPILOT_MODEL` | `gpt-5.3-codex` | Model passed to `copilot --model` |
+| `RALPH_PROTECTED_BRANCHES` | `main master` | Space-separated branches Ralph refuses to run on |
+
+## Design principles
+
+1. **Target repos stay agnostic** — Ralph never modifies target repo structure. It reads `.scratch/` for issues and `CLAUDE.md` for project context.
+2. **Single-repo scope** — Ralph handles intra-repo dependencies only. Cross-repo sequencing is the user's responsibility.
+3. **Skills as references** — Ralph's prompt invokes `/tdd` by name. Skills must be installed at user level, not bundled into this repo.
+4. **Worktree isolation** — Each issue runs in its own git worktree. Parallel agents are merged sequentially to avoid conflicts.
