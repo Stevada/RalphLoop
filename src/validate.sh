@@ -8,12 +8,42 @@ if [ -z "$1" ]; then
   echo "Usage: $0 <target-repo-path> [issues-directory]"
   echo ""
   echo "Validates that a target repo is ready for Ralph to execute issues."
-  echo "If issues-directory is omitted, defaults to <target-repo>/.scratch"
+  echo "If issues-directory is omitted, auto-discovers under <target-repo>/.scratch:"
+  echo "  - Flat:   .scratch/*.md"
+  echo "  - Nested: .scratch/<phase>/issues/*.md  (e.g. .scratch/refine_data_flow/issues)"
   exit 1
 fi
 
 TARGET_REPO="$1"
-ISSUES_DIR="${2:-$TARGET_REPO/.scratch}"
+ISSUES_DIR="${2:-}"
+
+# Auto-discover issues directory if not explicitly provided
+if [ -z "$ISSUES_DIR" ]; then
+  SCRATCH_DIR="$TARGET_REPO/.scratch"
+  if [ -d "$SCRATCH_DIR" ]; then
+    flat_count=$(find "$SCRATCH_DIR" -maxdepth 1 -name "*.md" 2>/dev/null | wc -l)
+    if [ "$flat_count" -gt 0 ]; then
+      ISSUES_DIR="$SCRATCH_DIR"
+    else
+      # Look for nested .scratch/<phase>/issues/ directories
+      mapfile -t nested_dirs < <(find "$SCRATCH_DIR" -mindepth 2 -maxdepth 2 -type d -name "issues" 2>/dev/null | sort)
+      if [ "${#nested_dirs[@]}" -eq 1 ]; then
+        ISSUES_DIR="${nested_dirs[0]}"
+        echo "(Auto-detected issues directory: $ISSUES_DIR)"
+      elif [ "${#nested_dirs[@]}" -gt 1 ]; then
+        echo "Multiple issue directories found under $SCRATCH_DIR. Specify one explicitly:"
+        printf '  %s\n' "${nested_dirs[@]}"
+        echo ""
+        echo "Usage: $0 $TARGET_REPO <issues-directory>"
+        exit 1
+      else
+        ISSUES_DIR="$SCRATCH_DIR"
+      fi
+    fi
+  else
+    ISSUES_DIR="$SCRATCH_DIR"
+  fi
+fi
 
 ERRORS=0
 WARNINGS=0
@@ -106,25 +136,38 @@ if [ -d "$ISSUES_DIR" ]; then
     [ -f "$issue_file" ] || continue
     slug=$(basename "$issue_file")
 
-    # Extract blocked-by references (simplified: look for #NN patterns)
-    while IFS= read -r ref; do
-      ref=$(echo "$ref" | sed 's/^[[:space:]-]*//' | tr -d '\r')
-      [ -z "$ref" ] && continue
-      [[ "$ref" == None* ]] && continue
-      [[ "$ref" == "can start"* ]] && continue
+    # Each non-None bullet under "## Blocked by" is a dependency.
+    # Match against sibling issue files by numeric prefix.
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      [[ "$line" == None* ]] && continue
+      [[ "$line" == "can start"* ]] && continue
 
-      # Strip parenthetical notes
-      ref=$(echo "$ref" | sed 's/[[:space:]]*(.*//') 
-
-      # Try to resolve numeric references
-      if [[ "$ref" =~ ^#?([0-9]+) ]]; then
-        num="${BASH_REMATCH[1]}"
-        match=$(find "$ISSUES_DIR" -maxdepth 1 -name "${num}-*.md" 2>/dev/null | head -1)
-        if [ -z "$match" ]; then
-          warn "$slug: Blocked-by reference '#$num' does not resolve to a file"
+      # Direct filename reference
+      if [[ "$line" =~ \.md$ ]]; then
+        candidate=$(echo "$line" | sed 's/^[[:space:]]*//')
+        if [ ! -f "$ISSUES_DIR/$candidate" ]; then
+          warn "$slug: Blocked-by filename '$candidate' does not exist"
         fi
+        continue
       fi
-    done < <(awk '/^## Blocked by/{found=1; next} found && /^- /{print substr($0,3)} found && /^#/{exit}' "$issue_file" 2>/dev/null)
+
+      # Try to match against sibling numeric prefixes
+      matched=false
+      for sibling in "$ISSUES_DIR"/*.md; do
+        [ "$sibling" = "$issue_file" ] && continue
+        [ -f "$sibling" ] || continue
+        prefix=$(basename "$sibling" | grep -oP '^\d+')
+        [ -z "$prefix" ] && continue
+        if [[ "$line" =~ (^|[^0-9])${prefix}([^0-9]|$) ]]; then
+          matched=true
+          break
+        fi
+      done
+      if [ "$matched" = false ]; then
+        warn "$slug: Blocked-by line '$line' does not match any sibling issue"
+      fi
+    done < <(awk '/^## Blocked by/{found=1; next} found && /^- /{print substr($0,3)} found && /^#/{exit}' "$issue_file" 2>/dev/null | tr -d '\r')
   done
 
   ok "Dependency references checked"
@@ -143,19 +186,24 @@ if [ -d "$ISSUES_DIR" ]; then
     [ -f "$issue_file" ] || continue
     slug=$(basename "$issue_file" .md)
     dep_slugs=""
-    while IFS= read -r ref; do
-      ref=$(echo "$ref" | sed 's/^[[:space:]-]*//' | tr -d '\r' | sed 's/[[:space:]]*(.*//') 
-      [[ "$ref" == None* ]] && continue
-      [[ "$ref" == "can start"* ]] && continue
-      [ -z "$ref" ] && continue
-      if [[ "$ref" =~ ^#?([0-9]+) ]]; then
-        num="${BASH_REMATCH[1]}"
-        match=$(find "$ISSUES_DIR" -maxdepth 1 -name "${num}-*.md" 2>/dev/null | head -1)
-        if [ -n "$match" ]; then
-          dep_slugs="$dep_slugs $(basename "$match" .md)"
+
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      [[ "$line" == None* ]] && continue
+      [[ "$line" == "can start"* ]] && continue
+
+      # Match against sibling numeric prefixes
+      for sibling in "$ISSUES_DIR"/*.md; do
+        [ "$sibling" = "$issue_file" ] && continue
+        [ -f "$sibling" ] || continue
+        prefix=$(basename "$sibling" | grep -oP '^\d+')
+        [ -z "$prefix" ] && continue
+        if [[ "$line" =~ (^|[^0-9])${prefix}([^0-9]|$) ]]; then
+          dep_slugs="$dep_slugs $(basename "$sibling" .md)"
         fi
-      fi
-    done < <(awk '/^## Blocked by/{found=1; next} found && /^- /{print substr($0,3)} found && /^#/{exit}' "$issue_file" 2>/dev/null)
+      done
+    done < <(awk '/^## Blocked by/{found=1; next} found && /^- /{print substr($0,3)} found && /^#/{exit}' "$issue_file" 2>/dev/null | tr -d '\r')
+
     DEPS["$slug"]="$dep_slugs"
   done
 

@@ -10,7 +10,7 @@ if [ -z "$1" ]; then
   echo "Usage: $0 <issues-directory>"
   echo ""
   echo "Run issues in parallel waves, respecting intra-repo dependencies."
-  echo "Example: $0 /path/to/repo/.scratch"
+  echo "Example: $0 /path/to/repo/.scratch/refine_data_flow/issues"
   exit 1
 fi
 
@@ -106,35 +106,35 @@ get_depends_on() {
   local f="$1"
   local issue_dir
   issue_dir=$(dirname "$f")
-  local refs=()
 
-  # Section style: "## Blocked by" followed by "- ref" bullet lines
-  while IFS= read -r ref; do
-    [ -z "$ref" ] && continue
-    refs+=("$ref")
-  done < <(awk '/^## Blocked by/{found=1; next} found && /^- /{print substr($0,3)} found && /^#/{exit}' "$f" 2>/dev/null | tr -d '\r')
+  # Extract bullet lines under "## Blocked by" (stop at next heading)
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    [[ "$line" == None* ]] && continue
+    [[ "$line" == "can start"* ]] && continue
 
-  # Resolve each reference
-  for ref in "${refs[@]}"; do
-    ref=$(echo "$ref" | sed 's/^[[:space:]-]*//' | tr -d '\r')
-    [ -z "$ref" ] && continue
-    [[ "$ref" == None* ]] && continue
-    [[ "$ref" == "can start"* ]] && continue
-
-    # Strip parenthetical notes
-    ref=$(echo "$ref" | sed 's/[[:space:]]*(.*//') 
-
-    if [[ "$ref" =~ ^#?([0-9]+) ]]; then
-      # Numeric reference — find matching file by prefix
-      local num="${BASH_REMATCH[1]}"
-      local match
-      match=$(find "$issue_dir" -maxdepth 1 -name "${num}-*.md" 2>/dev/null | head -1)
-      [ -n "$match" ] && echo "$match"
-    elif [[ "$ref" =~ \.md$ ]]; then
-      # Filename reference
-      echo "$issue_dir/$ref"
+    # Direct filename reference (e.g. "02-remove-payload-tools.md")
+    if [[ "$line" =~ \.md$ ]]; then
+      local candidate="$issue_dir/$(echo "$line" | sed 's/^[[:space:]]*//')"
+      [ -f "$candidate" ] && echo "$candidate"
+      continue
     fi
-  done
+
+    # Match against sibling issue files: if the sibling's numeric prefix
+    # appears in the line as a standalone number, it's a dependency.
+    # E.g. "PDA #02 (payload tools removed)" matches "02-remove-payload-tools.md"
+    for sibling in "$issue_dir"/*.md; do
+      [ "$sibling" = "$f" ] && continue
+      [ -f "$sibling" ] || continue
+      local prefix
+      prefix=$(basename "$sibling" | grep -oP '^\d+')
+      [ -z "$prefix" ] && continue
+      # Word-boundary match: prefix must not be part of a larger number
+      if [[ "$line" =~ (^|[^0-9])${prefix}([^0-9]|$) ]]; then
+        echo "$sibling"
+      fi
+    done
+  done < <(awk '/^## Blocked by/{found=1; next} found && /^- /{print substr($0,3)} found && /^#/{exit}' "$f" 2>/dev/null | tr -d '\r')
 }
 
 is_ready() {
@@ -303,7 +303,7 @@ $PROMPT" \
       echo "  $slug: merged $NEW_COMMITS commit(s)"
       # Mark issue as done
       sed -i "s/^Status:.*/Status: done/" "$issue_file"
-      git add "$issue_file"
+      git add "$issue_file" 2>/dev/null || true
       git commit -m "ralph: mark $slug as done" --no-verify 2>/dev/null || true
     else
       echo "  $slug: MERGE CONFLICT — aborting merge, preserving worktree"

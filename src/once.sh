@@ -10,7 +10,7 @@ if [ -z "$1" ]; then
   echo "Usage: $0 <issue-file>"
   echo ""
   echo "Run a single issue in a worktree, then merge back."
-  echo "Example: $0 /path/to/repo/.scratch/03-my-issue.md"
+  echo "Example: $0 /path/to/repo/.scratch/refine_data_flow/issues/03-my-issue.md"
   exit 1
 fi
 
