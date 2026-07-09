@@ -7,8 +7,11 @@
 
 ## Scripts (`src/`)
 - `prompt.md` — Fixed agent prompt injected into every Copilot invocation (requires `/tdd` skill)
+- `prompt-codex.md` — Fixed agent prompt injected into every Codex invocation (requires `/tdd` skill)
 - `once.sh` — Create a worktree, run one issue, merge back; walks up the filesystem to find the git root automatically
 - `parallel.sh` — Wave-based parallel execution; merges each wave sequentially and marks issues `done`
+- `once-codex.sh` — Codex CLI variant of `once.sh`
+- `parallel-codex.sh` — Codex CLI variant of `parallel.sh`
 - `validate.sh` — Pre-flight checks: git state, branch protection, issue format, dependency graph, skills, pre-commit hooks
 
 ## Issue format
@@ -20,7 +23,7 @@
 - `parallel.sh` sets `Status: done` automatically after a successful merge; do not set it manually
 
 ## Target repo requirements
-- Must have `CLAUDE.md` at root (agent reads it for project context)
+- Copilot runs require `CLAUDE.md` at root; Codex runs prefer `AGENTS.md` and fall back to `CLAUDE.md`
 - Must be on a non-protected branch before running (default protected: `main`, `master`)
 - Worktrees are created at `<repo>/.worktrees/active/` and failures preserved at `<repo>/.worktrees/failed/`
 
@@ -29,4 +32,9 @@ Place a `PRD.md` one level above the `issues/` dir (i.e. `.scratch/<phase>/PRD.m
 
 ## Environment variables
 - `COPILOT_MODEL` — model passed to `copilot --model` (default: `gpt-5.3-codex`)
+- `CODEX_MODEL` — model passed to `codex exec --model` (default: `gpt-5.3-codex`)
+- `CODEX_SANDBOX` — sandbox passed to `codex exec --sandbox` (default: `workspace-write`)
+- `CODEX_APPROVAL` — approval policy passed to `codex exec --ask-for-approval` (default: `never`)
+- `RALPH_AGENT` — validation target, either `copilot` or `codex` (default: `copilot`)
+- `RALPH_CODEX_UNSANDBOXED` — set to `1` to pass `--dangerously-bypass-approvals-and-sandbox` to Codex
 - `RALPH_PROTECTED_BRANCHES` — space-separated list of branches to refuse running on (default: `main master`)

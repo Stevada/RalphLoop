@@ -8,6 +8,7 @@ if [ -z "$1" ]; then
   echo "Usage: $0 <target-repo-path> [issues-directory]"
   echo ""
   echo "Validates that a target repo is ready for Ralph to execute issues."
+  echo "Set RALPH_AGENT=codex to validate Codex CLI requirements."
   echo "If issues-directory is omitted, auto-discovers under <target-repo>/.scratch:"
   echo "  - Flat:   .scratch/*.md"
   echo "  - Nested: .scratch/<phase>/issues/*.md  (e.g. .scratch/refine_data_flow/issues)"
@@ -47,6 +48,7 @@ fi
 
 ERRORS=0
 WARNINGS=0
+AGENT="${RALPH_AGENT:-copilot}"
 
 error() { echo "  ERROR: $1"; ERRORS=$((ERRORS + 1)); }
 warn()  { echo "  WARN:  $1"; WARNINGS=$((WARNINGS + 1)); }
@@ -55,6 +57,7 @@ ok()    { echo "  OK:    $1"; }
 echo "=== Ralph Pre-flight Validation ==="
 echo "Target: $TARGET_REPO"
 echo "Issues: $ISSUES_DIR"
+echo "Agent:  $AGENT"
 echo ""
 
 # ─── 1. Target repo basics ───────────────────────────────────────────────────
@@ -67,14 +70,24 @@ else
   ok "Git repository found"
 fi
 
-if [ ! -f "$TARGET_REPO/CLAUDE.md" ]; then
-  error "Missing CLAUDE.md at repo root (required for agent context)"
+if [ "$AGENT" = "codex" ]; then
+  if [ -f "$TARGET_REPO/AGENTS.md" ]; then
+    ok "AGENTS.md found"
+  elif [ -f "$TARGET_REPO/CLAUDE.md" ]; then
+    ok "CLAUDE.md found (Codex fallback context)"
+  else
+    error "Missing AGENTS.md or CLAUDE.md at repo root (required for agent context)"
+  fi
 else
-  ok "CLAUDE.md found"
+  if [ ! -f "$TARGET_REPO/CLAUDE.md" ]; then
+    error "Missing CLAUDE.md at repo root (required for agent context)"
+  else
+    ok "CLAUDE.md found"
+  fi
 fi
 
 # Check not on a protected branch
-CURRENT_BRANCH=$(cd "$TARGET_REPO" && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "DETACHED")
+CURRENT_BRANCH=$(cd "$TARGET_REPO" && git symbolic-ref --quiet --short HEAD 2>/dev/null || echo "DETACHED")
 PROTECTED_BRANCHES="${RALPH_PROTECTED_BRANCHES:-main master}"
 for protected in $PROTECTED_BRANCHES; do
   if [ "$CURRENT_BRANCH" = "$protected" ]; then
@@ -259,25 +272,47 @@ fi
 
 echo ""
 
-# ─── 6. Skills check ─────────────────────────────────────────────────────────
+# ─── 6. Agent CLI ────────────────────────────────────────────────────────────
 
-echo "6. Required skills"
+echo "6. Agent CLI"
+
+if [ "$AGENT" = "codex" ]; then
+  if command -v codex &>/dev/null; then
+    ok "codex CLI found"
+  else
+    error "codex CLI not found on PATH"
+  fi
+else
+  if command -v copilot &>/dev/null; then
+    ok "copilot CLI found"
+  else
+    error "copilot CLI not found on PATH"
+  fi
+fi
+
+echo ""
+
+# ─── 7. Skills check ─────────────────────────────────────────────────────────
+
+echo "7. Required skills"
 
 REQUIRED_SKILLS="tdd"
 for skill in $REQUIRED_SKILLS; do
   if [ -f "$HOME/.agents/skills/$skill/SKILL.md" ]; then
     ok "Skill '$skill' installed"
+  elif [ -f "$HOME/.codex/skills/$skill/SKILL.md" ]; then
+    ok "Skill '$skill' installed"
   else
-    warn "Skill '$skill' not found at ~/.agents/skills/$skill/SKILL.md"
+    warn "Skill '$skill' not found at ~/.agents/skills/$skill/SKILL.md or ~/.codex/skills/$skill/SKILL.md"
     warn "  Install via: npx skills@latest add mattpocock/skills"
   fi
 done
 
 echo ""
 
-# ─── 7. Pre-commit hooks ─────────────────────────────────────────────────────
+# ─── 8. Pre-commit hooks ─────────────────────────────────────────────────────
 
-echo "7. Pre-commit hooks"
+echo "8. Pre-commit hooks"
 
 if [ -f "$TARGET_REPO/.pre-commit-config.yaml" ] || [ -d "$TARGET_REPO/.git/hooks" ]; then
   if [ -f "$TARGET_REPO/.pre-commit-config.yaml" ]; then

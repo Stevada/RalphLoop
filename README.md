@@ -2,11 +2,11 @@
 
 Harness engineering for autonomous issue execution via coding agents.
 
-Ralph Loop reads issue files from a target repo's `.scratch/` directory, resolves intra-repo dependencies, spins up isolated git worktrees, and dispatches one GitHub Copilot agent per issue in parallel waves. Each wave blocks until all issues in it are merged, then the next wave begins.
+Ralph Loop reads issue files from a target repo's `.scratch/` directory, resolves intra-repo dependencies, spins up isolated git worktrees, and dispatches one coding agent per issue in parallel waves. Each wave blocks until all issues in it are merged, then the next wave begins.
 
 ## Prerequisites
 
-- `copilot` CLI (GitHub Copilot agent)
+- `copilot` CLI for the original GitHub Copilot scripts, or `codex` CLI for the Codex scripts
 - Git 2.38+ (worktree support)
 - [mattpocock/skills](https://github.com/mattpocock/skills) installed at user level (provides the `/tdd` skill):
   ```bash
@@ -27,6 +27,11 @@ Ralph Loop reads issue files from a target repo's `.scratch/` directory, resolve
 
 # Run a single issue (auto-detects git root from the file path)
 ./src/once.sh /path/to/target-repo/.scratch/01-my-issue.md
+
+# Codex CLI variants
+RALPH_AGENT=codex ./src/validate.sh /path/to/target-repo
+./src/parallel-codex.sh /path/to/target-repo/.scratch
+./src/once-codex.sh /path/to/target-repo/.scratch/01-my-issue.md
 ```
 
 ## Issue format
@@ -56,7 +61,7 @@ Brief description of the task.
 
 ## PRD support
 
-If your issues live inside a subdirectory (e.g. `.scratch/phase-1/issues/`), place a `PRD.md` one level above the issues directory. Both `once.sh` and `parallel.sh` automatically inject it as design context into each agent invocation.
+If your issues live inside a subdirectory (e.g. `.scratch/phase-1/issues/`), place a `PRD.md` one level above the issues directory. The once and parallel scripts automatically inject it as design context into each agent invocation.
 
 ## Failure recovery
 
@@ -67,11 +72,16 @@ Failed worktrees are preserved at `<repo>/.worktrees/failed/<slug>` for inspecti
 | Variable | Default | Description |
 |---|---|---|
 | `COPILOT_MODEL` | `gpt-5.3-codex` | Model passed to `copilot --model` |
+| `CODEX_MODEL` | `gpt-5.3-codex` | Model passed to `codex exec --model` |
+| `CODEX_SANDBOX` | `workspace-write` | Sandbox passed to `codex exec --sandbox` |
+| `CODEX_APPROVAL` | `never` | Approval policy passed to `codex exec --ask-for-approval` |
+| `RALPH_AGENT` | `copilot` | Validation target. Set to `codex` for Codex pre-flight checks |
+| `RALPH_CODEX_UNSANDBOXED` | `0` | Set to `1` to pass `--dangerously-bypass-approvals-and-sandbox` to Codex |
 | `RALPH_PROTECTED_BRANCHES` | `main master` | Space-separated branches Ralph refuses to run on |
 
 ## Design principles
 
-1. **Target repos stay agnostic** — Ralph never modifies target repo structure. It reads `.scratch/` for issues and `CLAUDE.md` for project context.
+1. **Target repos stay agnostic** — Ralph never modifies target repo structure. It reads `.scratch/` for issues and a repo-level agent context file (`CLAUDE.md` for Copilot, `AGENTS.md` or `CLAUDE.md` for Codex).
 2. **Single-repo scope** — Ralph handles intra-repo dependencies only. Cross-repo sequencing is the user's responsibility.
 3. **Skills as references** — Ralph's prompt invokes `/tdd` by name. Skills must be installed at user level, not bundled into this repo.
 4. **Worktree isolation** — Each issue runs in its own git worktree. Parallel agents are merged sequentially to avoid conflicts.
