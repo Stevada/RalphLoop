@@ -1,0 +1,572 @@
+# Ralph Loop — Design
+
+Harnessed engineering for coding agents. Three actors, one medium, one repo, one PR.
+
+This document records the design and the reasoning behind it, including the risks
+accepted deliberately. It describes the target system. Where the current `src/`
+scripts diverge, that is noted under [Gaps](#gaps-between-this-design-and-srcs).
+
+Vocabulary is canonical in
+[`UBIQUITOUS_LANGUAGE.md`](../UBIQUITOUS_LANGUAGE.md). This document uses those terms; it
+does not define them.
+
+---
+
+## 1. Actors
+
+Three actors. They never talk to each other. They talk to a sub-issue's **brief** and
+**findings**.
+
+| Actor | Model | Writes | Reads |
+|---|---|---|---|
+| **Planner** | Claude Opus | The issue graph and the first draft of every brief | PRD, codebase, integration branch |
+| **Editor** | Claude Opus | A single sub-issue's brief and findings | Everything; may run read-only commands |
+| **Implementer** | Codex, `gpt-5.3-codex` | All code, tests included | Its brief and findings, the repo |
+
+The Planner is invoked by a human, in conversation. The Editor and Implementer run
+unattended inside a run.
+
+---
+
+## 2. Invariants
+
+These are load-bearing. Violating any of them collapses a boundary drawn elsewhere.
+
+1. **A sub-issue's brief and findings are the only channel between actors.**
+2. **Structure is immutable within a run.** The Planner's graph — sub-issues and their
+   blocking edges — is fixed when the run reads it at start. The Editor may rewrite a brief
+   and its findings; it may never add, remove, or re-link a sub-issue.
+3. **A run reads the issue graph exactly once, at start.** No mid-run reads. Human
+   intervention ends the run; resumption is a new run that re-reads the graph.
+4. **The Editor writes only the brief and findings.** It may read anything and run read-only
+   commands. It never commits, never cherry-picks, never touches a worktree except to
+   read it. The moment the Editor commits, it is an Implementer with a different name.
+5. **Nothing enters the integration branch unverified.** Therefore nothing after
+   integration needs verification.
+6. **Linear is the source of truth for the plan. Git is where the work lives.**
+   Write-through, read-once: the run writes to Linear as it goes and never reads back.
+
+---
+
+## 3. Shape of a parent issue
+
+One repo. One Kanban. One parent issue. One PR.
+
+```
+                 ┌──────────────────┐
+                 │ contract         │   interfaces, stubs, schema
+                 │ sub-issue        │   (no tests — tests are prose in each brief)
+                 └────────┬─────────┘
+          ┌───────────────┼───────────────┐
+          ▼               ▼               ▼
+    ┌──────────┐    ┌──────────┐    ┌──────────┐
+    │ impl 1   │    │ impl 2   │    │ impl 3   │   parallel, isolated worktrees
+    └────┬─────┘    └────┬─────┘    └────┬─────┘
+         └───────────────┼───────────────┘
+                         ▼
+                 ┌──────────────────┐
+                 │ integration      │   one honest end-to-end test, zero mocks
+                 │ sub-issue        │
+                 └──────────────────┘
+```
+
+**The contract sub-issue exists because parallel Implementers cannot see each other.**
+Without a landed interface, each one invents its own boundary and mocks across it — and
+TDD actively rewards this, since a mock is the cheapest way to turn a red test green when
+the real dependency does not exist yet. Three sub-issues each mocking auth produce three
+green branches and an integration branch where nothing can authenticate. The contract
+wave makes drift a **typecheck** failure, caught in the worktree, cheaply.
+
+**The integration sub-issue exists because typechecking does not catch behavioural
+drift.** It is blocked by every implementation sub-issue and forbidden from mocking.
+
+The contract sub-issue is the highest-leverage artifact in the system. A wrong contract
+means N Implementers build correctly against a wrong interface, all tests pass, and the
+integration sub-issue fails — at which point no amount of Editor cycles can help, because
+the defect is upstream. This is what `planning-defect` exists for.
+
+---
+
+## 4. Lifecycle of a run
+
+### 4.1 Read the graph once
+
+The run reads the Linear issue graph once, at start, and works from that read for its whole
+life. Everything the Implementer and Editor read derives from it. Nothing reads Linear again.
+
+### 4.2 Base green check
+
+Before any agent starts, run the repo's test command on the integration branch.
+
+**If it is red, no agent starts.** This single check catches the stale lockfile, the
+broken environment, the half-merged previous run, and the case where trunk was already
+broken. It also gives every subsequent failure a meaningful baseline: *these tests passed
+twenty minutes ago on this exact tree.*
+
+Without it, every `<impasse>` is ambiguous, and the Editor — the most expensive actor in
+the system — reasons from a baseline it cannot verify.
+
+### 4.3 Dispatch
+
+A sub-issue is **eligible** when every sub-issue it is blocked by has `landed`. Eligible
+sub-issues are dispatched concurrently, up to a concurrency cap, each into its own git
+worktree branched from the current integration head.
+
+There is **no wave barrier.** Waves are an artifact of dependencies, not of merging. A
+fast sub-issue lands in three minutes rather than waiting for its slowest sibling.
+
+Dependencies are installed **once, in the base checkout**, before any worktree exists.
+Installation failure is loud and fatal — never `|| true`.
+
+### 4.4 The Implementer's session
+
+One continuous `codex exec` session. It writes tests first, then implementation,
+per `/tdd`. It iterates as it sees fit — running the suite, fixing, retrying — using its
+own judgment about when it is stuck.
+
+It exits exactly one of two ways:
+
+- **Green**, with a commit, and it proceeds to the merge queue.
+- **`<impasse>`**, with a structured impasse report.
+
+"About three tries" is **guidance in the prompt**, not a harness-enforced counter. The
+harness counts nothing but tokens.
+
+#### The impasse report
+
+The Editor's only sensor. It is a defendant's statement, so the harness corroborates it.
+
+The Implementer supplies: the failing test and its assertion output verbatim; the
+approaches tried and why each was abandoned; the specific acceptance criterion it believes
+unsatisfiable; what would make it satisfiable.
+
+The harness appends, independently of the model's narration: final test output, diffstat,
+files touched, wall-clock, turn count, token spend.
+
+**The model's story, checked against the harness's facts.** Those two disagreeing is
+itself a signal worth surfacing.
+
+#### The only hard bound
+
+**120,000 cumulative tokens per session.** Wall-clock timeout as a backstop.
+
+Exceeding either kills the session, with the outcome `ceiling-exceeded` — a distinct
+outcome, never `infra-failed`, because it is not transient: a session that spent 120k
+without finishing will most likely spend another 120k the same way, so it is **never
+retried**. An Implementer that hits it routes to the **Editor**, which diagnoses from the
+partial worktree and the harness's facts — final test output, diffstat, token spend —
+*without* a fabricated impasse report. Synthesising one from a partial transcript would be
+the least honest artifact the system could produce; the harness never does it.
+
+Real-time enforcement assumes the CLI streams cumulative token usage as it runs. If it only
+reports usage at session end, the ceiling degrades to a post-hoc classifier and the
+wall-clock timeout becomes the only real-time kill — confirm against the CLI before writing
+the enforcement code.
+
+The 120k figure is a starting guess. Instrument real runs, look at the distribution, then
+tune. Note that in a cumulative session, context and consumption diverge sharply: a model
+that runs a failing suite twenty times has consumed several hundred thousand tokens while
+its context window sits at 60k. The ceiling is on **consumption**.
+
+### 4.5 The merge queue
+
+This is the piece that makes parallelism honest, and the piece Ralph most conspicuously
+lacks today.
+
+When an Implementer reaches green in its own worktree:
+
+1. **Acquire the integration lock.**
+2. **Rebase** onto the current integration head.
+3. **Re-run the suite in its own worktree.**
+4. On green: **fast-forward merge**, then write `landed` to Linear.
+5. **Release the lock.**
+
+On rebase conflict or red suite: **release the lock**, fix it — still alive, still in
+context, still holding the reasoning that produced the code — and re-queue.
+
+Fix-and-requeue happens **outside** the lock. The lock is held only for rebase, suite,
+fast-forward, release. One thrashing agent must not stall everyone.
+
+Because the suite runs on the *prospective* merge result, `git merge` in the harness is
+only ever a fast-forward of an already-verified tree. The integration branch is correct by
+construction.
+
+#### Why the actor, not bash
+
+`git merge` does not fire the `pre-commit` hook. A clean merge creates its commit without
+invoking it. So per-branch hooks guarantee **each branch is green in isolation** — a
+strictly weaker claim than "the merged tree is green," and the gap between those two
+claims is exactly where semantic conflicts live:
+
+> Sub-issue 104 renames an export. Sub-issue 105 imports the old name. Different files.
+> No textual conflict. Both branches green. Merged tree: red.
+
+If bash performed the merge, the Implementer that broke integration would already have
+exited, and repairing it would require resurrecting a session that no longer has the code
+in context. Under the merge queue, **the actor who broke integration is the one who repairs
+it**, which is what we wanted from the start.
+
+#### Bounds
+
+Three failed requeues → `<impasse>` with an integration failure. An Editor that sees
+*"105 cannot land alongside 104"* has exactly the evidence for `planning-defect`: two
+sub-issues that cannot coexist were badly cut.
+
+**Integration gets its own token budget, separate from the implementation session's.** A sub-issue must not
+be starved of the tokens it needs to land work it has already finished. The last sibling
+to land does the most rebasing.
+
+#### The merge queue as an instrument
+
+A parent issue whose sub-issues sail through the queue was decomposed well. One where
+agents fight for the lock and lose was not — and the system reports it in the currency of
+`planning-defect` verdicts, rather than as mysterious failures three waves later.
+
+Decomposition quality has no other automated check in this system. This is it.
+
+### 4.6 The Editor's session
+
+Triggered by `impasse`, `silent-red`, or an Implementer `ceiling-exceeded`. Never by
+`infra-failed`.
+
+The Editor:
+
+- reads the brief, the findings, the impasse report, and the **failed worktree**;
+- **runs read-only commands** — re-runs the suite, greps, checks whether the API the
+  Implementer complained about actually exists;
+- rewrites the brief and records findings;
+- returns a verdict.
+
+Reproduction, not inference. The difference between *"this cannot be done as specified"*
+and *"the Implementer gave up early"* is often a single grep. Since declaring an impasse
+is cheap, the Editor's ability to check the Implementer's story against the repository is
+the only thing standing between us and a system where declaring an impasse always works.
+
+**On Editor entry, the Implementer's work is discarded.** It restarts clean against the
+revised brief. No code survives. Knowledge survives only if the Editor writes it into the
+findings — that is the Editor's judgment, unmandated.
+
+Verdicts:
+
+| Verdict | Effect |
+|---|---|
+| `revise` | Brief and findings rewritten; Implementer restarts clean. |
+| `planning-defect` | Sub-issue quarantined; **always pages the human.** |
+| `inconclusive` | Sub-issue quarantined; pages the human. |
+
+At most **three cycles** per sub-issue, hard-enforced: the harness dispatches no fourth
+Implementer session, so the third Editor session must return a terminal verdict —
+`planning-defect` or `inconclusive`, never `revise`.
+
+### 4.7 Quarantine and drain
+
+When a sub-issue escalates, the run does **not** stop.
+
+- The sub-issue is marked `needs-human`. Its worktree is preserved.
+- Everything transitively blocked by it never becomes eligible, and is skipped.
+- Every unaffected sub-issue **continues and lands**.
+- The run ends with **one** notification.
+
+A system that pages you the instant the first thing goes wrong trains you to ignore it.
+You want a complete picture of the run at 8am, not an alert at 3am.
+
+A skipped sub-issue needs no failure state of its own: it stays unstarted with its
+`blocked by` edge intact, which is already distinct from `needs-human`. The next run can
+tell *"I failed"* from *"I never got a turn"* without inventing a state for the second.
+
+### 4.8 Escalation to the human
+
+Linear carries the content; Linear's own notifications are the doorbell. No Slack
+integration to build or own.
+
+One notification per run. It states: which parent issue; how many sub-issues landed; how
+many failed to land and why; which sub-issue needs attention first; and the verdict that
+caused it — `inconclusive` after three cycles is a very different morning from
+`planning-defect` on cycle one. It links to the preserved worktree, the integration
+branch, and the Linear issue.
+
+**If you cannot tell from the notification alone whether to spend your first ten minutes
+reading a diff or rewriting a PRD, the notification has failed.**
+
+### 4.9 Replanning
+
+`planning-defect` always pages the human. The Planner is never invoked headless.
+
+Structure is the one artifact in this system with **no error-correcting feedback**. The
+Editor corrects the Implementer. The tests correct the Implementer. Nothing corrects the
+Planner but a human. Auto-applying the Planner's self-revision would close the only loop
+with a human in it, precisely at the moment the system has just proven the Planner wrong.
+
+Replanning is **replan-the-remainder**: the Planner is handed the integration branch and
+the set of already-merged sub-issues, and plans the rest. Successful work is never thrown
+away to preserve planning purity.
+
+> From the second run onward, the Planner is planning against a codebase that agents wrote,
+> and the PRD is only half the input. The Planner's prompt must know this.
+
+**A parent issue that receives a second `planning-defect` in its lifetime escalates
+unconditionally.** Two Editors, on two different sub-issues, independently concluding the
+decomposition is wrong is not a spec problem. It is a signal that the PRD is wrong, and no
+amount of replanning fixes a bad PRD.
+
+---
+
+## 5. The failure taxonomy
+
+The harness owns **four** failure outcomes, not one. This is the single highest-value piece
+of harness logic.
+
+| Outcome | Detection | Routes to |
+|---|---|---|
+| `impasse` | `<impasse>` sentinel present | **Editor** |
+| `silent-red` | Session ran, suite red, no sentinel | **Editor** |
+| `ceiling-exceeded` | Cumulative token consumption crossed 120k; session killed | **Implementer → Editor; Editor → human** |
+| `infra-failed` | Setup failure, wall-clock timeout (exit 124), rate limit, OOM | **Retry with backoff, then human** |
+
+**The model's word for its own outcome; the harness's word for everything the model cannot
+observe about itself.** Ralph already trusts a sentinel this way — `<promise>NO MORE
+TASKS</promise>`. Extend the pattern.
+
+### Why this is not optional
+
+Dependency installation fails. The agent starts in a worktree with no `node_modules`.
+Every test fails with `Cannot find module`. It writes a test — fails. Writes an
+implementation — fails. Tries a different approach — fails identically. Behaving exactly
+as designed, it emits `<impasse>`: *"I cannot make these tests pass."*
+
+An Opus Editor now spins up, reads the worktree, and is asked whether the **specification**
+is wrong.
+
+That is a full Editor session, at Opus prices, diagnosing `npm ci`. It can happen three
+times before the human is paged, with the Editor rewriting a perfectly good brief each
+cycle. The notification finally reads *"inconclusive after three cycles"* — the most
+alarming message the system can send — and it means the lockfile was stale.
+
+A 429 across N parallel agents on one API key produces the same signature. So does an OOM
+kill. So does the 120k ceiling: a killed session exits non-zero and, unless marked
+`ceiling-exceeded`, is indistinguishable from a crash.
+
+Pre-commit hooks do not help here. They *cause* this: the hook rejects the commit, the
+agent thrashes, the agent declares an impasse. **Hooks protect the branch. Classification
+protects the budget.** They are orthogonal.
+
+### Rules
+
+- **Zero commits is never a benign skip.** A session that produced nothing is `silent-red`
+  or `infra-failed`. Today's `no commits - skipping` silently treats it as success.
+- **The suite result, not the exit code, is the outcome.** The harness runs the tests. The
+  prompt *asks* the agent not to commit on red; nothing verifies that.
+- Wrap `codex exec` in `timeout`; treat exit 124 as `infra-failed`.
+- A non-zero exit **without** the sentinel means the process died — do not assume the model
+  gave up.
+
+---
+
+## 6. State, trust, and reconciliation
+
+**Linear is the source of truth for the plan.** The Planner owns it.
+**Git is the source of truth for the work.** The Implementer owns it.
+Neither is ever consulted about the other's domain.
+
+Write-through, read-once. The run writes state transitions, impasse reports, revisions, and
+verdicts to Linear as they happen — best-effort telemetry. A failed Linear write is logged
+and retried at run end; it never fails a run. Nothing is ever read back from Linear during
+a run.
+
+Editor revisions land as **comments plus a distinguished revised-brief field**, never as
+an overwrite of the Planner's original description. The original intent is the only thing a
+bad outcome can later be diffed against.
+
+### The run log
+
+One append-only file per run — the local record the earlier phases rely on, since Linear
+sync lands last (§10). Each line is one event: a timestamp, the sub-issue it concerns, and
+what happened. It tracks only two kinds of thing:
+
+- **States.** A session opened; a session closed with its outcome (`success`, `impasse`,
+  `silent-red`, `ceiling-exceeded`, `infra-failed`); a sub-issue reached a terminal state
+  (`landed`, `needs-human`, or skipped).
+- **Decisions.** The verdict an Editor returned (`revise`, `planning-defect`,
+  `inconclusive`).
+
+Nothing else. Token spend, diffstats, and failing-test output belong in the impasse report,
+not here. The run log answers one question — *what happened, in what order, to which
+sub-issue* — and it is exactly what the write-through mirrors to Linear, best-effort.
+
+### The merge/write window
+
+The merge queue's last two steps — fast-forward, then write `landed` to Linear — are not
+atomic. **Merge first, then write.**
+
+This fails toward redundant work (a `landed` sub-issue looks pending; the next run
+redispatches it, an Implementer finds the tests already green, one session wasted) rather
+than toward missing code (a pending sub-issue looks `landed`; dependents build against a
+baseline that never received it, and an Editor is summoned to diagnose a brief that is
+fine).
+
+Note the ordering protects against **the harness dying**, not against Linear being down. If
+Linear is down, both orders fail identically and the write is simply retried.
+
+Accepted: the window is one API call wide, the lock is held across it, and runs are
+supervised.
+
+### CI is the trust boundary
+
+Every check in this system runs **inside the agent's blast radius**: pre-commit hooks, the
+merge queue's suite, the Editor's reproduction. The agent has had `workspace-write` for the
+whole session with `--ask-for-approval never`. An agent that adds a `conftest.py` fixture
+stubbing a dependency, edits `vitest.config.ts` to exclude a directory, hand-installs a
+package, or writes a `.env` the suite reads, has produced a suite that is green **only
+there**.
+
+No malice is implied. Every green result is produced inside the blast radius of the thing
+being tested.
+
+**CI on the PR is the only check that runs on a clean checkout the agent never touched.**
+`validate.sh` must refuse a repo without PR CI. CI is the natural home for a fresh install
+from the lockfile, a diff of test-config files, and a suite run with none of the agent's
+leftover artifacts.
+
+---
+
+## 7. Multi-repo
+
+**One repo, one Kanban, one parent issue, one PR.** The Planner is scoped to a single
+repository. There are no cross-repo dependency edges, because a git worktree does not span
+repositories.
+
+Linear is therefore chosen for its **Kanban, its API, and its independence from any one
+GitHub org** — an observability and reuse argument, not a dependency-management one. The
+sync layer stays thin, write-through, and out of the critical path.
+
+Cross-repo sequencing is a different system and is out of scope.
+
+---
+
+## 8. Bets accepted deliberately
+
+These are bets, not assumptions. They were argued and taken with the costs visible.
+
+### 1. The Implementer's self-authored tests match the prose spec
+
+The brief specifies tests in prose. The Implementer writes both the test and the code that
+passes it. **No mechanical check on that correspondence exists.**
+
+*"Invalid credentials return 401"* is satisfied, in letter, by a test that constructs a
+response object and asserts its status code without ever calling the handler. Red against a
+stub, green after any implementation, meaningless.
+
+**If this bet loses, the failure is green.** The escalation ladder triggers on red and will
+never fire. Mitigated by: small sub-issues, the `/tdd` skill, the integration sub-issue,
+and human PR review.
+
+### 2. The Editor does not soften specs into meaninglessness
+
+The Editor rewrites the brief — including its tests — in response to an impasse report
+authored by the actor that failed. It may do this up to twice more. **There is no budget on
+softening and no record of drift.**
+
+Each softening looks locally reasonable. *"The Implementer couldn't make concurrent writes
+safe; I'll scope this to single-writer and file the concurrency work separately."* That is a
+sentence a good senior engineer writes. Three times across three cycles, it is how a
+sub-issue arrives green having implemented nothing that was asked for.
+
+The system has a monotone: **difficulty only ever goes down.** No actor pushes it back up.
+The Planner is never consulted. The Editor is measured on unblocking. The Implementer
+benefits from softening — and since declaring an impasse is cheap, *the fastest route
+from a hard sub-issue to a green one is to declare an impasse and let Opus make the
+sub-issue easier.* The three-cycle cap bounds how many times this can happen, not whether
+it does.
+
+Accepted without mitigation. No `spec-drift` section on the PR.
+
+### 3. The Editor's judgment on what knowledge survives
+
+The Editor reads the failed worktree and learns things nobody else knows — that the
+migration must precede the index, that the client's retry logic swallows the expected error,
+that the hallucinated API is really called something else. That knowledge cost a full cycle.
+
+The worktree is then deleted. The **findings** field is its home, but writing there is
+still the Editor's choice: knowledge survives **only** if the Editor chooses to record it.
+The field exists; using it well is unmandated.
+
+### 4. Runs are supervised
+
+No laptop sleep. No `Ctrl-C`. No branch switching mid-run. Runs execute in the working
+checkout, and `trap cleanup EXIT` force-removes in-flight worktrees — including one an
+Editor may be reading.
+
+Cheap guard, taken regardless: assert `HEAD == ORIGINAL_BRANCH` before every merge and abort
+loudly otherwise. Protection against a stray `git checkout` from another tool, not against
+the operator.
+
+### 5. Silent failures are acceptable
+
+A parent issue can merge green having implemented a materially weaker feature than specified,
+and nothing will say so — not the tests, not the ladder, not the notification.
+
+**Bets 1, 2, 3 and 5 all resolve to the same place: the human reads the PR.** That is the
+load-bearing human step. Everything else in this system is scaffolding to produce a PR worth
+reading.
+
+### A note on "small sub-issues bound the risk"
+
+Small scope does bound the blast radius per Editor decision. But it moves risk rather than
+removing it: more sub-issues means more edges, more parallel branches, more merge-queue
+contention, more seams to mock across, and more Editor invocations in aggregate. Per-decision
+risk falls; the number of decisions rises. Drift is redistributed from a few large swerves
+into many small ones — harder to see in a PR, not easier.
+
+And the risk lands on **decomposition**, the artifact with no automated feedback.
+
+> **The grilling of the Planner is not a nice-to-have front-end. It is the primary quality
+> mechanism of this system.**
+
+---
+
+## 9. Gaps between this design and `src/`
+
+What exists today, and what it costs:
+
+| # | Current behaviour | Required |
+|---|---|---|
+| 1 | No Linear integration at all | Read graph on run start; write-through during |
+| 2 | Success = `codex exec` exit code | Success = harness-run suite result |
+| 3 | `no commits - skipping` treated as benign | `silent-red` |
+| 4 | No failure taxonomy | `impasse` / `silent-red` / `ceiling-exceeded` / `infra-failed` |
+| 5 | `npm ci ... \|\| true` swallows install failure | Install once in base; fail loudly |
+| 6 | No base-green check | Suite must pass on integration head before dispatch |
+| 7 | Wave barrier + sequential bash merge | Merge queue with integration lock |
+| 8 | `git merge --no-edit` runs no hook, no suite | Rebase + suite in worktree, then fast-forward |
+| 9 | No concurrency cap; all eligible issues launch at once | Cap concurrent sessions |
+| 10 | No timeout, no token ceiling | `timeout` + 120k cumulative ceiling |
+| 11 | No Editor, no escalation, no notification | Editor session, quarantine-and-drain, one notification |
+| 12 | No PR; merges into current branch | Integration branch → PR → CI → human |
+| 13 | Dependencies by filename numeric prefix | Linear issue IDs |
+| 14 | `validate.sh` does not check for PR CI | Refuse repos without CI |
+
+Note that #7 and #8 **delete** code: the wave barrier, the `wait` on all sessions, and the
+sequential merge loop all go away.
+
+---
+
+## 10. Build order
+
+**The merge queue first.** It is the piece that makes parallelism honest, it is the most
+conspicuous absence, and every other component can be a human standing in for an agent while
+it is being got right. Build it against the existing filesystem issue format, with you
+playing Planner and Editor by hand.
+
+Then, in order:
+
+1. **Failure taxonomy + base-green check.** Cheap, and they make every later signal
+   trustworthy. Without them the Editor reasons from an unverified baseline.
+2. **Token ceiling and timeout.** Bounds the bill before anything runs unattended.
+3. **Impasse report format.** The Editor's sensor. Specify it before building the Editor.
+4. **The Editor.** Its prompt deserves more iteration than the harness code does — four of
+   the five bets rest on it.
+5. **Linear sync.** Read-once in, write-through out. Last, because it is the piece that
+   changes least about whether the loop works.
+6. **PR + CI + notification.**
+
+Overnight autonomy is the reward for a loop you already trust. Get to trust locally first.
