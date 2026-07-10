@@ -78,11 +78,17 @@ state; the harness's word for everything the model cannot observe about itself.
 | `success` | Implementer: green commit, suite verified by the harness. Editor: a verdict returned. | Merge queue / act on verdict |
 | `impasse` | `<impasse>` sentinel present (Implementer only) | Editor |
 | `silent-red` | Session ran to completion, suite red, no sentinel (Implementer only) | Editor |
+| `integration-failed` | Prospective merge conflicts or goes red after rebase onto the integration head (merge queue, not a session) | Editor |
 | `ceiling-exceeded` | Cumulative token consumption crossed 120k; session killed | Implementer → Editor; Editor → human |
 | `infra-failed` | Setup failure, wall-clock timeout, rate limit, OOM (either actor) | Retry with backoff, then human |
 
 `impasse` and `silent-red` can only come from an Implementer session — an Editor session
 cannot declare itself stuck. `ceiling-exceeded` and `infra-failed` can come from either.
+`integration-failed` is not a session outcome at all: the Implementer session succeeded,
+green in isolation, and the merge queue raises it when that tree will not integrate with a
+sibling that landed first. It routes to the Editor on the first failure, never back to the
+Implementer. The resulting Editor trip is a **cycle** like any other, counted against the
+three-cycle cap.
 
 **`ceiling-exceeded` is its own outcome, not `infra-failed`, because it is not transient.**
 Retrying `npm ci` may clear an infra failure; retrying a session that spent 120k without

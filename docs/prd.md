@@ -181,11 +181,14 @@ When an Implementer reaches green in its own worktree:
 4. On green: **fast-forward merge**, then write `landed` to Linear.
 5. **Release the lock.**
 
-On rebase conflict or red suite: **release the lock**, fix it — still alive, still in
-context, still holding the reasoning that produced the code — and re-queue.
+On rebase conflict or red suite on the prospective merge: **release the lock, preserve the
+worktree, and route the sub-issue to the Editor** as an `integration-failed` outcome. The
+Implementer does not retry. A failed merge is not a transient hiccup to paper over — it is
+a signal about how the work was cut, and adjudicating it is the Editor's job, not something
+the actor that just failed to integrate should be trusted to fix by trying again.
 
-Fix-and-requeue happens **outside** the lock. The lock is held only for rebase, suite,
-fast-forward, release. One thrashing agent must not stall everyone.
+The lock is held only for rebase, suite, fast-forward, release — never while the Editor
+reasons. One sub-issue's integration failure never stalls the queue for its siblings.
 
 Because the suite runs on the *prospective* merge result, `git merge` in the harness is
 only ever a fast-forward of an already-verified tree. The integration branch is correct by
@@ -201,37 +204,49 @@ claims is exactly where semantic conflicts live:
 > Sub-issue 104 renames an export. Sub-issue 105 imports the old name. Different files.
 > No textual conflict. Both branches green. Merged tree: red.
 
-If bash performed the merge, the Implementer that broke integration would already have
-exited, and repairing it would require resurrecting a session that no longer has the code
-in context. Under the merge queue, **the actor who broke integration is the one who repairs
-it**, which is what we wanted from the start.
+If bash performed the merge, the break would surface waves later — no worktree, no context,
+no attribution. Under the merge queue the failure is caught the moment it happens, on the
+prospective merge against the exact sibling that landed first, and the **worktree is
+preserved** for the Editor. A live actor with the failing tree in front of it decides
+whether 105's brief should adapt to 104's rename or whether the two were badly cut — a
+decision bash could never make, and one the already-exited Implementer is no longer around
+to make either.
 
-#### Bounds
+#### A failed merge is an Editor trigger, not a retry loop
 
-Three failed requeues → `<impasse>` with an integration failure. An Editor that sees
-*"105 cannot land alongside 104"* has exactly the evidence for `planning-defect`: two
-sub-issues that cannot coexist were badly cut.
+A conflict or red suite on the prospective merge routes the sub-issue to the Editor as
+`integration-failed` — immediately, on the first failure, with no Implementer requeue. The
+Editor reads the preserved worktree and the sibling that landed first. If 105 can adapt to
+104, it says `revise` and the Implementer restarts clean; if *"105 cannot land alongside
+104"* because the two were badly cut, it has exactly the evidence for `planning-defect`.
 
-**Integration gets its own token budget, separate from the implementation session's.** A sub-issue must not
-be starved of the tokens it needs to land work it has already finished. The last sibling
-to land does the most rebasing.
+That trip through the Editor spends one of the sub-issue's three **cycles** — an
+`integration-failed` is counted exactly like an impasse, so a sub-issue that keeps failing
+to integrate is escalated at the third.
+
+The merge queue itself does no model work: rebase and the suite run are mechanical, so a
+sub-issue spends no tokens to land work it has already finished. Only the Editor, on an
+integration failure, costs anything.
 
 #### The merge queue as an instrument
 
-A parent issue whose sub-issues sail through the queue was decomposed well. One where
-agents fight for the lock and lose was not — and the system reports it in the currency of
-`planning-defect` verdicts, rather than as mysterious failures three waves later.
+A parent issue whose sub-issues sail through the queue was decomposed well. One whose
+sub-issues fail to integrate was not — and the merge queue turns that into `integration-failed`
+routes and `planning-defect` verdicts from the Editor, rather than mysterious failures three
+waves later.
 
 Decomposition quality has no other automated check in this system. This is it.
 
 ### 4.6 The Editor's session
 
-Triggered by `impasse`, `silent-red`, or an Implementer `ceiling-exceeded`. Never by
-`infra-failed`.
+Triggered by `impasse`, `silent-red`, an Implementer `ceiling-exceeded`, or an
+`integration-failed` merge. Never by `infra-failed`.
 
 The Editor:
 
-- reads the brief, the findings, the impasse report, and the **failed worktree**;
+- reads the brief, the findings, the failure report (an Implementer impasse report, or —
+  for `integration-failed` and `ceiling-exceeded` — the harness's record, since the
+  Implementer authored none), and the **failed worktree**;
 - **runs read-only commands** — re-runs the suite, greps, checks whether the API the
   Implementer complained about actually exists;
 - rewrites the brief and records findings;
@@ -313,15 +328,22 @@ amount of replanning fixes a bad PRD.
 
 ## 5. The failure taxonomy
 
-The harness owns **four** failure outcomes, not one. This is the single highest-value piece
+The harness owns **five** failure outcomes, not one. This is the single highest-value piece
 of harness logic.
 
 | Outcome | Detection | Routes to |
 |---|---|---|
 | `impasse` | `<impasse>` sentinel present | **Editor** |
 | `silent-red` | Session ran, suite red, no sentinel | **Editor** |
+| `integration-failed` | Prospective merge conflicts, or the suite is red after rebase onto the integration head | **Editor** |
 | `ceiling-exceeded` | Cumulative token consumption crossed 120k; session killed | **Implementer → Editor; Editor → human** |
 | `infra-failed` | Setup failure, wall-clock timeout (exit 124), rate limit, OOM | **Retry with backoff, then human** |
+
+`integration-failed` is the one outcome that does not classify a *session*: the Implementer
+session already succeeded green in isolation. The merge queue raises it when that green tree
+will not integrate with a sibling that landed first — precisely the kind of failure the
+Implementer cannot observe about itself, so it goes to the Editor rather than back to the
+actor that produced it.
 
 **The model's word for its own outcome; the harness's word for everything the model cannot
 observe about itself.** Ralph already trusts a sentinel this way — `<promise>NO MORE

@@ -19,9 +19,7 @@ graph TD
 
     mergeQ --> mergeCheck{"Green on the<br/>prospective merge?"}
     mergeCheck -->|yes| ff["Fast-forward merge ·<br/>write 'landed' · release lock"]
-    mergeCheck -->|conflict or red| requeue{"Third failed<br/>requeue?"}
-    requeue -->|"no · fix outside lock"| mergeQ
-    requeue -->|"yes · 3 failures"| editor
+    mergeCheck -->|"conflict or red · release lock<br/>(integration-failed)"| editor
     ff --> landed(["Sub-issue landed"])
 
     editor["Editor session<br/>read worktree · reproduce ·<br/>120k-token ceiling"] --> edOutcome{"Editor session<br/>completed?"}
@@ -54,6 +52,6 @@ graph TD
     classDef editor fill:#f3e5f5,stroke:#7b1fa2,color:#4a148c;
     class start,landed,done terminal;
     class abort,human stop;
-    class baseGreen,outcome,mergeCheck,requeue,retry,edOutcome,verdict,cycle,more,anyEsc,ci decision;
+    class baseGreen,outcome,mergeCheck,retry,edOutcome,verdict,cycle,more,anyEsc,ci decision;
     class impl,mergeQ,ff implementer;
     class editor editor;
