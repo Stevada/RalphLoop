@@ -19,12 +19,15 @@ from ralph.domain.model.event import Event, EventKind
 from ralph.domain.model.failure import FailureReport
 from ralph.domain.model.graph import GraphError, IssueGraph, SubIssue, SubIssueId
 from ralph.domain.model.impasse import Approach, ImpasseReport
+from ralph.domain.model.notification import Escalation, Notification
 from ralph.domain.model.session import Actor, Outcome, SessionTelemetry, SuiteResult
 from ralph.domain.model.state import SubIssueState
 from ralph.domain.model.verdict import EditorVerdict, Verdict
 from ralph.domain.rules.classify import classify_editor, classify_implementer
 from ralph.domain.rules.cycles import CycleLedger
 from ralph.domain.rules.eligibility import eligible, never_eligible
+from ralph.domain.rules.notify import ATTENTION_ORDER, notify
+from ralph.domain.rules.report import failure_report
 from ralph.domain.rules.routing import Destination, route
 
 __all__ = [
@@ -33,6 +36,7 @@ __all__ = [
     "Approach",
     "Brief",
     "EditorVerdict",
+    "Escalation",
     "Event",
     "EventKind",
     "FailureReport",
@@ -40,6 +44,7 @@ __all__ = [
     "GraphError",
     "ImpasseReport",
     "IssueGraph",
+    "Notification",
     "Outcome",
     "SessionTelemetry",
     "SubIssue",
@@ -48,11 +53,14 @@ __all__ = [
     "SuiteResult",
     "Verdict",
     # rules — the verbs
+    "ATTENTION_ORDER",
     "CycleLedger",
     "Destination",
     "classify_editor",
     "classify_implementer",
     "eligible",
+    "failure_report",
     "never_eligible",
+    "notify",
     "route",
 ]

@@ -22,9 +22,10 @@ from ralph.adapters.git import GitCli
 from ralph.adapters.runlog import JsonlRunLog
 from ralph.adapters.session import SubprocessImplementer
 from ralph.adapters.suite import SubprocessTestRunner, detect_test_cmd, install_once
+from ralph.domain import Notification
 from ralph.mergequeue import MergeQueue
 from ralph.ports import Budget, Worktree
-from ralph.scheduler import RunReport, Scheduler
+from ralph.scheduler import DEFAULT_CONCURRENCY, RunReport, Scheduler
 
 AGENT_CMD_ENV = "RALPH_AGENT_CMD"
 SUB_ISSUE_PLACEHOLDER = "{sub_issue}"
@@ -59,7 +60,12 @@ def find_issues_dir(repo: Path, given: Path | None) -> Path:
     return candidates[0]
 
 
-async def run(repo: Path, issues: Path | None, budget: Budget | None = None) -> RunReport:
+async def run(
+    repo: Path,
+    issues: Path | None,
+    budget: Budget | None = None,
+    concurrency: int = DEFAULT_CONCURRENCY,
+) -> RunReport:
     repo = repo.resolve()
     git = GitCli(repo=repo)
     integration = git.head_branch()
@@ -69,23 +75,52 @@ async def run(repo: Path, issues: Path | None, budget: Budget | None = None) -> 
     runner = SubprocessTestRunner(cmd=detect_test_cmd(repo))
     await install_once(repo)
 
-    run_log = JsonlRunLog(path=repo / ".scratch" / "run.jsonl")
-    store = FilesystemIssueStore(issues_dir=find_issues_dir(repo, issues))
-
     scheduler = Scheduler(
         repo=repo,
         git=git,
-        store=store,
-        run_log=run_log,
+        store=FilesystemIssueStore(issues_dir=find_issues_dir(repo, issues)),
+        run_log=JsonlRunLog(path=repo / ".scratch" / "run.jsonl"),
         runner=runner,
         implementer=SubprocessImplementer(
             build_argv=lambda brief, findings, wt: _agent_argv(wt)
         ),
-        merge_queue=MergeQueue(git=git, runner=runner, integration=integration, log=run_log),
+        merge_queue=MergeQueue(git=git, runner=runner, integration=integration),
         integration=integration,
         budget=budget or Budget(),
+        concurrency=concurrency,
     )
     return await scheduler.run()
+
+
+def render(n: Notification) -> str:
+    """**One** notification, at the end.
+
+    The bar: *if you cannot tell from this alone whether to spend your first ten minutes reading a
+    diff or rewriting a PRD, it has failed.* So each escalation leads with what kind of failure it
+    was, says what it is holding up, and — where the model left one — quotes the criterion it
+    believes it cannot satisfy. Most urgent first; there is no scrolling to find the important one.
+    """
+    lines = [f"landed: {', '.join(n.landed) if n.landed else 'nothing'}"]
+    if not n.escalations:
+        return lines[0]
+
+    lines.append(f"\nneeds a human ({len(n.escalations)}), most urgent first:")
+    for e in n.escalations:
+        lines.append(f"\n  {e.sub_issue}  {e.outcome.value}")
+        if e.stranded:
+            lines.append(f"    holding up: {', '.join(e.stranded)}")
+        if e.report.claim is not None:
+            lines.append(f"    it says: {e.report.claim.unsatisfiable_criterion}")
+            lines.append(f"    would need: {e.report.claim.what_would_satisfy}")
+        if e.report.integration_detail is not None:
+            lines.append(f"    the merge queue: {e.report.integration_detail}")
+        commits = e.report.telemetry.commits
+        lines.append(
+            f"    harness: {commits} commit{'' if commits == 1 else 's'}, "
+            f"suite {'green' if e.report.suite.green else 'red'}, "
+            f"worktree preserved at .worktrees/failed/{e.sub_issue}"
+        )
+    return "\n".join(lines)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -94,14 +129,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     runner = sub.add_parser("run", help="run the issue graph to completion")
     runner.add_argument("repo", type=Path)
     runner.add_argument("issues", type=Path, nargs="?", default=None)
+    runner.add_argument(
+        "-j",
+        "--parallel",
+        type=int,
+        default=DEFAULT_CONCURRENCY,
+        help="how many sub-issues may run at once. They still land one at a time.",
+    )
 
     args = parser.parse_args(argv)
-    report = asyncio.run(run(args.repo, args.issues))
-
-    for id in report.landed:
-        print(f"landed   {id}")
-    for id, outcome in report.failed.items():
-        print(f"{outcome.value:<8} {id}")
+    report = asyncio.run(run(args.repo, args.issues, concurrency=args.parallel))
+    print(render(report.notification))
     return 0 if report.clean else 1
 
 

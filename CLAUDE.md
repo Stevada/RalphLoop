@@ -7,8 +7,7 @@ working directly in this repo — **not** by the harness's own Implementer, whic
 yet. The build order is `.scratch/build_harness/` (parent PRD + eleven sub-issues); the contract
 is `docs/architecture.md`.
 
-Until sub-issue 11 lands there is no scheduler, no merge queue, and no worktree isolation. Do
-not reach for them, and do not reference `src/*.sh` — it is gone.
+Do not reference `src/*.sh` — it is gone.
 
 ## Commands
 
@@ -24,13 +23,15 @@ uv pip install -e ".[dev]"`.
 a type annotation, and only mypy checks it. Runtime `isinstance` on a Protocol compares method
 names, not signatures, and would wave a broken fake through.
 
-**`ralph run <repo> [issues-dir]` works** as of sub-issue 04 — it reads the graph, refuses a red
-base, cuts a worktree, runs an agent, classifies the session, and takes it through the merge queue.
+**`ralph run [-j N] <repo> [issues-dir]` works** — it reads the graph, refuses a red base, and runs
+every eligible sub-issue **concurrently** (default 4, `-j` to change it), landing them **one at a
+time** through the merge lock. A failure is classified, quarantined, and drained around: the run
+does not stop, its dependents never get a turn, and one notification comes out at the end.
+
 The agent it runs is whatever `RALPH_AGENT_CMD` names; Codex and Copilot become two more of those
 in #08 and #10.
 
-Still to come: `ralph validate` (#11), parallelism (#05), quarantine (#06), the Editor (#07), the
-context ceiling (#08).
+Still to come: the Editor and the cycle cap (#07), the context ceiling (#08), `ralph validate` (#11).
 
 ## Issue format
 - Issues live in `.scratch/<phase>/issues/` inside the target repo (e.g. `.scratch/refine_data_flow/issues/`)

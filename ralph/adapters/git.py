@@ -46,6 +46,18 @@ class GitCli:
         run_git(self.repo, "worktree", "add", "-b", branch, str(at), base)
         return Worktree(path=at, branch=branch, base=base)
 
+    def move_worktree(self, wt: Worktree, to: Path) -> Worktree:
+        """`git worktree move`, not `shutil.move` — the checkout is registered in the base repo's
+        `.git/worktrees`, and moving the directory behind git's back leaves a dangling registration
+        that breaks the next `worktree add` at the old path.
+
+        Raises rather than shrugging. A failure here is not cosmetic: the quarantined worktree is
+        the evidence, and a human who is told it is at `failed/` must find it at `failed/`.
+        """
+        to.parent.mkdir(parents=True, exist_ok=True)
+        run_git(self.repo, "worktree", "move", str(wt.path), str(to))
+        return Worktree(path=to, branch=wt.branch, base=wt.base)
+
     def rebase(self, wt: Worktree, onto: str) -> bool:
         """False on conflict — and **no rebase left in progress**. A half-finished rebase in a
         worktree the Editor is about to read would show it a tree neither actor ever produced."""

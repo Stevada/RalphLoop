@@ -1,4 +1,4 @@
-"""The rules: classify, route, eligibility, the cycle cap.
+"""The rules: classify, route, eligibility, the cycle cap, the failure report, the notification.
 
 Every test here is pure — no subprocess, no git, no model. That is the point of `rules/`: the
 highest-value logic in the system is also the cheapest to test.
@@ -9,9 +9,11 @@ from __future__ import annotations
 import pytest
 
 from ralph.domain import (
+    ATTENTION_ORDER,
     Actor,
     CycleLedger,
     Destination,
+    FailureReport,
     EditorVerdict,
     Outcome,
     SubIssueId,
@@ -20,7 +22,9 @@ from ralph.domain import (
     classify_editor,
     classify_implementer,
     eligible,
+    failure_report,
     never_eligible,
+    notify,
     route,
 )
 from tests.builders import graph_of, impasse, suite, telemetry
@@ -285,3 +289,129 @@ def test_an_untouched_sub_issue_has_spent_nothing() -> None:
     ledger = CycleLedger()
     assert not ledger.exhausted(_01)
     assert not ledger.must_be_terminal(_01)
+
+
+# --- failure_report: the model's story, and the story the harness will not invent ----------------
+
+
+def test_the_claim_is_only_ever_what_the_model_actually_emitted() -> None:
+    report = failure_report(Outcome.IMPASSE, telemetry(impasse_report=impasse()), suite(green=False))
+
+    assert report.claim is not None
+    assert report.claim.unsatisfiable_criterion == "the third acceptance criterion"
+
+
+def test_a_session_that_emitted_no_sentinel_gets_no_claim() -> None:
+    """**The harness never fabricates an impasse report.** A killed session authored none;
+    synthesising one from a partial transcript would be the least honest artifact the system could
+    produce — a story with no author, handed to the Editor as though a model stood behind it.
+    """
+    report = failure_report(
+        Outcome.INFRA_FAILED, telemetry(killed="wall-clock", commits=0), suite(green=False)
+    )
+
+    assert report.claim is None
+    assert report.telemetry.killed == "wall-clock"  # what is left is what the harness saw itself
+
+
+def test_the_report_carries_the_claim_and_the_contradicting_facts_together() -> None:
+    """An agent that says "all tests pass" beside a red suite produces a report carrying both. The
+    two disagreeing is the signal, and a report that dropped either half would hide it."""
+    claimed_green = telemetry(session_output="All tests pass!", impasse_report=impasse())
+
+    report = failure_report(Outcome.SILENT_RED, claimed_green, suite(green=False, output="1 failed"))
+
+    assert report.claim is not None  # the model's story
+    assert "All tests pass" in report.telemetry.session_output
+    assert not report.suite.green  # and the fact it is contradicted by
+    assert report.suite.output == "1 failed"
+
+
+# --- notify: one notification, and which one to open first ---------------------------------------
+
+
+def escalate(outcome: Outcome) -> FailureReport:
+    return failure_report(outcome, telemetry(), suite(green=False))
+
+
+def test_the_notification_counts_what_each_failure_stranded() -> None:
+    """Transitive: the sub-issue behind the sub-issue behind the quarantined one is just as stuck,
+    and nothing in between was marked to say so."""
+    graph = graph_of({"01": [], "02": ["01"], "03": ["02"], "04": []})
+    states = {
+        SubIssueId("01"): SubIssueState.NEEDS_HUMAN,
+        SubIssueId("02"): SubIssueState.READY,
+        SubIssueId("03"): SubIssueState.READY,
+        SubIssueId("04"): SubIssueState.LANDED,
+    }
+
+    n = notify(graph, states, [SubIssueId("04")], {SubIssueId("01"): escalate(Outcome.IMPASSE)})
+
+    assert n.landed == (SubIssueId("04"),)
+    assert n.escalations[0].stranded == (SubIssueId("02"), SubIssueId("03"))
+
+
+def test_the_outcome_decides_what_kind_of_ten_minutes_you_are_about_to_spend() -> None:
+    """Infra first — it means the harness itself broke, and nothing else this run says is
+    trustworthy. Then the outcomes that send you to a brief, then the ones that send you to a diff.
+    """
+    assert ATTENTION_ORDER[Outcome.INFRA_FAILED] < ATTENTION_ORDER[Outcome.CEILING_EXCEEDED]
+    assert ATTENTION_ORDER[Outcome.CEILING_EXCEEDED] < ATTENTION_ORDER[Outcome.IMPASSE]
+    assert ATTENTION_ORDER[Outcome.IMPASSE] < ATTENTION_ORDER[Outcome.INTEGRATION_FAILED]
+    assert ATTENTION_ORDER[Outcome.INTEGRATION_FAILED] < ATTENTION_ORDER[Outcome.SILENT_RED]
+    assert Outcome.SUCCESS not in ATTENTION_ORDER  # a success does not escalate
+
+
+def test_the_ranking_puts_the_worse_kind_first_even_when_it_strands_less() -> None:
+    graph = graph_of({"01": [], "02": [], "03": ["02"]})
+    states = {
+        SubIssueId("01"): SubIssueState.NEEDS_HUMAN,  # infra-failed, stranding nobody
+        SubIssueId("02"): SubIssueState.NEEDS_HUMAN,  # silent-red, stranding 03
+        SubIssueId("03"): SubIssueState.READY,
+    }
+
+    n = notify(
+        graph,
+        states,
+        [],
+        {
+            SubIssueId("02"): escalate(Outcome.SILENT_RED),
+            SubIssueId("01"): escalate(Outcome.INFRA_FAILED),
+        },
+    )
+
+    assert [e.sub_issue for e in n.escalations] == [SubIssueId("01"), SubIssueId("02")]
+
+
+def test_blast_radius_breaks_the_tie_between_two_failures_of_the_same_kind() -> None:
+    """The outcome tells you what kind of ten minutes you are about to spend; the blast radius tells
+    you which of two identical failures to open first."""
+    graph = graph_of({"01": [], "02": [], "03": ["02"], "04": ["02"]})
+    states = {
+        SubIssueId("01"): SubIssueState.NEEDS_HUMAN,
+        SubIssueId("02"): SubIssueState.NEEDS_HUMAN,
+        SubIssueId("03"): SubIssueState.READY,
+        SubIssueId("04"): SubIssueState.READY,
+    }
+
+    n = notify(
+        graph,
+        states,
+        [],
+        {
+            SubIssueId("01"): escalate(Outcome.SILENT_RED),
+            SubIssueId("02"): escalate(Outcome.SILENT_RED),
+        },
+    )
+
+    assert [e.sub_issue for e in n.escalations] == [SubIssueId("02"), SubIssueId("01")]
+
+
+def test_a_success_that_reached_the_notification_is_a_defect_and_says_so() -> None:
+    """It cannot happen — `route` sends a success to the merge queue. If it ever does, the scheduler
+    quarantined something it had classified as fine, and silence would be the worst answer."""
+    graph = graph_of({"01": []})
+    states = {SubIssueId("01"): SubIssueState.NEEDS_HUMAN}
+
+    with pytest.raises(ValueError, match="not a failure"):
+        notify(graph, states, [], {SubIssueId("01"): escalate(Outcome.SUCCESS)})

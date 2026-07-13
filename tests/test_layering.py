@@ -111,6 +111,23 @@ def test_orchestration_never_names_a_concrete_adapter(module: Path) -> None:
         )
 
 
+def test_the_scheduler_asks_the_routing_table_rather_than_reimplementing_it() -> None:
+    """The taxonomy is one table, in `rules/routing.py`, and the scheduler is a caller of it.
+
+    The tempting alternative is an `if outcome is Outcome.CEILING_EXCEEDED or ...` in the pipeline,
+    which works, passes, and quietly becomes a second routing table that drifts from the first. The
+    failure mode is not a crash: it is the two disagreeing about `infra-failed` a year from now, and
+    a session being handed to an Editor that can do nothing with it.
+    """
+    tree = ast.parse((PACKAGE / "scheduler.py").read_text())
+    calls = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "route" in calls, "the scheduler decides where a session goes without asking `route`"
+
+
 @pytest.mark.parametrize("module", SHIPPED, ids=_rel)
 def test_the_shipped_package_never_imports_a_test(module: Path) -> None:
     """The fakes live under `tests/` so that this is enforceable at all. An adapter that reaches

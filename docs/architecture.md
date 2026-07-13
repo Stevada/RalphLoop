@@ -41,27 +41,32 @@ ralph/
       verdict.py   Verdict, EditorVerdict
       state.py     SubIssueState
       event.py     Event, EventKind
+      notification.py  Escalation, Notification   ← the one thing a human reads afterwards
     rules/         the VERBS — pure functions. what the system DECIDES.
       classify.py     session → Outcome            (the failure taxonomy)
       routing.py      (actor, outcome) → Destination   (and never a retry)
       eligibility.py  graph + states → what may run    (quarantine-and-drain)
       cycles.py       CycleLedger                      (the cap of three)
+      report.py       → FailureReport      (and the impasse it will NOT invent)
+      notify.py       → Notification       (what each failure cost, and what to open first)
 
   ports.py         Protocols — the seams. every one has a fake.
   adapters/        codex, copilot, claude_editor, context, git, filesystem, runlog, suite
-  mergequeue.py    \
+  events.py        the Event factory — needs a clock, so not domain/; needed by both
+  mergequeue.py    \  the merge queue and the scheduler, so not an adapter either
   scheduler.py      } orchestration — depends on ports only, never on a concrete adapter
   cli.py           composition root — the only place a concrete adapter is named
 
 tests/
   fakes.py         a fake per Protocol. adapters: they satisfy an interface at a seam.
   builders.py      telemetry(), graph_of(), … values, not adapters. a different thing.
+  testbed.py       a REAL git repo and a REAL stand-in agent subprocess. neither is a fake.
 ```
 
-**`rules/` is the harness.** Four files, and between them they hold the entire design: the failure
-taxonomy, the fact that nothing is ever retried, how quarantine drains, and the cycle cap.
-Everything else in this repo exists to feed them. If you want to know what this system *decides*,
-you read one folder.
+**`rules/` is the harness.** Six files, and between them they hold the entire design: the failure
+taxonomy, the fact that nothing is ever retried, how quarantine drains, the cycle cap, the report
+the harness will not fabricate, and which failure a human should open first. Everything else in
+this repo exists to feed them. If you want to know what this system *decides*, you read one folder.
 
 **`rules/` may import `model/`. `model/` may not import `rules/`** — a test enforces it. A value
 that knows how it will be classified has stopped being a value.
@@ -609,24 +614,38 @@ class LandResult(StrEnum):
     FF_REFUSED      = "ff-refused"         # ─┘
     HEAD_MOVED      = "head-moved"
 
+@dataclass(frozen=True, slots=True)
+class Land:
+    result: LandResult
+    suite:  SuiteResult | None = None   # the run on the PROSPECTIVE MERGE, when it got that far
+
 class MergeQueue:
-    def __init__(self, git, runner, integration: str, log: RunLog):
+    def __init__(self, git, runner, integration: str):
         self._merge_lock = asyncio.Lock()   # canonical term: "merge lock"
 
-    async def land(self, sub: SubIssue, wt: Worktree) -> LandResult:
+    async def land(self, wt: Worktree) -> Land:
         async with self._merge_lock:        # held for rebase → suite → ff. nothing else.
-            if self._git.head_branch() != self._integration:  return LandResult.HEAD_MOVED
-            if not self._git.rebase(wt, self._integration):   return LandResult.REBASE_CONFLICT
-            if not (await self._runner.run(wt.path)).green:   return LandResult.SUITE_RED
-            if not self._git.merge_ff_only(wt.branch):        return LandResult.FF_REFUSED
-            await self._log.landed(sub.id)  # merge first, then write
-            return LandResult.LANDED
+            if self._git.head_branch() != self._integration:  return Land(LandResult.HEAD_MOVED)
+            if not self._git.rebase(wt, self._integration):   return Land(LandResult.REBASE_CONFLICT)
+            suite = await self._runner.run(wt.path)
+            if not suite.green:                  return Land(LandResult.SUITE_RED, suite)
+            if not self._git.merge_ff_only(wt.branch):  return Land(LandResult.FF_REFUSED, suite)
+            return Land(LandResult.LANDED, suite)
 ```
 
 The suite runs on the *prospective* merge result, so `merge --ff-only` is only ever a
 fast-forward of an already-verified tree: the integration branch is correct by construction.
 The lock is never held while the Editor reasons, so one sub-issue's integration failure never
 stalls the queue for its siblings.
+
+**The queue writes nothing, anywhere.** Its job is to decide whether this tree may become the
+integration branch, and to say so. Recording *that* a sub-issue landed is a state transition, and
+state transitions belong to the scheduler — two writers for one fact is one writer too many.
+
+`Land` carries the suite out with it because that suite is the **only honest one** for an
+`integration-failed` sub-issue. The worktree's own run was green — that is why it reached the queue
+at all — and handing the Editor a green `SuiteResult` beside an integration failure would be
+handing it a contradiction the harness manufactured for it.
 
 ### `Scheduler`
 
@@ -635,25 +654,37 @@ stalls the queue for its siblings.
 
 class Scheduler:
     async def run(self) -> RunReport:
-        await self._base_green_check()     # red base, no agent starts. fatal.
-        await self._install_deps_once()    # in the base checkout. never `|| true`.
-        async with asyncio.TaskGroup() as tg:
-            ...                            # dispatch on eligibility, capped by a semaphore
-        return self._report()              # one notification, at the end
-
-    async def _pipeline(self, sub: SubIssue) -> None:
-        """One sub-issue's whole life. At most three cycles."""
+        await self._refuse_a_red_base()    # red base, no agent starts. fatal.
+        graph, states = self._store.read_graph()
         while True:
+            for id in sorted(eligible(graph, states)):
+                states[id] = SubIssueState.IN_PROGRESS   # claimed BEFORE this coroutine can yield
+                running.add(asyncio.create_task(self._pipeline(graph.sub_issues[id], capacity)))
+            if not running:
+                return RunReport(notify(graph, states, landed, failures))  # ONE notification
+            # FIRST_COMPLETED, never gather: eligibility is re-derived on every completion, so a
+            # sub-issue starts the moment its blockers land. THERE IS NO WAVE BARRIER.
+            done, running = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                ...   # LANDED, or NEEDS_HUMAN + its FailureReport. Never a retry.
+
+    async def _pipeline(self, sub: SubIssue, capacity: asyncio.Semaphore) -> _Closed:
+        """One sub-issue's whole life. At most three cycles."""
+        async with capacity:                # held for the WHOLE pipeline, landing included: a
+          while True:                       # sub-issue is not finished until it is on integration
             wt = self._git.add_worktree(f"ralph/{sub.id}", ..., self._integration)
             brief, findings = self._store.content(sub.id)
             t = await self._implementer.run(brief, findings, wt, self._budget)
-            outcome = classify_implementer(t, await self._runner.run(wt.path))
+            suite = await self._runner.run(wt.path)
+            outcome = classify_implementer(t, suite)
 
-            if outcome is Outcome.SUCCESS:
-                result = await self._merge_queue.land(sub, wt)
-                if result is LandResult.LANDED:
+            if route(Actor.IMPLEMENTER, outcome) is Destination.MERGE_QUEUE:
+                land = await self._merge_queue.land(wt)
+                if land.result is LandResult.LANDED:
                     return self._mark(sub, SubIssueState.LANDED)
                 outcome = Outcome.INTEGRATION_FAILED   # worktree preserved for the Editor
+                suite = land.suite or suite            # the PROSPECTIVE-MERGE suite, not the
+                                                       # green one it had in isolation
 
             match route(Actor.IMPLEMENTER, outcome):
                 case Destination.HUMAN:       # ceiling-exceeded or infra-failed. no cycle spent.
@@ -669,7 +700,7 @@ class Scheduler:
                                                 # count this cycle, or the third Editor is never
                                                 # told it is the last one.
             t, verdict = await self._editor.adjudicate(
-                brief, findings, self._failure_report(sub, t, outcome), wt,
+                brief, findings, failure_report(outcome, t, suite), wt,
                 self._budget, self._ledger.must_be_terminal(sub.id),
             )
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -30,15 +31,46 @@ wire format here — where the only writer lives — keeps the writer and the re
 
 
 class Behaviour(StrEnum):
-    """What the stand-in agent has been told to do. Six shapes, and the harness must tell them
+    """What the stand-in agent has been told to do. Seven shapes, and the harness must tell them
     apart: five of them exit in ways that look alike from the outside."""
 
     SUCCEED = "succeed"
+    SLOW = "slow"  # succeeds, but takes long enough for a sibling to overtake it
     COMMIT_NOTHING = "commit-nothing"
     RED_SUITE = "red-suite"
     IMPASSE = "impasse"
     HANG = "hang"
     CONFLICT = "conflict"
+
+
+SLOW_S = 0.75
+"""How long `SLOW` takes. Long enough that a `SUCCEED` sibling dispatched at the same moment
+finishes and lands first — which is how "no wave barrier" is observed rather than asserted."""
+
+LEDGER_ENV = "RALPH_TESTBED_LEDGER"
+"""Where the agent records that it started and stopped. Set by a test, read by the agent; the
+harness knows nothing about it, which is the only way it can be evidence *about* the harness."""
+
+
+def behaviour_spec(default: Behaviour, per_sub_issue: Mapping[str, Behaviour] | None = None) -> str:
+    """One agent, different behaviour per sub-issue — the shape every quarantine test needs, because
+    the whole claim is that one sub-issue can fail while its siblings land."""
+    table = [f"{tag}={b.value}" for tag, b in sorted((per_sub_issue or {}).items())]
+    return ",".join([*table, f"*={default.value}"])
+
+
+def peak_concurrency(ledger: Path) -> int:
+    """The high-water mark of agents alive at once, read off the ledger.
+
+    Counted from the *append order* of the start/stop marks rather than their timestamps: appends
+    from concurrent processes are ordered by when they happened, and that is exactly the fact we
+    want — no clock resolution to argue about.
+    """
+    alive = peak = 0
+    for mark in ledger.read_text().split():
+        alive += 1 if mark.startswith("+") else -1
+        peak = max(peak, alive)
+    return peak
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -95,6 +127,27 @@ class TargetRepo:
         )
         return proc.returncode == 0
 
+    def write_graph(self, edges: Mapping[str, Sequence[str]]) -> None:
+        """Replace the issue graph with one of the test's own shape — `{"03": ["01", "02"]}` reads
+        as "03 is blocked by 01 and 02".
+
+        The default fixture is a chain, which can prove ordering and nothing about parallelism. A
+        fan-out is what makes concurrency observable, and a diamond is what makes *draining* around
+        a quarantined sub-issue observable. Both need this.
+
+        Committed, not just written: the base repo's working tree must be clean enough that the
+        merge queue's fast-forwards are not fighting stray edits in `.scratch/`.
+        """
+        for existing in self.issues_dir.glob("*.md"):
+            existing.unlink()
+        for id, blockers in edges.items():
+            body = f"# {id} — sub-issue {id}\n\nStatus: ready\n\n## Acceptance criteria\n\n- [ ] It works.\n"
+            if blockers:
+                body += "\n## Blocked by\n\n" + "".join(f"- #{b}\n" for b in blockers)
+            (self.issues_dir / f"{id}-sub.md").write_text(body)
+        self.git("add", "-A")
+        self.git("commit", "-m", "a graph of the test's own shape")
+
 
 def make_target_repo(root: Path) -> TargetRepo:
     """Build the throwaway repo. Torn down with its tmp dir; nothing to clean up by hand."""
@@ -133,17 +186,23 @@ def make_target_repo(root: Path) -> TargetRepo:
 _AGENT_SOURCE = '''\
 """The stand-in agent. A real subprocess doing real work, scripted.
 
-Invoked with a behaviour and a tag (the sub-issue it is pretending to be), in a worktree it
+Invoked with a behaviour spec and a tag (the sub-issue it is pretending to be), in a worktree it
 treats exactly as an Implementer would: it edits files there and commits them.
+
+The spec is either one behaviour for everyone (`succeed`) or a per-sub-issue table with a default
+(`02=impasse,*=succeed`). A run in which one sub-issue fails and its siblings land needs the table;
+that run is the entire claim of quarantine-and-drain.
 """
 
 import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 IMPASSE_OPEN, IMPASSE_CLOSE = "<impasse>", "</impasse>"
+SLOW_S = 0.75
 
 
 def git(*args: str) -> None:
@@ -155,9 +214,37 @@ def commit(message: str) -> None:
     git("-c", "user.email=agent@ralph.invalid", "-c", "user.name=Stand-In", "commit", "-m", message)
 
 
+def resolve(spec: str, tag: str) -> str:
+    if "=" not in spec:
+        return spec
+    table = dict(entry.split("=", 1) for entry in spec.split(","))
+    return table.get(tag, table["*"])
+
+
+def mark(sign: str, tag: str) -> None:
+    """Append-only, one token per line. Two concurrent agents both writing here is the point."""
+    ledger = os.environ.get("RALPH_TESTBED_LEDGER")
+    if ledger:
+        with open(ledger, "a") as f:
+            f.write(f"{sign}{tag}\\n")
+
+
 def main() -> int:
-    behaviour, tag = sys.argv[1], sys.argv[2]
+    spec, tag = sys.argv[1], sys.argv[2]
+    behaviour = resolve(spec, tag)
     cwd = Path.cwd()
+
+    mark("+", tag)
+    try:
+        return act(behaviour, tag, cwd)
+    finally:
+        mark("-", tag)
+
+
+def act(behaviour: str, tag: str, cwd: Path) -> int:
+    if behaviour == "slow":
+        time.sleep(SLOW_S)
+        behaviour = "succeed"
 
     if behaviour == "succeed":
         (cwd / f"feature_{tag}.py").write_text(f"VALUE = {tag!r}\\n")
@@ -177,6 +264,9 @@ def main() -> int:
             "def test_broken() -> None:\\n    assert 1 == 2, 'the agent shipped this'\\n"
         )
         commit(f"feat({tag}): looks green to me")
+        # It says so, in as many words, and it is wrong. The failure report must carry both this
+        # sentence and the red suite the harness observed; the two disagreeing is the signal.
+        print(f"[{tag}] All tests pass. The implementation is complete.")
         return 0
 
     if behaviour == "impasse":
@@ -219,8 +309,9 @@ class StandInAgent:
 
     script: Path
 
-    def argv(self, behaviour: Behaviour, tag: str) -> tuple[str, ...]:
-        return (sys.executable, str(self.script), behaviour.value, tag)
+    def argv(self, behaviour: Behaviour | str, tag: str) -> tuple[str, ...]:
+        """`behaviour` is one shape for everyone, or a `behaviour_spec` table keyed by sub-issue."""
+        return (sys.executable, str(self.script), str(behaviour), tag)
 
 
 def make_stand_in_agent(root: Path) -> StandInAgent:

@@ -69,11 +69,9 @@ async def test_the_run_log_tells_the_true_story_in_order(
 
     assert story == [
         ("01", "session-opened", "in-progress"),
-        ("01", "terminal", "landed"),  # written by the merge queue, after the fast-forward
         ("01", "session-closed", "success"),
-        ("01", "terminal", "landed"),
+        ("01", "terminal", "landed"),  # after the fast-forward, never before
         ("02", "session-opened", "in-progress"),
-        ("02", "terminal", "landed"),
         ("02", "session-closed", "success"),
         ("02", "terminal", "landed"),
     ]
@@ -138,11 +136,12 @@ async def test_a_silent_red_session_does_not_land(
     assert report.landed == ()
     assert report.failed == {SubIssueId("01"): Outcome.SILENT_RED}
     assert repo.commit_count("integration") == 1
-    assert "Status: ready" in (repo.issues_dir / "01-first.md").read_text()
+    assert "Status: needs-human" in (repo.issues_dir / "01-first.md").read_text()
 
     # 02 is blocked by 01, which never landed, so it never became eligible and never got a turn.
     # Nothing was written to say so — quarantine-and-drain needs no `skipped` state.
     assert not repo.branch_exists("ralph/02")
+    assert "Status: ready" in (repo.issues_dir / "02-second.md").read_text()
 
 
 async def test_a_session_that_commits_a_red_suite_does_not_land(
@@ -205,7 +204,7 @@ async def test_a_read_only_issue_store_does_not_crash_the_run(
     events = json.loads(
         "[" + ",".join((repo.path / ".scratch" / "run.jsonl").read_text().splitlines()) + "]"
     )
-    assert sum(e["payload"] == SubIssueState.LANDED.value for e in events) == 4
+    assert sum(e["payload"] == SubIssueState.LANDED.value for e in events) == 2
 
 
 async def test_the_worktree_branch_carries_the_sub_issue_id(

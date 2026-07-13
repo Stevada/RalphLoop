@@ -137,11 +137,16 @@ class FakeGit:
     commit_counts: dict[str, int] = field(default_factory=dict)
     worktrees: list[Worktree] = field(default_factory=list)
     merged: list[str] = field(default_factory=list)
+    moved: list[tuple[str, Path]] = field(default_factory=list)
 
     def add_worktree(self, branch: str, at: Path, base: str) -> Worktree:
         wt = Worktree(path=at, branch=branch, base=base)
         self.worktrees.append(wt)
         return wt
+
+    def move_worktree(self, wt: Worktree, to: Path) -> Worktree:
+        self.moved.append((wt.branch, to))
+        return Worktree(path=to, branch=wt.branch, base=wt.base)
 
     def rebase(self, wt: Worktree, onto: str) -> bool:
         return wt.branch not in self.rebase_conflicts
