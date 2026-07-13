@@ -3,3 +3,5 @@ ralph-output.txt
 timings.txt
 .scratch/
 *.pyc
+.venv/
+*.egg-info/

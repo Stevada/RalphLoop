@@ -7,16 +7,21 @@ avoid" word appearing as a class, function, field, or state name is a defect.
 
 ## Why Python
 
-The bash harness is good at what it currently does: worktrees, rebase, fast-forward, lock.
-That is git plumbing, and bash is the right language for it. But every remaining item in
-PRD §10 — the failure taxonomy, the 120k ceiling, the impasse report, the Editor, Linear
-sync — is a thing bash is structurally bad at, and the ceiling in particular requires
-consuming a JSONL event stream and killing a process mid-session. The mix has flipped: git
-plumbing is now the minority of the code.
+*Historical note. The bash prototype this argument refers to has been deleted; nothing in the
+repo depends on it, and nothing below asks you to port anything. It is recorded because it is
+the reason the system has the shape it does.*
 
-One consequence is worth stating up front, because it deletes code. A **run** becomes a
-single process: the merge lock is an `asyncio.Lock` rather than `flock`, and the PID
-tracking, result files, and `reap_finished` polling in `parallel-codex.sh` all go away.
+The bash prototype was good at what it did: worktrees, rebase, fast-forward, lock. That is git
+plumbing, and bash is the right language for it. But every remaining item in PRD §10 — the
+failure taxonomy, the 120k ceiling, the impasse report, the Editor, Linear sync — is a thing
+bash is structurally bad at, and the ceiling in particular requires consuming a JSONL event
+stream and killing a process mid-session. The mix had flipped: git plumbing was the minority
+of the code.
+
+One consequence is worth stating up front, because it deletes code. A **run** is a single
+process: the merge lock is an `asyncio.Lock` rather than `flock`. No PID tracking, no result
+files, no polling to reap finished sessions. If you find yourself reaching for any of those,
+you have mistranslated the design.
 
 ## Layers
 
@@ -24,14 +29,54 @@ The dependency arrow points inward, always.
 
 ```
 ralph/
-  domain/        pure. no I/O. stdlib only.
-  ports.py       Protocols — the seams. every one has a fake.
-  adapters/      codex, copilot, claude_editor, context, git, filesystem, linear, test runner
-  mergequeue.py  \
-  scheduler.py    } orchestration
-  runlog.py      /
-  cli.py         composition root — the only place a concrete adapter is named
+  domain/          pure. no I/O. stdlib only.
+    __init__.py    ← THE INTERFACE. import `from ralph.domain import Outcome`, never from
+                     `ralph.domain.model.session`. the layout below is nobody else's business.
+    model/         the NOUNS — frozen values, zero logic. what the system is made of.
+      graph.py     SubIssueId, SubIssue, IssueGraph, GraphError
+      content.py   Brief, Findings
+      session.py   Actor, Outcome, SessionTelemetry, SuiteResult
+      impasse.py   Approach, ImpasseReport        ← the model's claim
+      failure.py   FailureReport                  ← the claim + the harness's facts
+      verdict.py   Verdict, EditorVerdict
+      state.py     SubIssueState
+      event.py     Event, EventKind
+    rules/         the VERBS — pure functions. what the system DECIDES.
+      classify.py     session → Outcome            (the failure taxonomy)
+      routing.py      (actor, outcome) → Destination   (and never a retry)
+      eligibility.py  graph + states → what may run    (quarantine-and-drain)
+      cycles.py       CycleLedger                      (the cap of three)
+
+  ports.py         Protocols — the seams. every one has a fake.
+  adapters/        codex, copilot, claude_editor, context, git, filesystem, runlog, suite
+  mergequeue.py    \
+  scheduler.py      } orchestration — depends on ports only, never on a concrete adapter
+  cli.py           composition root — the only place a concrete adapter is named
+
+tests/
+  fakes.py         a fake per Protocol. adapters: they satisfy an interface at a seam.
+  builders.py      telemetry(), graph_of(), … values, not adapters. a different thing.
 ```
+
+**`rules/` is the harness.** Four files, and between them they hold the entire design: the failure
+taxonomy, the fact that nothing is ever retried, how quarantine drains, and the cycle cap.
+Everything else in this repo exists to feed them. If you want to know what this system *decides*,
+you read one folder.
+
+**`rules/` may import `model/`. `model/` may not import `rules/`** — a test enforces it. A value
+that knows how it will be classified has stopped being a value.
+
+The domain is **not** split by actor, and that is deliberate. `Outcome`, `SessionTelemetry`, and
+`SuiteResult` belong to *both* actors — the Editor is bounded exactly like the Implementer — and
+`route(actor, outcome)` is explicitly about both. An `implementer/` ⁄ `editor/` split would leave
+the shared types with no owner and force a `shared/` folder that ends up holding most of the
+domain. The same objection is why `adapters/` is flat: `copilot.py` is *both* an Implementer and
+an Editor, so grouping adapters by port would have to split or duplicate it.
+
+**The fakes live under `tests/`, not in the package.** Ralph is an application: nothing downstream
+imports `ralph.fakes`, and keeping the fakes out of the package is what makes "no adapter may reach
+for a fake" enforceable rather than aspirational. A test asserts the package imports nothing from
+`tests/`.
 
 The Implementer and the Editor are each chosen at startup — Codex or Copilot implements;
 Claude Code or Copilot edits — and nothing downstream of `cli.py` knows which.
@@ -52,7 +97,7 @@ store. This is what makes the "the Editor may never add, remove, or re-link a su
 invariant a property of the types rather than a rule someone has to remember.
 
 ```python
-# domain/graph.py
+# domain/model/graph.py
 
 SubIssueId = NewType("SubIssueId", str)
 
@@ -82,7 +127,7 @@ class IssueGraph:
 ### Brief and findings are two fields, deliberately
 
 ```python
-# domain/content.py
+# domain/model/content.py
 
 @dataclass(frozen=True, slots=True)
 class Brief:
@@ -107,7 +152,7 @@ come from an Implementer session — an Editor session cannot declare itself stu
 are two classifiers, and the Editor's one is structurally incapable of returning them.
 
 ```python
-# domain/outcomes.py
+# domain/model/session.py
 
 class Actor(StrEnum):
     IMPLEMENTER = "implementer"
@@ -147,7 +192,7 @@ the identifiers is free, and the day someone writes `if suite.verified:` is the 
 distinction starts to erode.
 
 ```python
-# domain/classify.py
+# domain/rules/classify.py
 
 def classify_implementer(t: SessionTelemetry, suite: SuiteResult) -> Outcome:
     """Precedence is load-bearing: a ceiling kill and a crash both exit non-zero and are
@@ -171,6 +216,41 @@ Zero commits is never a benign skip. `INTEGRATION_FAILED` is unreachable from ei
 classifier: it does not classify a session — the Implementer session already succeeded, green
 in isolation — and only the merge queue can raise it.
 
+### The claim and the corroboration
+
+The impasse report is the model's narration. `SessionTelemetry` is what the harness observed. They
+are separate types, and a `FailureReport` puts them side by side — because the Editor's job is to
+check one against the other, and *their disagreeing is itself a signal*.
+
+```python
+# domain/model/impasse.py — a leaf. What the session emits; it knows nothing about how it was classified.
+
+@dataclass(frozen=True, slots=True)
+class Approach:
+    tried: str
+    abandoned_because: str
+
+@dataclass(frozen=True, slots=True)
+class ImpasseReport:
+    failing_test: str
+    assertion_output: str                 # verbatim, not summarised
+    approaches: tuple[Approach, ...]
+    unsatisfiable_criterion: str
+    what_would_satisfy: str
+
+# domain/model/failure.py — composes the claim with the harness's facts, so it sits downstream
+# of `session.py`, which imports `impasse.py`. Splitting them is what breaks that import cycle.
+
+@dataclass(frozen=True, slots=True)
+class FailureReport:
+    outcome: Outcome
+    claim: ImpasseReport | None    # absent for silent-red (it believed it had succeeded) and for
+                                   # integration-failed (it *had* succeeded; the queue rejected it)
+    telemetry: SessionTelemetry    # never absent
+    suite: SuiteResult
+    integration_detail: str | None = None    # the merge queue's record, when it raised the failure
+```
+
 ### Routing
 
 The taxonomy table, executable, one test per row. `ceiling-exceeded` and `infra-failed` route
@@ -178,7 +258,7 @@ identically for both actors; only `SUCCESS` needs to know who is asking, because
 Implementer's success goes to the merge queue and an Editor's success is a verdict to act on.
 
 ```python
-# domain/routing.py
+# domain/rules/routing.py
 
 class Destination(StrEnum):
     MERGE_QUEUE    = "merge-queue"
@@ -225,7 +305,7 @@ sends you to the graph, the other to the lockfile.
 ### Verdicts and the cycle cap
 
 ```python
-# domain/verdicts.py
+# domain/model/verdict.py  (the types)  +  domain/rules/cycles.py  (the cap)
 
 class Verdict(StrEnum):
     REVISE          = "revise"
@@ -261,7 +341,7 @@ class CycleLedger:
 ### Lifecycle
 
 ```python
-# domain/lifecycle.py
+# domain/model/state.py  (the type)  +  domain/rules/eligibility.py  (the rules)
 
 class SubIssueState(StrEnum):
     READY       = "ready"          # stored: the Planner authorised this sub-issue to run
@@ -320,10 +400,18 @@ class Editor(Protocol):
                          ) -> tuple[SessionTelemetry, EditorVerdict | None]: ...
 
 class IssueStore(Protocol):
+    """The issue tracker: sub-issue files today, Linear later."""
     def read_graph(self) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]: ...
     def content(self, id: SubIssueId) -> tuple[Brief, Findings]: ...
     async def record_revision(self, id, brief: Brief, findings: Findings) -> None: ...
-    async def write_event(self, e: Event) -> None: ...    # write-through, best-effort
+    async def write_event(self, e: Event) -> None: ...    # best-effort: a run must not die
+                                                          # because Linear was unreachable
+
+class RunLog(Protocol):
+    """The harness's authoritative record. A port, not a concrete JSONL writer, because the
+    merge queue and the scheduler both take one and orchestration may not name an adapter."""
+    async def write(self, e: Event) -> None: ...
+    def events(self) -> tuple[Event, ...]: ...
 
 class TestRunner(Protocol):
     async def run(self, dir: Path) -> SuiteResult: ...
@@ -601,8 +689,19 @@ goes wrong trains you to ignore it.
 Append-only, one line per event. Two kinds of thing and nothing else: session states, and
 Editor verdicts. Token spend, diffstats, and failing-test output belong in the impasse report.
 
+`RunLog` is a **Protocol in `ports.py`**, implemented by `adapters/runlog.py` (JSONL on disk).
+It has to be: the merge queue and the scheduler both take one, and orchestration may not name a
+concrete adapter — that privilege belongs to `cli.py` alone. It also gives the scheduler's tests
+an in-memory log to assert against instead of a temp file.
+
+It is a different sink from `IssueStore.write_event`, and deliberately so. The store mirrors a
+transition back into the issue tracker and is **best-effort** — a run must not die because Linear
+was unreachable. The run log is the harness's **authoritative** record of what happened, in order.
+Same `Event`, two sinks, different durability.
+
 ```python
-# runlog.py
+# domain/model/event.py — not runlog.py: `IssueStore.write_event` and `RunLog.write` both take one,
+# and `ports.py` may not import orchestration. Both adapters import it from here.
 
 @dataclass(frozen=True, slots=True)
 class Event:
@@ -619,10 +718,10 @@ class Event:
 | PRD §10 | Module |
 |---|---|
 | Merge queue | `mergequeue.py` — merge lock, rebase, re-run suite in the worktree, fast-forward |
-| Failure taxonomy + base-green | `domain/classify.py`, `domain/routing.py`, `runlog.py`, `Scheduler._base_green_check` |
+| Failure taxonomy + base-green | `domain/rules/classify.py`, `domain/rules/routing.py`, `adapters/runlog.py`, `Scheduler._base_green_check` |
 | Context ceiling and timeout | `ports.Budget`, `adapters/context.ContextMeter` + per-CLI `ContextSource` |
-| Impasse report format | `domain/impasse.py` |
-| The Editor | `adapters/claude_editor.py`, `adapters/copilot.py`, `domain/verdicts.CycleLedger` |
+| Impasse report format | `domain/model/impasse.py`, `domain/model/failure.py` |
+| The Editor | `adapters/claude_editor.py`, `adapters/copilot.py`, `domain/rules/cycles.CycleLedger` |
 | Linear sync | `adapters/linear.py` behind the existing `IssueStore` protocol |
 | PR + CI + notification | `RunReport`, `ralph validate` refusing repos without PR CI |
 

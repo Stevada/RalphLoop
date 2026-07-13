@@ -55,7 +55,10 @@ Brief description of the work.
 - #00 — database schema
 ```
 
-**Status values:** `not-started` → `ready` → `in-progress` → `landed`, or `needs-human`.
+**Status values:** `ready` → `in-progress` → `landed`, or `needs-human`.
+
+Four, and no others. `ready` is the Planner's authorisation to run — a sub-issue it has not
+authorised does not belong in the graph yet, so there is no `not-started`.
 
 `landed` is a sub-issue's terminal state; `done` belongs to the parent issue and is never written
 to a sub-issue. The merge queue sets `landed` automatically, after the fast-forward. Do not set it

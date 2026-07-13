@@ -3,8 +3,11 @@
 Harnessed engineering for coding agents. Three actors, one medium, one repo, one PR.
 
 This document records the design and the reasoning behind it, including the risks
-accepted deliberately. It describes the target system. Where the current `src/`
-scripts diverge, that is noted under [Gaps](#gaps-between-this-design-and-srcs).
+accepted deliberately. It describes the target system.
+
+An earlier bash prototype has been deleted; §9 records the defects it had, as traps not to
+fall back into. `docs/architecture.md` is the contract — modules, types, and seams — and is
+what you implement against.
 
 Vocabulary is canonical in
 [`UBIQUITOUS_LANGUAGE.md`](../UBIQUITOUS_LANGUAGE.md). This document uses those terms; it
@@ -17,14 +20,20 @@ does not define them.
 Three actors. They never talk to each other. They talk to a sub-issue's **brief** and
 **findings**.
 
-| Actor | Model | Writes | Reads |
+| Actor | Backed by | Writes | Reads |
 |---|---|---|---|
-| **Planner** | Claude Opus | The issue graph and the first draft of every brief | PRD, codebase, integration branch |
-| **Editor** | Claude Opus | A single sub-issue's brief and findings | Everything; may run read-only commands |
-| **Implementer** | Codex, `gpt-5.3-codex` | All code, tests included | Its brief and findings, the repo |
+| **Planner** | Claude Opus, in conversation | The issue graph and the first draft of every brief | PRD, codebase, integration branch |
+| **Editor** | Claude Code **or** Copilot | A single sub-issue's brief and findings | Everything; may run read-only commands |
+| **Implementer** | Codex **or** Copilot | All code, tests included | Its brief and findings, the repo |
 
 The Planner is invoked by a human, in conversation. The Editor and Implementer run
 unattended inside a run.
+
+**An actor is a role, not a model.** Either CLI can back either of the two unattended roles;
+`cli.py` chooses from `RALPH_IMPLEMENTER` / `RALPH_EDITOR`, and nothing downstream knows which
+is running. That is a portfolio decision, not a hedge: the Implementer and the Editor should
+not be the same model on the same failure, because an Editor adjudicating an impasse declared
+by *itself* is the least independent sensor the system could have.
 
 ---
 
@@ -121,8 +130,12 @@ Installation failure is loud and fatal — never `|| true`.
 ### 4.4 The Implementer's session
 
 One continuous `codex exec` session. It writes tests first, then implementation,
-per `/tdd`. It iterates as it sees fit — running the suite, fixing, retrying — using its
+per `/tdd`. It iterates as it sees fit — running the suite, fixing, trying again — using its
 own judgment about when it is stuck.
+
+That inner loop is the *model's*, inside one session, and is the only thing in this system that
+resembles a retry. **The harness never retries anything**: it never re-dispatches a session, and
+it has no backoff. Do not read the sentence above as licence to add one.
 
 It exits exactly one of two ways:
 
@@ -605,11 +618,14 @@ And the risk lands on **decomposition**, the artifact with no automated feedback
 
 ---
 
-## 9. Gaps between this design and `src/`
+## 9. What the bash prototype got wrong
 
-What exists today, and what it costs:
+*Historical. `src/` has been deleted; this is not a migration checklist and there is nothing left
+to port. It is here because **every row is a defect the Python harness must not reintroduce**, and
+several are the kind of mistake that looks like a reasonable shortcut while you are writing it.
+Read the left column as a list of traps, not as a description of anything that exists.*
 
-| # | Current behaviour | Required |
+| # | The prototype's behaviour — do not reproduce it | Required instead |
 |---|---|---|
 | 1 | No Linear integration at all | Read graph on run start; write-through during |
 | 2 | Success = `codex exec` exit code | Success = harness-run suite result |
@@ -623,8 +639,8 @@ What exists today, and what it costs:
 | 10 | No timeout, no context ceiling | `timeout` + 120k context ceiling (rollout-file tail) |
 | 11 | No Editor, no escalation, no notification | Editor session, quarantine-and-drain, one notification |
 | 12 | No PR; merges into current branch | Integration branch → PR → CI → human |
-| 13 | Dependencies by filename numeric prefix | Linear issue IDs |
-| 14 | `ralph validate` does not check for PR CI | Refuse repos without CI |
+| 13 | Dependencies by filename numeric prefix | Linear issue IDs (later phase; filenames until then) |
+| 14 | Pre-flight did not check for PR CI | `ralph validate` refuses repos without CI |
 
 Note that #7 and #8 **delete** code: the wave barrier, the `wait` on all sessions, and the
 sequential merge loop all go away.

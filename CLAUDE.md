@@ -11,9 +11,18 @@ Until sub-issue 11 lands there is no scheduler, no merge queue, and no worktree 
 not reach for them, and do not reference `src/*.sh` — it is gone.
 
 ## Commands
-- Test: `python3 -m pytest -q` — must be green before every commit
-- Typecheck: `python3 -m mypy src` (strict)
-- Lint: `python3 -m ruff check`
+
+**Use `.venv/bin/python`, not `python3`.** The system `python3` is 3.10 and has no `StrEnum`, so
+it cannot even import `ralph.domain`. The venv is 3.12, created with `uv venv --python 3.12 &&
+uv pip install -e ".[dev]"`.
+
+- Test: `.venv/bin/python -m pytest -q` — must be green before every commit
+- Typecheck: `.venv/bin/python -m mypy` (strict; covers `ralph/` **and** `tests/`)
+- Lint: `.venv/bin/python -m ruff check`
+
+`tests/` is inside mypy's scope on purpose: the assertion that each fake satisfies its Protocol is
+a type annotation, and only mypy checks it. Runtime `isinstance` on a Protocol compares method
+names, not signatures, and would wave a broken fake through.
 
 Once the harness is built:
 - Validate: `ralph validate /path/to/repo [issues-dir]`
@@ -22,7 +31,11 @@ Once the harness is built:
 ## Issue format
 - Issues live in `.scratch/<phase>/issues/` inside the target repo (e.g. `.scratch/refine_data_flow/issues/`)
 - The `issues/` directory under `.scratch/` is auto-discovered when no explicit path is given
-- Required: `Status:` line — values: `not-started`, `ready`, `in-progress`, `landed`, `needs-human`
+- Required: `Status:` line — values: `ready`, `in-progress`, `landed`, `needs-human`
+  - These four are the whole set. `SubIssueState` has exactly these members, and a `Status:` line
+    carrying anything else is a loud, fatal parse error — never a silent default.
+  - `ready` is the Planner's authorisation to run. There is no `not-started`: a sub-issue the
+    Planner has not authorised does not belong in the graph yet.
   - `landed` is a sub-issue's terminal state. `done` belongs to the parent issue and is never
     written to a sub-issue — see `UBIQUITOUS_LANGUAGE.md`.
 - Required for agent context: `## Acceptance criteria` section
@@ -49,6 +62,16 @@ Place a `PRD.md` one level above the `issues/` dir (i.e. `.scratch/<phase>/PRD.m
 - `RALPH_PROTECTED_BRANCHES` — space-separated list of branches to refuse running on (default: `main master`)
 
 ## Coding Rules
+
+**Behavioural rules: `docs/karpathy_CLAUDE.md`.** How to work — think before coding, simplicity
+first, surgical changes, goal-driven execution. The rules below are what to build; that file is
+how to go about it. Both bind.
+
+One adaptation, and it matters: *"if something is unclear, ask"* assumes a human in the session.
+An unattended Implementer has none — its way of asking is **`<impasse>`**, with a structured
+report. Guessing, or softening an acceptance criterion until it passes, is the failure mode the
+whole harness exists to catch.
+
 ### 1. Type Discipline
 
 - Avoid `Any` — define explicit types, Protocols, or TypedDicts for all function signatures, return values, and module-level variables.
@@ -89,6 +112,21 @@ state name is a defect, not a style nit.
 
 - **`domain/` is pure.** Stdlib imports only. No I/O, no subprocess, no git, no model. If a
   domain function needs a fact from the world, it takes it as an argument.
+- **`ralph/domain/__init__.py` is the domain's interface.** Import `from ralph.domain import
+  Outcome`, never `from ralph.domain.model.session import Outcome`. The layout inside is an
+  implementation detail; callers should not have to learn it.
+- **`domain/model/` is the nouns; `domain/rules/` is the verbs.** `model/` holds frozen values
+  with zero logic. `rules/` holds the pure functions that *are* the design — the failure taxonomy,
+  the routing table, eligibility, the cycle cap. **`rules/` may import `model/`; `model/` may not
+  import `rules/`** — a test enforces it. A value that knows how it will be classified has stopped
+  being a value. New decision logic goes in `rules/`, never beside the type it decides about.
+- **The domain is not split by actor, and `adapters/` is not split by port.** `Outcome` and
+  `SessionTelemetry` belong to both actors; `copilot.py` is both an Implementer and an Editor.
+  Grouping either way forces a `shared/` folder that swallows everything.
+- **The fakes live in `tests/fakes.py`, never in `ralph/`.** Nothing in the shipped package may
+  import from `tests/` — a test asserts it. An adapter that reaches for a fake has stopped being
+  an adapter. `tests/builders.py` is a separate thing: builders make *values*, fakes satisfy
+  *Protocols*.
 - **Structure is a frozen value; content is state.** `@dataclass(frozen=True, slots=True)`
   for domain types. `IssueGraph` and `SubIssue` are immutable for a run's whole life — the
   invariant "the Editor may never re-link a sub-issue" is enforced by the type, not by a rule
