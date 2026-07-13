@@ -38,10 +38,18 @@ There is **no Editor adapter yet** — `Scheduler(editor=None)` is the default, 
 no Editor in this run*, not a null one. The run is then quarantine-and-drain and failures escalate on
 the Implementer's own outcome. #09 names the real one in `cli.py`.
 
-The agent it runs is whatever `RALPH_AGENT_CMD` names; Codex and Copilot become two more of those
-in #08 and #10.
+**The smart-zone ceiling is real, and Codex runs behind it.** `RALPH_IMPLEMENTER=codex` runs a real
+`codex exec` session, metered on **context** — read live from the session's rollout file, identified
+by the thread id Codex announces on stdout. A session that leaves the 120k smart zone is killed with
+`ceiling-exceeded`, which is a human's problem (the sub-issue is too big), never `infra-failed`.
 
-Still to come: the context ceiling (#08), the real Editor (#09), `ralph validate` (#11).
+**The ceiling is on context, not consumption.** Cost is not the argument; quality is. The two numbers
+arrive in the same rollout event, adjacent, named almost alike — and a ceiling on the wrong one is
+inverted, killing a long cheap focused session and waving through a bloated one. `RALPH_IMPLEMENTER`
+unset still means *the argv in `RALPH_AGENT_CMD`*: an agent with no context signal, bounded on the
+clock alone, reporting a peak of zero because nobody was watching.
+
+Still to come: the real Editor (#09), Copilot on both sides (#10), `ralph validate` (#11).
 
 ## Issue format
 - Issues live in `.scratch/<phase>/issues/` inside the target repo (e.g. `.scratch/refine_data_flow/issues/`)
@@ -70,7 +78,11 @@ Place a `PRD.md` one level above the `issues/` dir (i.e. `.scratch/<phase>/PRD.m
 - `CODEX_MODEL` — model passed to `codex exec --model` (default: `gpt-5.3-codex`)
 - `CODEX_SANDBOX` — sandbox passed to `codex exec --sandbox` (default: `workspace-write`)
 - `CODEX_APPROVAL` — approval policy passed to `codex exec --ask-for-approval` (default: `never`)
-- `RALPH_IMPLEMENTER` — `codex` or `copilot` (named only in `cli.py`)
+- `CODEX_HOME` — where Codex keeps its sessions (default: `~/.codex`). The rollout files the
+  context ceiling is read from live under `$CODEX_HOME/sessions/`
+- `RALPH_IMPLEMENTER` — `codex` today, `copilot` in #10 (named only in `cli.py`). **Unset** means
+  the argv in `RALPH_AGENT_CMD` — an agent with no context signal, bounded on the clock alone
+- `RALPH_REAL_CODEX` — set to `1` to un-skip the one test in the suite that calls a model
 - `RALPH_EDITOR` — `claude` or `copilot` (named only in `cli.py`)
 - `RALPH_AGENT_CMD` — the Implementer's argv. `{sub_issue}` is substituted with the sub-issue's id,
   which the harness also puts on the worktree's branch. An Implementer, at this layer, *is* an argv.

@@ -109,23 +109,21 @@ async def run_bounded(
 async def tail(path: Path, until: asyncio.Event, poll_s: float) -> AsyncGenerator[str, None]:
     """Yield the file's lines as they are appended, until `until` is set and the file is exhausted.
 
-    `until` is stdout closing, which happens *before* the process exits — so the file is read once
-    more after the event fires, rather than abandoned at the moment the session went quiet.
+    The stopping condition is **a read that came back empty**, and only then whether the session is
+    over — in that order, so the tail can never stop with unread lines still behind it. The last
+    model call of a session is written a moment before the process exits, and it is the one nearest
+    the ceiling: the only one that could still have tripped it.
     """
     buffer = ""
-    drained = False
     with path.open() as f:
         while True:
             chunk = f.read()
             if chunk:
-                drained = False
                 buffer += chunk
                 *lines, buffer = buffer.split("\n")
                 for line in lines:
                     yield line
                 continue
             if until.is_set():
-                if drained:
-                    return
-                drained = True
+                return
             await asyncio.sleep(poll_s)

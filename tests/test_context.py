@@ -206,19 +206,22 @@ async def test_the_tail_yields_lines_while_the_file_is_still_being_written(tmp_p
     assert seen == ["first", "second", "third"]
 
 
-async def test_the_tail_reads_what_was_written_after_the_session_went_quiet(
-    tmp_path: Path
+async def test_the_tail_stops_on_an_empty_read_and_never_on_the_event_alone(
+    tmp_path: Path,
 ) -> None:
-    """`until` is stdout closing, which happens a moment *before* the process exits. A tail that
-    stopped dead on the event would drop the last model call of every session — the one nearest the
-    ceiling, and the only one that could still have tripped it."""
+    """A session that ended before the tail got a turn still has its whole rollout file read. The
+    tail stops when a read comes back empty, and only *then* asks whether the session is over — in
+    that order, so it can never stop with unread lines behind it. Checking the event first would
+    drop the last model call of every session: the one nearest the ceiling.
+    """
     path = tmp_path / "rollout.jsonl"
-    path.write_text("early\n")
+    path.write_text("first\nsecond\nthird\n")
     until = asyncio.Event()
-    until.set()
-    path.write_text("early\nlate\n")
+    until.set()  # the session is already over before we read a byte
 
-    assert [line async for line in tail(path, until=until, poll_s=0.01)] == ["early", "late"]
+    lines = [line async for line in tail(path, until=until, poll_s=0.01)]
+
+    assert lines == ["first", "second", "third"]
 
 
 # ── and out the other side, as an Outcome ────────────────────────────────────────────────────

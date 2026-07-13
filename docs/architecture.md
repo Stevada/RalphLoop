@@ -51,7 +51,8 @@ ralph/
       notify.py       → Notification       (what each failure cost, and what to open first)
 
   ports.py         Protocols — the seams. every one has a fake.
-  adapters/        codex, copilot, claude_editor, context, git, filesystem, runlog, suite
+  adapters/        codex, copilot, claude_editor, context, prompt, session,
+                   git, filesystem, runlog, suite
   events.py        the Event factory — needs a clock, so not domain/; needed by both
   mergequeue.py    \  the merge queue and the scheduler, so not an adapter either
   scheduler.py      } orchestration — depends on ports only, never on a concrete adapter
@@ -489,36 +490,80 @@ differently. So the ceiling logic lives once, behind a seam:
 ```python
 # ports.py
 
+@dataclass(frozen=True, slots=True)
+class Observation:
+    """One model call, as the CLI recorded it."""
+    context_tokens: int                     # THE CEILING IS ON THIS, AND ONLY THIS
+    consumed_tokens: int                    # cumulative spend. telemetry only.
+    rate_limit_used_percent: float | None   # logged, never gated
+
 class ContextSource(Protocol):
-    """Yields the context size on each model call, live, while a session runs."""
-    def observations(self) -> AsyncIterator[int]: ...
+    """Yields an observation per model call, live, while a session runs."""
+    def observations(self) -> AsyncGenerator[Observation, None]: ...
 ```
+
+The three numbers travel together in one value because **that is how they arrive**: every CLI
+reports context and consumption in the *same* event, adjacent, with names that read alike
+(`last_token_usage` beside `total_token_usage`; `prompt_tokens` beside `total_tokens`). A ceiling
+wired to the wrong one is not merely inaccurate — it is *inverted*. It kills a long, cheap,
+tightly-focused session and waves through a bloated one.
+
+`AsyncGenerator` and not merely `AsyncIterator`, because **closing is part of the contract**: a
+source that tails a file holds a file handle open, and the ceiling kill breaks out of the loop
+mid-stream. `run_bounded` closes it; the type is what obliges it to.
 
 ```python
 # adapters/context.py
 
 class ContextMeter:
-    """Watches context, not consumption. Records the high-water mark for telemetry and
-    trips when the smart zone is left. Shared by every adapter."""
-    def observe(self, context_tokens: int) -> None: ...
+    """Watches context, not consumption. Records the high-water mark — whether or not it
+    tripped — and trips when the smart zone is left. Shared by every adapter."""
+    def observe(self, o: Observation) -> None: ...
     @property
     def peak(self) -> int: ...
     @property
-    def exceeded(self) -> bool: ...
+    def exceeded(self) -> bool: ...      # reads `peak`, NOT the last observation
 
-async def run_bounded(proc, source: ContextSource, budget: Budget) -> tuple[str | None, int]:
+async def run_bounded(proc, source: ContextSource | None, budget: Budget) -> Bound:
     """The kill loop. Every adapter's `run`/`adjudicate` is this plus prompt rendering."""
     meter, killed = ContextMeter(budget.max_context_tokens), None
     try:
         async with asyncio.timeout(budget.wall_clock_s):
-            async for ctx in source.observations():
-                meter.observe(ctx)
-                if meter.exceeded:
-                    proc.kill(); killed = "ceiling"; break
+            if source is not None:
+                async with aclosing(source.observations()) as observations:
+                    async for o in observations:
+                        meter.observe(o)
+                        if meter.exceeded:
+                            killed = "ceiling"; break
+            if killed is None:
+                await proc.wait()      # the source runs dry before the process exits
     except TimeoutError:
-        proc.kill(); killed = "wall-clock"          # the stuck-session catcher
-    return killed, meter.peak
+        killed = "wall-clock"          # the stuck-session catcher
+    if killed is not None:
+        proc.kill()
+    return Bound(killed, meter.peak, meter.consumed)
 ```
+
+`exceeded` reads the **peak**, not the last observation: a model that touched 130k and then
+compacted back to 90k has already done its bad thinking, and the compaction must not be allowed to
+hide the crossing.
+
+`source=None` is not "unbounded" — it is *a session publishing no context signal*: the stand-in
+agent, or any bare `RALPH_AGENT_CMD`. It is bounded on the clock alone, and its peak is honestly
+reported as zero rather than invented.
+
+### An Implementer is an argv and a context source
+
+That is the whole of `SubprocessImplementer`, and it is why `codex.py` is a hundred lines. Codex is
+`codex exec` plus a rollout tail; Copilot is `copilot -p` plus a debug-log tail; the stand-in agent
+is an argv and nothing. Everything that makes a session a session — both bounds, counting the
+commits, reading the diffstat, finding the `<impasse>` sentinel — lives once in `session.py`.
+
+`adapters/prompt.py` is the one place a `Brief` becomes text a model reads. Codex and Copilot are
+different argv and the *same job*: a prompt that drifted between them would make their failures
+incomparable, which is the one thing the harness exists to prevent. The findings go in as a
+**separate section**, never folded into the brief — they add information; the brief sets the bar,
+and merging them is how a bar gets lowered by accident.
 
 ### `CodexImplementer` — `adapters/codex.py`
 
@@ -538,7 +583,15 @@ after **every model call**:
 
 So `CodexContextSource` tails the rollout file, not stdout, yielding
 `info.last_token_usage.input_tokens`. The `thread_id` from `thread.started` on stdout
-identifies which rollout file belongs to this session.
+identifies which rollout file belongs to this session — and that identification is not a nicety.
+Four Codex sessions run at once by default, each appending to its own rollout file in the same
+directory. Metering a sibling's file would kill the wrong session, and the harness would report
+`ceiling-exceeded` against a sub-issue that never left the smart zone.
+
+Stdout is therefore needed for exactly one fact, live. `Transcript` is what serves it: it
+accumulates the whole session output for telemetry, *and* republishes lines as they arrive until a
+`ContextSource` has found what it came for — after which it stops republishing, so nothing
+accumulates behind a consumer that has lost interest.
 
 The ceiling (120k) sits far below the window (272k), so it always fires **before** Codex would
 auto-compact — compaction never gets the chance to drop the context back under the bound and
