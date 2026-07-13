@@ -176,8 +176,10 @@ class SessionTelemetry:
     wall_clock_s: float
     commits: int
     diffstat: str
-    final_test_output: str
-    impasse_report: ImpasseReport | None     # parsed from the <impasse> sentinel
+    session_output: str                      # the session's own transcript — NOT the suite's.
+                                             # the suite's output belongs to SuiteResult.output,
+                                             # and a FailureReport carries both.
+    impasse_report: ImpasseReport | None     # parsed from the <impasse> sentinel, out of the above
 
 @dataclass(frozen=True, slots=True)
 class SuiteResult:
@@ -662,11 +664,14 @@ class Scheduler:
             if self._ledger.exhausted(sub.id):
                 return self._mark(sub, SubIssueState.NEEDS_HUMAN)
 
+            self._ledger.spend(sub.id)          # spent when the Editor half BEGINS, not when it
+                                                # ends: `must_be_terminal` below has to already
+                                                # count this cycle, or the third Editor is never
+                                                # told it is the last one.
             t, verdict = await self._editor.adjudicate(
                 brief, findings, self._failure_report(sub, t, outcome), wt,
                 self._budget, self._ledger.must_be_terminal(sub.id),
             )
-            self._ledger.spend(sub.id)
 
             if route(Actor.EDITOR, classify_editor(t, verdict)) is Destination.HUMAN:
                 return self._mark(sub, SubIssueState.NEEDS_HUMAN)

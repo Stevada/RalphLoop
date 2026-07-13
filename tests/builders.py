@@ -31,7 +31,7 @@ def telemetry(
     wall_clock_s: float = 60.0,
     commits: int = 1,
     diffstat: str = " 1 file changed, 1 insertion(+)",
-    final_test_output: str = "1 passed",
+    session_output: str = "all green, boss",
     impasse_report: ImpasseReport | None = None,
 ) -> SessionTelemetry:
     """A green Implementer session, unless you say otherwise."""
@@ -43,7 +43,7 @@ def telemetry(
         wall_clock_s=wall_clock_s,
         commits=commits,
         diffstat=diffstat,
-        final_test_output=final_test_output,
+        session_output=session_output,
         impasse_report=impasse_report,
     )
 

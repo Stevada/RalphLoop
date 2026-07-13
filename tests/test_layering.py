@@ -95,6 +95,22 @@ def test_the_nouns_do_not_know_about_the_verbs(module: Path) -> None:
         )
 
 
+ORCHESTRATION = [PACKAGE / "mergequeue.py", PACKAGE / "scheduler.py", PACKAGE / "events.py"]
+
+
+@pytest.mark.parametrize("module", ORCHESTRATION, ids=_rel)
+def test_orchestration_never_names_a_concrete_adapter(module: Path) -> None:
+    """`cli.py` is the composition root and the only module allowed to know that the Implementer
+    is Codex, or that git is git. The moment the scheduler imports an adapter, the seam it was
+    built around has stopped existing — and swapping Codex for Copilot becomes a code change in
+    the scheduler.
+    """
+    for imported in _ralph_imports(module):
+        assert not imported.startswith("ralph.adapters"), (
+            f"{_rel(module)} imports {imported!r} — only cli.py may name an adapter"
+        )
+
+
 @pytest.mark.parametrize("module", SHIPPED, ids=_rel)
 def test_the_shipped_package_never_imports_a_test(module: Path) -> None:
     """The fakes live under `tests/` so that this is enforceable at all. An adapter that reaches

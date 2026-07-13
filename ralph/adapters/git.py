@@ -1,0 +1,71 @@
+"""Real git, against a real repository.
+
+The one adapter with no plausible fake: a fake git that always says "rebase succeeded" tests
+nothing, and the merge queue is the trickiest code in the harness. Its tests run against a real
+temporary repo.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+
+from ralph.ports import Worktree
+
+DETACHED = "HEAD"
+"""What `rev-parse --abbrev-ref HEAD` says when there is no branch. Fast-forwarding a detached
+HEAD would move nothing and report success — the quietest way to lose a landed sub-issue."""
+
+
+class GitError(RuntimeError):
+    """A git command failed where the harness had no contingency for it. Never swallowed."""
+
+
+def run_git(cwd: Path, *args: str) -> str:
+    """Loud by construction. There is no `|| true` in this file."""
+    proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise GitError(f"git {' '.join(args)} failed in {cwd} ({proc.returncode}):\n{proc.stderr}")
+    return proc.stdout.strip()
+
+
+def _try_git(cwd: Path, *args: str) -> bool:
+    """For the three commands whose failure is a *result*, not an error: a rebase can conflict, a
+    fast-forward can be refused. Everything else goes through `run_git` and raises."""
+    proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=False)
+    return proc.returncode == 0
+
+
+@dataclass(frozen=True, slots=True)
+class GitCli:
+    repo: Path
+
+    def add_worktree(self, branch: str, at: Path, base: str) -> Worktree:
+        at.parent.mkdir(parents=True, exist_ok=True)
+        run_git(self.repo, "worktree", "add", "-b", branch, str(at), base)
+        return Worktree(path=at, branch=branch, base=base)
+
+    def rebase(self, wt: Worktree, onto: str) -> bool:
+        """False on conflict — and **no rebase left in progress**. A half-finished rebase in a
+        worktree the Editor is about to read would show it a tree neither actor ever produced."""
+        if _try_git(wt.path, "rebase", onto):
+            return True
+        _try_git(wt.path, "rebase", "--abort")
+        return False
+
+    def merge_ff_only(self, branch: str) -> bool:
+        """False when git **refuses**, which is the point. `git merge` does not fire the pre-commit
+        hook, so a merge commit would put an unverified tree on the integration branch. The merge
+        queue already re-ran the suite on the prospective merge result; if that result is not a
+        fast-forward, the thing we verified is not the thing we would be landing."""
+        return _try_git(self.repo, "merge", "--ff-only", branch)
+
+    def commits_between(self, base: str, branch: str) -> int:
+        return int(run_git(self.repo, "rev-list", "--count", f"{base}..{branch}"))
+
+    def head_branch(self) -> str:
+        branch = run_git(self.repo, "rev-parse", "--abbrev-ref", "HEAD")
+        if branch == DETACHED:
+            raise GitError(f"{self.repo} is on a detached HEAD; there is no branch to land onto")
+        return branch

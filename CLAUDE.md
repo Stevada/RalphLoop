@@ -24,9 +24,13 @@ uv pip install -e ".[dev]"`.
 a type annotation, and only mypy checks it. Runtime `isinstance` on a Protocol compares method
 names, not signatures, and would wave a broken fake through.
 
-Once the harness is built:
-- Validate: `ralph validate /path/to/repo [issues-dir]`
-- Run: `ralph run /path/to/repo/.scratch/<phase>/issues`
+**`ralph run <repo> [issues-dir]` works** as of sub-issue 04 — it reads the graph, refuses a red
+base, cuts a worktree, runs an agent, classifies the session, and takes it through the merge queue.
+The agent it runs is whatever `RALPH_AGENT_CMD` names; Codex and Copilot become two more of those
+in #08 and #10.
+
+Still to come: `ralph validate` (#11), parallelism (#05), quarantine (#06), the Editor (#07), the
+context ceiling (#08).
 
 ## Issue format
 - Issues live in `.scratch/<phase>/issues/` inside the target repo (e.g. `.scratch/refine_data_flow/issues/`)
@@ -57,7 +61,12 @@ Place a `PRD.md` one level above the `issues/` dir (i.e. `.scratch/<phase>/PRD.m
 - `CODEX_APPROVAL` — approval policy passed to `codex exec --ask-for-approval` (default: `never`)
 - `RALPH_IMPLEMENTER` — `codex` or `copilot` (named only in `cli.py`)
 - `RALPH_EDITOR` — `claude` or `copilot` (named only in `cli.py`)
-- `RALPH_TEST_CMD` — overrides suite autodetection; a repo with neither is a loud, fatal error
+- `RALPH_AGENT_CMD` — the Implementer's argv. `{sub_issue}` is substituted with the sub-issue's id,
+  which the harness also puts on the worktree's branch. An Implementer, at this layer, *is* an argv.
+- `RALPH_TEST_CMD` — overrides suite autodetection (npm, pytest, make); a repo with neither is a
+  loud, fatal error, never a green `SuiteResult`
+- `RALPH_INSTALL_CMD` — overrides install autodetection (`npm ci` when there is a `package.json`).
+  Runs **once**, in the base checkout, never per worktree. A failure aborts the run — never `|| true`
 - `RALPH_CODEX_UNSANDBOXED` — set to `1` to pass `--dangerously-bypass-approvals-and-sandbox` to Codex
 - `RALPH_PROTECTED_BRANCHES` — space-separated list of branches to refuse running on (default: `main master`)
 

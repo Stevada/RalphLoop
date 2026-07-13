@@ -34,8 +34,8 @@ class SessionTelemetry:
     wall_clock_s: float
     commits: int
     diffstat: str
-    final_test_output: str
-    impasse_report: ImpasseReport | None  # parsed from the <impasse> sentinel
+    session_output: str  # the session's own transcript. NOT the suite's — that is SuiteResult.output
+    impasse_report: ImpasseReport | None  # parsed from the <impasse> sentinel, out of the above
 
 
 @dataclass(frozen=True, slots=True)
