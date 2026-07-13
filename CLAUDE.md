@@ -1,24 +1,27 @@
 # Ralph Loop — Harness Engineering
 
-## Commands
-- Validate: `./src/validate.sh /path/to/repo [issues-dir]`
-- Run all: `./src/parallel.sh /path/to/repo/.scratch/<phase>/issues`
-- Run one: `./src/once.sh /path/to/repo/.scratch/<phase>/issues/issue-file.md`
-- Test the harness: `./tests/run.sh`
+## Status: the harness is being built
 
-## Scripts (`src/`)
-- `prompt.md` — Fixed agent prompt injected into every Copilot invocation (requires `/tdd` skill)
-- `prompt-codex.md` — Fixed agent prompt injected into every Codex invocation (requires `/tdd` skill)
-- `once.sh` — Create a worktree, run one issue, merge back; walks up the filesystem to find the git root automatically
-- `parallel.sh` — Wave-based parallel execution; merges each wave sequentially and marks sub-issues `landed` (legacy; not yet migrated to the merge queue)
-- `once-codex.sh` — Codex CLI variant of `once.sh`
-- `parallel-codex.sh` — Continuous, concurrency-capped scheduler feeding the lock-guarded merge queue: a sub-issue is dispatched once its blockers have landed and lands independently (no waves). See `docs/prd.md` §4.5.
-- `lib/mergequeue.sh` — The merge queue: `mq_land_once` holds the merge lock while it rebases onto the integration head, re-runs the suite in the worktree, and fast-forwards. Pure git/bash; covered by `tests/`.
-- `validate.sh` — Pre-flight checks: git state, branch protection, issue format, dependency graph, skills, pre-commit hooks
+The bash prototype has been removed. The Python harness is being built now, by Claude Code
+working directly in this repo — **not** by the harness's own Implementer, which does not exist
+yet. The build order is `.scratch/build_harness/` (parent PRD + eleven sub-issues); the contract
+is `docs/architecture.md`.
+
+Until sub-issue 11 lands there is no scheduler, no merge queue, and no worktree isolation. Do
+not reach for them, and do not reference `src/*.sh` — it is gone.
+
+## Commands
+- Test: `python3 -m pytest -q` — must be green before every commit
+- Typecheck: `python3 -m mypy src` (strict)
+- Lint: `python3 -m ruff check`
+
+Once the harness is built:
+- Validate: `ralph validate /path/to/repo [issues-dir]`
+- Run: `ralph run /path/to/repo/.scratch/<phase>/issues`
 
 ## Issue format
 - Issues live in `.scratch/<phase>/issues/` inside the target repo (e.g. `.scratch/refine_data_flow/issues/`)
-- `validate.sh` auto-discovers the `issues/` directory under `.scratch/` when no explicit path is given
+- The `issues/` directory under `.scratch/` is auto-discovered when no explicit path is given
 - Required: `Status:` line — values: `not-started`, `ready`, `in-progress`, `landed`, `needs-human`
   - `landed` is a sub-issue's terminal state. `done` belongs to the parent issue and is never
     written to a sub-issue — see `UBIQUITOUS_LANGUAGE.md`.
@@ -32,14 +35,16 @@
 - Worktrees are created at `<repo>/.worktrees/active/` and failures preserved at `<repo>/.worktrees/failed/`
 
 ## PRD support
-Place a `PRD.md` one level above the `issues/` dir (i.e. `.scratch/<phase>/PRD.md`). Both `once.sh` and `parallel.sh` inject it as design context.
+Place a `PRD.md` one level above the `issues/` dir (i.e. `.scratch/<phase>/PRD.md`). It is injected into every session as design context.
 
 ## Environment variables
 - `COPILOT_MODEL` — model passed to `copilot --model` (default: `gpt-5.3-codex`)
 - `CODEX_MODEL` — model passed to `codex exec --model` (default: `gpt-5.3-codex`)
 - `CODEX_SANDBOX` — sandbox passed to `codex exec --sandbox` (default: `workspace-write`)
 - `CODEX_APPROVAL` — approval policy passed to `codex exec --ask-for-approval` (default: `never`)
-- `RALPH_AGENT` — validation target, either `copilot` or `codex` (default: `copilot`)
+- `RALPH_IMPLEMENTER` — `codex` or `copilot` (named only in `cli.py`)
+- `RALPH_EDITOR` — `claude` or `copilot` (named only in `cli.py`)
+- `RALPH_TEST_CMD` — overrides suite autodetection; a repo with neither is a loud, fatal error
 - `RALPH_CODEX_UNSANDBOXED` — set to `1` to pass `--dangerously-bypass-approvals-and-sandbox` to Codex
 - `RALPH_PROTECTED_BRANCHES` — space-separated list of branches to refuse running on (default: `main master`)
 

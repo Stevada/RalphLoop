@@ -618,13 +618,13 @@ class Event:
 
 | PRD §10 | Module |
 |---|---|
-| Merge queue | `mergequeue.py` — port of `src/lib/mergequeue.sh`, existing bash tests as acceptance criteria |
+| Merge queue | `mergequeue.py` — merge lock, rebase, re-run suite in the worktree, fast-forward |
 | Failure taxonomy + base-green | `domain/classify.py`, `domain/routing.py`, `runlog.py`, `Scheduler._base_green_check` |
 | Context ceiling and timeout | `ports.Budget`, `adapters/context.ContextMeter` + per-CLI `ContextSource` |
 | Impasse report format | `domain/impasse.py` |
 | The Editor | `adapters/claude_editor.py`, `adapters/copilot.py`, `domain/verdicts.CycleLedger` |
 | Linear sync | `adapters/linear.py` behind the existing `IssueStore` protocol |
-| PR + CI + notification | `RunReport`, `validate.sh` refusing repos without PR CI |
+| PR + CI + notification | `RunReport`, `ralph validate` refusing repos without PR CI |
 
 ## 6. Verified against the CLIs
 

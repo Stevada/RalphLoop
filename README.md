@@ -2,86 +2,112 @@
 
 Harness engineering for autonomous issue execution via coding agents.
 
-Ralph Loop reads issue files from a target repo's `.scratch/` directory, resolves intra-repo dependencies, spins up isolated git worktrees, and dispatches one coding agent per issue in parallel waves. Each wave blocks until all issues in it are merged, then the next wave begins.
+Three actors. A **Planner** (human-invoked) cuts a parent issue into a graph of sub-issues. An
+**Implementer** (Codex or Copilot) writes the code and the tests, one sub-issue per session, in
+an isolated worktree. An **Editor** (Claude Code or Copilot, read-only) diagnoses the sessions
+that fail and returns a verdict.
+
+The harness is the machinery between them: it dispatches sub-issues as their dependencies land,
+bounds every session, classifies every failure honestly, and lands work through a lock-guarded
+**merge queue** that rebases, re-runs the suite on the prospective merge, and fast-forwards — so
+the integration branch is correct by construction.
+
+> **Status: under construction.** A bash prototype proved the git plumbing and has been removed.
+> The Python harness is being built now — see `.scratch/build_harness/` for the build order and
+> `docs/architecture.md` for the contract. Nothing below is runnable yet.
+
+## Reading order
+
+| Document | What it is |
+|---|---|
+| `docs/prd.md` | Why the system is shaped this way, and the bets taken deliberately |
+| `docs/architecture.md` | The contract — layers, types, Protocols, adapters |
+| `docs/harness-flow.mmd` | The control flow of one run, as a diagram |
+| `UBIQUITOUS_LANGUAGE.md` | Canonical for every domain term, **including code identifiers** |
+| `CLAUDE.md` | Coding rules |
 
 ## Prerequisites
 
-- `copilot` CLI for the original GitHub Copilot scripts, or `codex` CLI for the Codex scripts
+- Python 3.12+
+- `codex` or `copilot` CLI for the Implementer; Claude Code or `copilot` for the Editor
 - Git 2.38+ (worktree support)
-- [mattpocock/skills](https://github.com/mattpocock/skills) installed at user level (provides the `/tdd` skill):
+- [mattpocock/skills](https://github.com/mattpocock/skills) at user level (provides `/tdd`):
   ```bash
   npx skills@latest add mattpocock/skills
   ```
 
-## Usage
-
-```bash
-# Validate a target repo before running
-./src/validate.sh /path/to/target-repo
-
-# Optionally specify a custom issues directory
-./src/validate.sh /path/to/target-repo /path/to/issues-dir
-
-# Run all issues from a .scratch directory in dependency-ordered waves
-./src/parallel.sh /path/to/target-repo/.scratch
-
-# Run a single issue (auto-detects git root from the file path)
-./src/once.sh /path/to/target-repo/.scratch/01-my-issue.md
-
-# Codex CLI variants
-RALPH_AGENT=codex ./src/validate.sh /path/to/target-repo
-./src/parallel-codex.sh /path/to/target-repo/.scratch
-./src/once-codex.sh /path/to/target-repo/.scratch/01-my-issue.md
-```
-
 ## Issue format
 
-Issues are Markdown files inside the target repo's `.scratch/` directory:
+Sub-issues are Markdown files in the target repo's `.scratch/<phase>/issues/` directory:
 
 ```markdown
 # 01 — Add user authentication
 
-Status: not-started
+Status: ready
 
-Brief description of the task.
+Brief description of the work.
 
 ## Acceptance criteria
 - [ ] Users can sign in with email/password
 - [ ] Invalid credentials return a 401
 
 ## Blocked by
-- #00 (database schema)
+- #00 — database schema
 ```
 
-**Status values:** `not-started` → `ready-for-agent` → `in-progress` → `done`
+**Status values:** `not-started` → `ready` → `in-progress` → `landed`, or `needs-human`.
 
-`parallel.sh` sets `Status: done` automatically after a successful merge. Do not set it manually.
+`landed` is a sub-issue's terminal state; `done` belongs to the parent issue and is never written
+to a sub-issue. The merge queue sets `landed` automatically, after the fast-forward. Do not set it
+by hand.
 
-**Dependencies:** list blockers in a `## Blocked by` section using `#N` numeric references (matched to `N-*.md` files) or bare filenames. An issue runs only when all its blockers are `done`.
+**Dependencies:** list blockers under `## Blocked by` using `#N` references (matched to `N-*.md`)
+or bare filenames. A sub-issue becomes eligible only once every sub-issue it is blocked by has
+`landed`. `Blocked` refers to this edge and nothing else.
 
-## PRD support
+**PRD:** place a `PRD.md` one level above the `issues/` directory. It is injected into every
+session as design context.
 
-If your issues live inside a subdirectory (e.g. `.scratch/phase-1/issues/`), place a `PRD.md` one level above the issues directory. The once and parallel scripts automatically inject it as design context into each agent invocation.
+## Failure taxonomy
 
-## Failure recovery
+Five outcomes, and each one routes somewhere specific:
 
-Failed worktrees are preserved at `<repo>/.worktrees/failed/<slug>` for inspection. Active worktrees live at `<repo>/.worktrees/active/`. Merge conflicts also move the worktree to `failed/` rather than corrupting the branch.
+| Outcome | Meaning | Goes to |
+|---|---|---|
+| `impasse` | The Implementer stopped and said why | Editor |
+| `silent-red` | It claimed success; the suite disagrees | Editor |
+| `integration-failed` | Green alone, red or conflicting on the merge | Editor |
+| `ceiling-exceeded` | The session left the model's smart zone | Human |
+| `infra-failed` | The environment is broken, not the code | Human |
+
+**There is no retry anywhere in this system.** A failed sub-issue is quarantined — marked
+`needs-human`, worktree preserved, its dependents never become eligible — and everything
+unaffected still lands. The human is paged **once**, at the end. The run never stops early.
 
 ## Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `COPILOT_MODEL` | `gpt-5.3-codex` | Model passed to `copilot --model` |
+| `RALPH_IMPLEMENTER` | `codex` | `codex` or `copilot`. Named only in `cli.py` |
+| `RALPH_EDITOR` | `claude` | `claude` or `copilot`. Named only in `cli.py` |
+| `RALPH_TEST_CMD` | autodetected | Overrides suite detection. Neither present is a fatal error |
+| `RALPH_PROTECTED_BRANCHES` | `main master` | Branches Ralph refuses to run on |
 | `CODEX_MODEL` | `gpt-5.3-codex` | Model passed to `codex exec --model` |
 | `CODEX_SANDBOX` | `workspace-write` | Sandbox passed to `codex exec --sandbox` |
 | `CODEX_APPROVAL` | `never` | Approval policy passed to `codex exec --ask-for-approval` |
-| `RALPH_AGENT` | `copilot` | Validation target. Set to `codex` for Codex pre-flight checks |
-| `RALPH_CODEX_UNSANDBOXED` | `0` | Set to `1` to pass `--dangerously-bypass-approvals-and-sandbox` to Codex |
-| `RALPH_PROTECTED_BRANCHES` | `main master` | Space-separated branches Ralph refuses to run on |
+| `RALPH_CODEX_UNSANDBOXED` | `0` | `1` bypasses Codex approvals and sandbox |
+| `COPILOT_MODEL` | `gpt-5.3-codex` | Model passed to `copilot --model` |
 
 ## Design principles
 
-1. **Target repos stay agnostic** — Ralph never modifies target repo structure. It reads `.scratch/` for issues and a repo-level agent context file (`CLAUDE.md` for Copilot, `AGENTS.md` or `CLAUDE.md` for Codex).
-2. **Single-repo scope** — Ralph handles intra-repo dependencies only. Cross-repo sequencing is the user's responsibility.
-3. **Skills as references** — Ralph's prompt invokes `/tdd` by name. Skills must be installed at user level, not bundled into this repo.
-4. **Worktree isolation** — Each issue runs in its own git worktree. Parallel agents are merged sequentially to avoid conflicts.
+1. **Target repos stay agnostic** — Ralph never modifies target repo structure. It reads
+   `.scratch/` for issues and a repo-level agent context file (`CLAUDE.md` for Copilot,
+   `AGENTS.md` or `CLAUDE.md` for Codex).
+2. **Single-repo scope** — intra-repo dependencies only. Cross-repo sequencing is the user's.
+3. **Skills as references** — the prompt invokes `/tdd` by name. Skills are installed at user
+   level, never bundled here.
+4. **Worktree isolation** — every session runs in its own worktree. Parallel sessions land one at
+   a time, through the merge queue.
+5. **The suite result, not the exit code, is the outcome.** A model's exit code is its opinion;
+   the suite is a fact. And a suite the harness runs is inside the **blast radius** — only CI on a
+   clean checkout is **honest**.

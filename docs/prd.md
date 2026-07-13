@@ -504,7 +504,7 @@ No malice is implied. Every green result is produced inside the blast radius of 
 being tested.
 
 **CI on the PR is the only check that runs on a clean checkout the agent never touched.**
-`validate.sh` must refuse a repo without PR CI. CI is the natural home for a fresh install
+`ralph validate` must refuse a repo without PR CI. CI is the natural home for a fresh install
 from the lockfile, a diff of test-config files, and a suite run with none of the agent's
 leftover artifacts.
 
@@ -624,7 +624,7 @@ What exists today, and what it costs:
 | 11 | No Editor, no escalation, no notification | Editor session, quarantine-and-drain, one notification |
 | 12 | No PR; merges into current branch | Integration branch → PR → CI → human |
 | 13 | Dependencies by filename numeric prefix | Linear issue IDs |
-| 14 | `validate.sh` does not check for PR CI | Refuse repos without CI |
+| 14 | `ralph validate` does not check for PR CI | Refuse repos without CI |
 
 Note that #7 and #8 **delete** code: the wave barrier, the `wait` on all sessions, and the
 sequential merge loop all go away.
