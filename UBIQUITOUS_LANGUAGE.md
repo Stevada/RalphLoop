@@ -18,7 +18,8 @@ prose, prompts, state names, and code identifiers.
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Session** | One bounded invocation of one actor: one process, one 120k-token ceiling, one wall-clock backstop. | round, run, invocation |
+| **Session** | One bounded invocation of one actor: one process, one 120k-token **context** ceiling, one wall-clock backstop. | round, run, invocation |
+| **Smart zone** | The context range in which a model's judgment is reliable — 120k tokens. The **ceiling** exists to keep every session inside it. | context limit, budget, quota |
 | **Cycle** | One Implementer session and the Editor session that follows it. At most three per sub-issue. | round, iteration, attempt |
 | **Run** | One pass over the issue graph — read once at start, never re-read — from base-green check to the single closing notification. | job, execution |
 
@@ -31,11 +32,23 @@ Two mechanisms, kept distinct:
 - **The prompt guides one thing.** Behaviour *within* a session — "about three tries, use
   your judgment about when you are stuck." Soft, advisory, uncounted.
 
-The 120k ceiling counts **tokens consumed**, nothing else — one number for both actors,
-regardless of which model runs. It is a stuck-detector: it catches a session spinning (a
-suite re-run twenty times), not a budget. Note that consumption diverges from context — a
-session whose context window sits at 60k may have consumed several hundred thousand tokens
-re-running a failing suite. The ceiling is on consumption.
+The 120k ceiling is on **context** — the tokens in the model's context on its most recent
+call. One number for both actors, regardless of which model runs, because it measures the
+model's **smart zone**, not the model's price. A model reasoning over 200k of context is a
+worse engineer than the same model reasoning over 100k; the ceiling keeps every session in
+the zone where its judgment is trusted. It is a *quality* bound, not a budget.
+
+**The ceiling is not a stuck-detector, and does not count what a session spent.** Consumption
+and context diverge sharply: a session re-running a failing suite twenty times may have
+consumed several hundred thousand tokens while its context sits at 60k. That session is stuck,
+and the thing that catches it is the **wall-clock backstop**. Consumption is recorded as
+telemetry — it is what the session cost — but nothing is gated on it.
+
+Enforcement is real time and from outside the model: Codex appends a `token_count` event to
+its session rollout file after every model call, and the harness kills the process the moment
+the context crosses 120k. The ceiling sits far below the model's window (272k), so it always
+fires before Codex would auto-compact — compaction never gets to drop the context back under
+the bound and hide the crossing.
 
 ## Work
 
@@ -79,8 +92,8 @@ state; the harness's word for everything the model cannot observe about itself.
 | `impasse` | `<impasse>` sentinel present (Implementer only) | Editor |
 | `silent-red` | Session ran to completion, suite red, no sentinel (Implementer only) | Editor |
 | `integration-failed` | Prospective merge conflicts or goes red after rebase onto the integration head (merge queue, not a session) | Editor |
-| `ceiling-exceeded` | Cumulative token consumption crossed 120k; session killed | Implementer → Editor; Editor → human |
-| `infra-failed` | Setup failure, wall-clock timeout, rate limit, OOM (either actor) | Retry with backoff, then human |
+| `ceiling-exceeded` | Context crossed the 120k **smart zone**; session killed | Human — from either actor |
+| `infra-failed` | Setup failure, wall-clock timeout, rate limit, OOM (either actor) | Human — from either actor. Never the Editor. |
 
 `impasse` and `silent-red` can only come from an Implementer session — an Editor session
 cannot declare itself stuck. `ceiling-exceeded` and `infra-failed` can come from either.
@@ -90,13 +103,42 @@ sibling that landed first. It routes to the Editor on the first failure, never b
 Implementer. The resulting Editor trip is a **cycle** like any other, counted against the
 three-cycle cap.
 
-**`ceiling-exceeded` is its own outcome, not `infra-failed`, because it is not transient.**
-Retrying `npm ci` may clear an infra failure; retrying a session that spent 120k without
-finishing just spends another 120k the same way. So a ceiling kill is **never retried**. An
-Implementer that hits it routes to the **Editor**, which diagnoses from the partial worktree
-and the harness's facts — final test output, diffstat, token spend — *without* a fabricated
-impasse report. An Editor that hits it has no diagnostician above it, so it pages the human
-directly. The three-cycle cap bounds any loop in which the ceiling recurs.
+**`ceiling-exceeded` is its own outcome, not `infra-failed`, because it says something
+different.** A session whose context grew past the **smart zone** is telling you the brief was
+too large to hold in a trustworthy context, or that the model wandered — a statement about the
+**cut**. An `infra-failed` session is telling you the environment is broken. Both page the
+human; they send that human to different places.
+
+**It routes to the human, from either actor.** It is the one outcome that never reaches the
+**Editor** — not an oversight, but the point. *"This sub-issue could not be completed inside a
+trustworthy context"* is a statement about how the work was **cut**, and re-cutting is the one
+thing the Editor is forbidden to do: it may rewrite a **brief**, never add, remove, or re-link
+a **sub-issue**. Handed a ceiling kill, the only move available to it is to soften the brief —
+which is the spec-drift failure mode, dressed up as a fix. So the sub-issue goes straight to
+**needs human**, its worktree preserved. It **spends no cycle**, because no cycle occurred.
+
+That also keeps the Editor off a bill it cannot earn back: paying Opus to explain that a
+context grew too large is the same waste as paying it to diagnose `npm ci`.
+
+**`infra-failed` pages the human too — immediately, from either actor. It is never retried,
+and it never reaches the Editor.**
+
+**There is no retry anywhere in this system.** A stale lockfile, a 429, an OOM, a wall-clock
+kill: none of these are fixed by running the same session again against the same broken
+environment. They are fixed by a human fixing the environment. Retrying would burn the budget,
+delay the notification, and — because the failure is invisible to the model — produce a second
+failure identical to the first. The honest move is to stop and say so.
+
+An `infra-failed` session **spends no cycle**, because no **cycle** occurred: a cycle is an
+Implementer session plus the Editor session that follows it, and no Editor is involved here.
+The sub-issue goes straight to **needs human** with its worktree preserved, and
+quarantine-and-drain does the rest — the **run** continues, and everything not downstream of it
+still **lands**.
+
+So `ceiling-exceeded` and `infra-failed` route identically: **human, no retry, no cycle, never
+the Editor.** They differ only in what they tell the human — one says *the sub-issue was cut too
+large*, the other says *your environment is broken.* That is a different morning, which is why
+they stay distinct outcomes even though they share a destination.
 
 ## Artifacts and decisions
 
@@ -179,7 +221,27 @@ implied — every green result is produced inside the blast radius of the thing 
 
 > **Dev:** "The Implementer hit the ceiling halfway through writing tests. Is that an `impasse`?"
 
-> **Domain expert:** "No. An **impasse** is something the Implementer *declares* through its **sentinel** — the model's word about its own state. A ceiling-killed **session** never got to say anything, so the harness classifies it `infra-failed` and retries it. It never reaches the **Editor**, because paying Opus to diagnose a token ceiling is the waste the taxonomy exists to prevent."
+> **Domain expert:** "No. An **impasse** is something the Implementer *declares* through its **sentinel** — the model's word about its own state. A ceiling-killed **session** never got to say anything, so the harness classifies it `ceiling-exceeded`: the harness's word for what the model could not observe about itself. It is never retried and it never reaches the **Editor**. It goes straight to **needs human**, and it costs no **cycle**."
+
+> **Dev:** "Why not the Editor? It diagnoses every other failure."
+
+> **Domain expert:** "Because a context that left the **smart zone** is usually saying the sub-issue was **cut** too large — and re-cutting is the one thing the Editor may not do. It rewrites a **brief**; it never adds, removes, or re-links a **sub-issue**. Hand it a ceiling kill and the only move it has left is to soften the brief, which is the spec-drift failure wearing a fix's clothes. So a human looks at it. Paying Opus to explain that a context grew too large is the same waste as paying it to diagnose `npm ci`."
+
+> **Dev:** "But it only used 120k of a 272k window."
+
+> **Domain expert:** "The window is what the model *can* hold. The **smart zone** is what it can hold *well*. We would rather have a session that stopped inside the zone and told us the cut was wrong than one that ground on to 250k and produced confident nonsense."
+
+> **Dev:** "The worktree came up with no `node_modules` and every test failed. Surely we just retry that one?"
+
+> **Domain expert:** "No. There is **no retry anywhere in this system**. That's `infra-failed`, and it goes straight to **needs human**, same as a ceiling kill — no retry, no **cycle**, and the **Editor** never sees it. Running the session again against the same broken environment produces the same failure and spends the budget doing it. The lockfile is stale; a human fixes the lockfile."
+
+> **Dev:** "Then why is `infra-failed` a separate outcome from `ceiling-exceeded`, if they both just page me?"
+
+> **Domain expert:** "Because they tell you different things. One says *this sub-issue was cut too large to hold in a trustworthy context*; the other says *your environment is broken*. Same destination, completely different morning — one sends you to the graph, the other to the lockfile. The notification carries the diagnosis, and the diagnosis is the whole product."
+
+> **Dev:** "And a session that's just *spinning* — re-running a failing suite twenty times?"
+
+> **Domain expert:** "Flat context, so the ceiling never fires. That one is caught by the wall-clock backstop, and a wall-clock kill is `infra-failed`. The two bounds catch different failures; neither substitutes for the other."
 
 > **Dev:** "The Editor came back `inconclusive` on 105, so it goes to **needs human**. What did it do with what it learned about the retry bug?"
 

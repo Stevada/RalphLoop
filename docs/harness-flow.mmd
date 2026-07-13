@@ -7,23 +7,20 @@ graph TD
     baseGreen -->|red| abort(["No agent starts"])
     baseGreen -->|green| dispatch["Dispatch eligible sub-issues<br/>concurrency-capped, each in<br/>its own worktree"]
 
-    dispatch --> impl["Implementer session<br/>TDD · 120k-token ceiling"]
+    dispatch --> impl["Implementer session<br/>TDD · 120k context ceiling<br/>wall-clock backstop"]
     impl --> outcome{"Session outcome"}
 
-    outcome -->|success| mergeQ["Merge queue:<br/>acquire lock · rebase ·<br/>re-run suite"]
-    outcome -->|"impasse · silent-red ·<br/>ceiling-exceeded"| editor
-    outcome -->|infra-failed| retry{"Retry<br/>with backoff?"}
-
-    retry -->|retry| impl
-    retry -->|exhausted| human(["Page the human"])
+    outcome -->|success| mergeQ["Merge queue:<br/>acquire merge lock · rebase ·<br/>re-run suite"]
+    outcome -->|"impasse · silent-red"| editor
+    outcome -->|"ceiling-exceeded · infra-failed<br/>never retried · no cycle spent<br/>the Editor never sees these"| quarantine
 
     mergeQ --> mergeCheck{"Green on the<br/>prospective merge?"}
     mergeCheck -->|yes| ff["Fast-forward merge ·<br/>write 'landed' · release lock"]
     mergeCheck -->|"conflict or red · release lock<br/>(integration-failed)"| editor
     ff --> landed(["Sub-issue landed"])
 
-    editor["Editor session<br/>read worktree · reproduce ·<br/>120k-token ceiling"] --> edOutcome{"Editor session<br/>completed?"}
-    edOutcome -->|"ceiling-exceeded<br/>or infra-failed"| human
+    editor["Editor session<br/>read worktree · reproduce ·<br/>120k context ceiling"] --> edOutcome{"Editor session<br/>completed?"}
+    edOutcome -->|"ceiling-exceeded<br/>or infra-failed"| quarantine
     edOutcome -->|verdict| verdict{"Verdict"}
 
     verdict -->|revise| cycle{"Third cycle<br/>already?"}
@@ -32,14 +29,14 @@ graph TD
     cycle -->|"no · restart clean"| impl
     cycle -->|"yes · cap reached"| quarantine
 
-    quarantine["Quarantine · mark 'needs-human' ·<br/>preserve worktree ·<br/>skip everything downstream"] --> more
+    quarantine["Quarantine · mark 'needs-human' ·<br/>preserve worktree · downstream<br/>never becomes eligible"] --> more
     landed --> more{"More eligible<br/>sub-issues?"}
     more -->|yes| dispatch
     more -->|no| runEnd["Run ends"]
 
     runEnd --> notify["One notification:<br/>landed · needs-human · verdict"]
     notify --> anyEsc{"Any sub-issue<br/>needs a human?"}
-    anyEsc -->|yes| human
+    anyEsc -->|yes| human(["Page the human · once, at the end<br/>the run never stops early"])
     anyEsc -->|no| pr["Open PR from<br/>integration branch"]
     pr --> ci{"CI on a clean<br/>checkout"}
     ci -->|"green · human reads diff"| done(["Parent issue: done"])
@@ -52,6 +49,6 @@ graph TD
     classDef editor fill:#f3e5f5,stroke:#7b1fa2,color:#4a148c;
     class start,landed,done terminal;
     class abort,human stop;
-    class baseGreen,outcome,mergeCheck,retry,edOutcome,verdict,cycle,more,anyEsc,ci decision;
+    class baseGreen,outcome,mergeCheck,edOutcome,verdict,cycle,more,anyEsc,ci decision;
     class impl,mergeQ,ff implementer;
     class editor editor;
