@@ -23,10 +23,15 @@ include = ["ralph*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# `TestRunner` is a port, not a test class. Nothing here uses class-based tests.
+python_classes = []
 
 [tool.mypy]
 strict = true
-packages = ["ralph"]
+# `tests` is in scope deliberately: the assertion that each fake structurally satisfies its
+# Protocol is an annotation in tests/test_contract.py, and only mypy can check it. Runtime
+# isinstance on a Protocol compares method names, not signatures.
+files = ["ralph", "tests"]
 
 [tool.ruff]
 line-length = 100

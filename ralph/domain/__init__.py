@@ -1,0 +1,58 @@
+"""The domain: pure, stdlib-only, frozen.
+
+**This module is the interface.** Import from `ralph.domain` — never from `ralph.domain.model.graph`
+or `ralph.domain.rules.routing`. The layout below is an implementation detail, and callers should
+not have to learn it.
+
+Inside, two halves, and the dependency arrow between them points one way only:
+
+- `model/` — the **nouns**. Frozen values with no logic: what the system is made of.
+- `rules/` — the **verbs**. Pure functions over those values: what the system *decides*. The
+  failure taxonomy, the routing table, eligibility, the cycle cap. This is the harness's judgment,
+  and everything else in the repo exists to feed it.
+
+`rules/` may import `model/`. `model/` may **not** import `rules/` — a test enforces it.
+"""
+
+from ralph.domain.model.content import Brief, Findings
+from ralph.domain.model.event import Event, EventKind
+from ralph.domain.model.failure import FailureReport
+from ralph.domain.model.graph import GraphError, IssueGraph, SubIssue, SubIssueId
+from ralph.domain.model.impasse import Approach, ImpasseReport
+from ralph.domain.model.session import Actor, Outcome, SessionTelemetry, SuiteResult
+from ralph.domain.model.state import SubIssueState
+from ralph.domain.model.verdict import EditorVerdict, Verdict
+from ralph.domain.rules.classify import classify_editor, classify_implementer
+from ralph.domain.rules.cycles import CycleLedger
+from ralph.domain.rules.eligibility import eligible, never_eligible
+from ralph.domain.rules.routing import Destination, route
+
+__all__ = [
+    # model — the nouns
+    "Actor",
+    "Approach",
+    "Brief",
+    "EditorVerdict",
+    "Event",
+    "EventKind",
+    "FailureReport",
+    "Findings",
+    "GraphError",
+    "ImpasseReport",
+    "IssueGraph",
+    "Outcome",
+    "SessionTelemetry",
+    "SubIssue",
+    "SubIssueId",
+    "SubIssueState",
+    "SuiteResult",
+    "Verdict",
+    # rules — the verbs
+    "CycleLedger",
+    "Destination",
+    "classify_editor",
+    "classify_implementer",
+    "eligible",
+    "never_eligible",
+    "route",
+]
