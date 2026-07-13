@@ -17,12 +17,29 @@ def eligible(
     graph: IssueGraph, states: Mapping[SubIssueId, SubIssueState]
 ) -> frozenset[SubIssueId]:
     """Every READY sub-issue whose blockers have all LANDED."""
-    raise NotImplementedError
+    return frozenset(
+        id
+        for id in graph.sub_issues
+        if states[id] is SubIssueState.READY
+        and all(states[b] is SubIssueState.LANDED for b in graph.blockers_of(id))
+    )
 
 
 def never_eligible(
     graph: IssueGraph, states: Mapping[SubIssueId, SubIssueState]
 ) -> frozenset[SubIssueId]:
-    """Report-time only. A sub-issue still READY at run end whose blockers never landed never got
-    a turn. This is the drain half of quarantine-and-drain: observed, never propagated."""
-    raise NotImplementedError
+    """The drain half of quarantine-and-drain: a READY sub-issue standing behind one that
+    escalated. Its blocker will never reach LANDED, so `eligible` will never return it, and no
+    state is ever written to say so — this is observed, never propagated.
+
+    Transitive on purpose: the sub-issue behind the sub-issue behind the quarantined one is just
+    as stuck, and nothing in between was marked.
+    """
+    return frozenset(
+        id
+        for id in graph.sub_issues
+        if states[id] is SubIssueState.READY
+        and any(
+            states[b] is SubIssueState.NEEDS_HUMAN for b in graph.transitively_blocked_by(id)
+        )
+    )

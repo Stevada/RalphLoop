@@ -13,6 +13,13 @@ from __future__ import annotations
 from ralph.domain.model.session import Outcome, SessionTelemetry, SuiteResult
 from ralph.domain.model.verdict import EditorVerdict
 
+WALL_CLOCK_EXIT = 124
+"""`timeout(1)`'s exit code. A session that ran past its wall-clock bound is infra-failed."""
+
+
+def _died_on_the_clock(t: SessionTelemetry) -> bool:
+    return t.killed == "wall-clock" or t.exit_code == WALL_CLOCK_EXIT
+
 
 def classify_implementer(t: SessionTelemetry, suite: SuiteResult) -> Outcome:
     """Precedence is load-bearing: a ceiling kill and a crash both exit non-zero and are
@@ -21,11 +28,27 @@ def classify_implementer(t: SessionTelemetry, suite: SuiteResult) -> Outcome:
     Zero commits is never a benign skip — it is `silent-red`. The suite result, not the exit
     code, is the outcome: a model's exit code is its opinion, the suite is a fact.
     """
-    raise NotImplementedError
+    if t.killed == "ceiling":
+        return Outcome.CEILING_EXCEEDED
+    if _died_on_the_clock(t):
+        return Outcome.INFRA_FAILED
+    if t.impasse_report is not None:
+        return Outcome.IMPASSE
+    if t.commits == 0:
+        return Outcome.SILENT_RED
+    if not suite.green:
+        return Outcome.SILENT_RED
+    return Outcome.SUCCESS
 
 
 def classify_editor(t: SessionTelemetry, verdict: EditorVerdict | None) -> Outcome:
     """Editor success is a verdict returned. An Editor that produced none failed, whatever it
     exited with. Cannot yield IMPASSE or SILENT_RED.
     """
-    raise NotImplementedError
+    if t.killed == "ceiling":
+        return Outcome.CEILING_EXCEEDED
+    if _died_on_the_clock(t):
+        return Outcome.INFRA_FAILED
+    if verdict is None:
+        return Outcome.INFRA_FAILED
+    return Outcome.SUCCESS

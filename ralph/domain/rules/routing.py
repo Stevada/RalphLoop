@@ -8,6 +8,7 @@ success is a verdict to act on.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import assert_never
 
 from ralph.domain.model.session import Actor, Outcome
 
@@ -28,4 +29,18 @@ def route(actor: Actor, outcome: Outcome) -> Destination:
     and both spend no cycle — a cycle is an Implementer session plus the Editor session that
     follows it, and no Editor is involved in either.
     """
-    raise NotImplementedError
+    match outcome:
+        case Outcome.SUCCESS:
+            match actor:
+                case Actor.IMPLEMENTER:
+                    return Destination.MERGE_QUEUE
+                case Actor.EDITOR:
+                    return Destination.ACT_ON_VERDICT
+                case _:
+                    assert_never(actor)
+        case Outcome.IMPASSE | Outcome.SILENT_RED | Outcome.INTEGRATION_FAILED:
+            return Destination.EDITOR
+        case Outcome.CEILING_EXCEEDED | Outcome.INFRA_FAILED:
+            return Destination.HUMAN
+        case _:
+            assert_never(outcome)

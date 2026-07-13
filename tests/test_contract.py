@@ -24,15 +24,9 @@ from ralph.domain import (
     Outcome,
     SessionTelemetry,
     SubIssue,
-    SubIssueId,
     SubIssueState,
     SuiteResult,
     Verdict,
-    classify_editor,
-    classify_implementer,
-    eligible,
-    never_eligible,
-    route,
 )
 from ralph.ports import (
     Budget,
@@ -45,7 +39,7 @@ from ralph.ports import (
     TestRunner,
     Worktree,
 )
-from tests.builders import graph_of, telemetry
+from tests.builders import graph_of
 from tests.fakes import (
     FakeContextSource,
     FakeEditor,
@@ -152,34 +146,6 @@ def test_the_worktree_knows_where_it_came_from() -> None:
     wt = git.add_worktree("sub-01", Path("/tmp/wt"), "integration")
     assert isinstance(wt, Worktree)
     assert wt.base == "integration"
-
-
-# --- the stubs are honestly unimplemented ------------------------------------------------------
-# They raise rather than returning a plausible-looking wrong answer. Sub-issue 02 fills them in.
-
-
-def test_the_pure_functions_are_stubs_that_raise() -> None:
-    t = telemetry()
-    suite = SuiteResult(green=True, output="", duration_s=0.0)
-    graph = graph_of({"01": []})
-    states = {SubIssueId("01"): SubIssueState.READY}
-
-    with pytest.raises(NotImplementedError):
-        classify_implementer(t, suite)
-    with pytest.raises(NotImplementedError):
-        classify_editor(t, None)
-    with pytest.raises(NotImplementedError):
-        route(Actor.IMPLEMENTER, Outcome.SUCCESS)
-    with pytest.raises(NotImplementedError):
-        eligible(graph, states)
-    with pytest.raises(NotImplementedError):
-        never_eligible(graph, states)
-    with pytest.raises(NotImplementedError):
-        CycleLedger().spend(SubIssueId("01"))
-    with pytest.raises(NotImplementedError):
-        CycleLedger().exhausted(SubIssueId("01"))
-    with pytest.raises(NotImplementedError):
-        CycleLedger().must_be_terminal(SubIssueId("01"))
 
 
 def test_an_impasse_report_is_the_models_story_not_the_harnesss_facts() -> None:
