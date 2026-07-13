@@ -60,10 +60,15 @@ READ_ONLY_GIT = frozenset(
 are denied by absence, for the same reason."""
 
 FORBIDDEN_SHELL = ("&", ">", "<", "$(", "`")
-"""Redirection, command substitution, backgrounding. Each one is a way to make an allowed command
-write: `git log > evidence.txt` reads as a `git log`, and destroys the failed worktree a human was
-about to read. Pipes and `&&` are *not* here — they only chain commands, and every command in the
-chain is checked."""
+"""Redirection, command substitution, backgrounding — and `&&`, which contains `&`.
+
+Each is a way to make an *allowed* command write. `git log > evidence.txt` reads as a `git log`, and
+it destroys the failed worktree a human was about to read: the write is in the shell, not in the
+program, so a permit that only inspected the program would wave it through.
+
+Pipes survive, because a pipe cannot write by itself — but it can *feed* something that does, so
+every command in a pipeline is checked separately. `cat calculator.py | tee copy.py` begins as
+innocently as a command can and ends as an Implementer."""
 
 _CHAIN = re.compile(r"\|\||&&|;|\|")
 
@@ -261,5 +266,5 @@ def _verdict_of(output: str) -> EditorVerdict | None:
     try:
         return parse_verdict(output)
     except VerdictParseError:
-        return EditorVerdict(verdict=Verdict.INCONCLUSIVE, revised_brief=None,
-                             revised_findings=None, rationale="unreadable")
+        log.exception("the Editor returned a verdict the harness cannot read")
+        return None

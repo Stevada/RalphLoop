@@ -149,8 +149,21 @@ def test_redirection_and_substitution_are_denied(command: str) -> None:
     assert not allowed("Bash", command=command)
 
 
-def test_a_chain_is_only_as_permitted_as_its_worst_link() -> None:
-    assert not allowed("Bash", command="git diff && git commit -m 'while I am here'")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat calculator.py | tee copy.py",
+        "git log | sed -i 's/x/y/' calculator.py",
+        "git diff && git commit -m 'while I am here'",
+    ],
+    ids=["pipe into a writer", "pipe into an in-place edit", "and-chain"],
+)
+def test_a_chain_is_only_as_permitted_as_its_worst_link(command: str) -> None:
+    """**Every** command in the chain is checked, not just the head. `cat calculator.py` is as
+    read-only as a command gets, and `cat calculator.py | tee copy.py` writes a file — the sentence
+    starts innocent and ends as an Implementer.
+    """
+    assert not allowed("Bash", command=command)
 
 
 def test_a_denial_tells_the_model_why() -> None:
@@ -249,6 +262,40 @@ async def adjudicate(
 ) -> tuple[SessionTelemetry, EditorVerdict | None]:
     editor = ClaudeCodeEditor(open_session=lambda ask: session, suite=SUITE)
     return await editor.adjudicate(BRIEF, FINDINGS, FAILURE, WORKTREE, budget, must_be_terminal)
+
+
+async def test_a_garbled_verdict_is_no_verdict_and_is_never_quietly_repaired(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The most dangerous shape a bug in this file could take.
+
+    An unreadable verdict is tempting to "repair" into an `inconclusive` — it is terminal, it pages
+    a human, it feels safe. It is not. Downstream, a fabricated `inconclusive` is **indistinguishable
+    from a considered one**: the human is told the Editor looked at this and could not decide, when
+    in truth the Editor may have said `planning-defect` in words the parser fumbled. The harness
+    would be putting an opinion in the Editor's mouth.
+
+    `None` is the honest answer, and it classifies `infra-failed` — a harness problem, which is
+    exactly what a verdict the harness cannot read *is*.
+    """
+    caplog.set_level("ERROR", logger="ralph.adapters.editor")
+    garbled = StubSession([f"{VERDICT_OPEN}{{'verdict': not even json,,}}{VERDICT_CLOSE}"])
+
+    t, v = await adjudicate(garbled)
+
+    assert v is None
+    assert classify_editor(t, v) is Outcome.INFRA_FAILED
+    assert "cannot read" in caplog.text  # loud, and not swallowed
+
+
+async def test_one_garbled_verdict_does_not_take_the_run_down_with_it() -> None:
+    """It is logged, not raised. An unreadable *impasse* is fatal — it would be misclassified as
+    `silent-red` and routed to an Editor to adjudicate a failure that never happened. An unreadable
+    *verdict* already lands where a garbled verdict belongs: a human, with the worktree preserved.
+    Killing twenty healthy sub-issues to make the point would be a worse trade."""
+    _, v = await adjudicate(StubSession([f"{VERDICT_OPEN}nonsense{VERDICT_CLOSE}"]))
+
+    assert v is None  # no exception escaped
 
 
 async def test_the_editor_returns_its_verdict_and_the_harnesss_facts() -> None:

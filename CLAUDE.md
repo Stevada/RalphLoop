@@ -34,9 +34,15 @@ destroyed, and the next cycle is cut from the integration branch. Knowledge surv
 the findings. At most **three cycles**, enforced by the scheduler alone: the adapters *tell* the
 model it is the final cycle, and the scheduler **refuses** a `revise` that comes back anyway.
 
-There is **no Editor adapter yet** — `Scheduler(editor=None)` is the default, and it means *there is
-no Editor in this run*, not a null one. The run is then quarantine-and-drain and failures escalate on
-the Implementer's own outcome. #09 names the real one in `cli.py`.
+**The Editor is real.** `RALPH_EDITOR=claude` runs Claude Code (Opus) via the Agent SDK against the
+failed worktree, **read-only enforced by the harness** — an allowlist at `can_use_tool`, so a
+mutating call is *denied*, not discouraged. It may re-run the repo's suite and grep the worktree, and
+nothing else that executes: the Editor's value is **reproduction, not inference**, and declaring an
+impasse is cheap enough that checking the story against the repository is the only thing standing
+between us and a system where declaring an impasse always works.
+
+`RALPH_EDITOR` unset means *there is no Editor in this run*, not a null one — the run is then
+quarantine-and-drain and failures escalate on the Implementer's own outcome.
 
 **The smart-zone ceiling is real, and Codex runs behind it.** `RALPH_IMPLEMENTER=codex` runs a real
 `codex exec` session, metered on **context** — read live from the session's rollout file, identified
@@ -49,7 +55,7 @@ inverted, killing a long cheap focused session and waving through a bloated one.
 unset still means *the argv in `RALPH_AGENT_CMD`*: an agent with no context signal, bounded on the
 clock alone, reporting a peak of zero because nobody was watching.
 
-Still to come: the real Editor (#09), Copilot on both sides (#10), `ralph validate` (#11).
+Still to come: Copilot on both sides (#10), `ralph validate` (#11).
 
 ## Issue format
 - Issues live in `.scratch/<phase>/issues/` inside the target repo (e.g. `.scratch/refine_data_flow/issues/`)
@@ -83,7 +89,9 @@ Place a `PRD.md` one level above the `issues/` dir (i.e. `.scratch/<phase>/PRD.m
 - `RALPH_IMPLEMENTER` — `codex` today, `copilot` in #10 (named only in `cli.py`). **Unset** means
   the argv in `RALPH_AGENT_CMD` — an agent with no context signal, bounded on the clock alone
 - `RALPH_REAL_CODEX` — set to `1` to un-skip the one test in the suite that calls a model
-- `RALPH_EDITOR` — `claude` or `copilot` (named only in `cli.py`)
+- `RALPH_EDITOR` — `claude` today, `copilot` in #10 (named only in `cli.py`). **Unset** means there
+  is no Editor: quarantine-and-drain. Requires the optional `claude-agent-sdk` (`pip install -e
+  ".[editor]"`)
 - `RALPH_AGENT_CMD` — the Implementer's argv. `{sub_issue}` is substituted with the sub-issue's id,
   which the harness also puts on the worktree's branch. An Implementer, at this layer, *is* an argv.
 - `RALPH_TEST_CMD` — overrides suite autodetection (npm, pytest, make); a repo with neither is a

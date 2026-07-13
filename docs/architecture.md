@@ -634,21 +634,51 @@ It never commits, never cherry-picks, never touches a worktree except to read it
 commits it is an Implementer with a different name. **That is enforced by the tool allowlist,
 not by the prompt.**
 
-```python
-class ClaudeCodeEditor:
-    READ_ONLY_TOOLS = ["Read", "Grep", "Glob", "Bash"]
+What counts as mutating is decided **once**, in `adapters/editor.py` — the model-agnostic half of
+an Editor, which also owns the `<verdict>` sentinel and the bounding. `ClaudeCodeEditor` is that
+plus the Agent SDK; `CopilotEditor` is that plus `--deny-tool` flags. Only the *delivery* of the
+denial differs.
 
-    async def adjudicate(self, brief, findings, failure, worktree, budget, must_be_terminal):
-        options = ClaudeAgentOptions(
-            model="claude-opus-4-8",
-            allowed_tools=self.READ_ONLY_TOOLS,
-            can_use_tool=self._refuse_mutating_bash,   # git commit / cherry-pick / write → deny
-            cwd=worktree.path,
-        )
-        ...   # rejects REVISE when must_be_terminal
+```python
+# adapters/editor.py
+
+READ_ONLY_TOOLS = frozenset({"Read", "Grep", "Glob", "Bash"})
+READ_ONLY_GIT   = frozenset({"diff", "log", "show", "status", "grep", "blame", ...})
+FORBIDDEN_SHELL = ("&", ">", "<", "$(", "`")
+
+def read_only(tool, input, suite) -> Permission: ...   # THE ENFORCEMENT SURFACE
 ```
 
-The SDK streams `ResultMessage.usage`, so its `ContextSource` needs no log tailing.
+Three things are load-bearing, and each is a hole in the obvious implementation:
+
+- **It is an allowlist, not a blocklist.** A blocklist fails open, and it fails open on precisely
+  the tool nobody thought of — the one the SDK gains next week. `Write` is denied by *absence*, and
+  so is `SomeToolAddedIn2027`.
+- **Redirection and substitution are denied outright.** `git log > evidence.txt` passes any check
+  that asks "is this a read-only command?", because it *is* one — the write is in the shell, not in
+  the program, and it destroys the failed worktree a human was about to read.
+- **Every command in a pipeline is checked, not just the head.** `cat calculator.py` is as harmless
+  as a command gets; `cat calculator.py | tee copy.py` begins that way and ends as an Implementer.
+
+The one thing the Editor may run that *executes* is **the repo's own suite** — the same command the
+harness itself runs, passed in rather than guessed at. That is how "re-run the suite in the failed
+worktree" and "you may not write to it" are both true at once.
+
+`must_be_terminal` is surfaced **in the prompt** and enforced nowhere near it: the **scheduler**
+refuses a third-cycle `revise`. One rule, one home. An adapter that also rejected it would be a
+second home for the cycle cap, and one day the two would disagree.
+
+An Editor that returns **no verdict** classifies `infra-failed`, and the adapter returns `None`
+rather than inventing one. The temptation is to "repair" an unreadable verdict into an
+`inconclusive` — terminal, safe-feeling, pages a human. It is not safe: downstream a fabricated
+`inconclusive` is indistinguishable from a considered one, and the harness would be putting an
+opinion in the Editor's mouth when the Editor may have said `planning-defect` in words the parser
+fumbled.
+
+The SDK streams usage per message, so its `ContextSource` needs no log tailing — the session's
+`turns()` yield text and `Observation`s interleaved, and `run_editor` splits them. The Editor is
+bounded by the same `run_bounded` as an Implementer, which is why that function takes a `Killable`
+rather than a subprocess: the SDK conversation is not a process at all.
 
 ### `CopilotEditor` — `adapters/copilot.py`
 
