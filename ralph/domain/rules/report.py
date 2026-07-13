@@ -23,6 +23,7 @@ def failure_report(
     telemetry: SessionTelemetry,
     suite: SuiteResult,
     integration_detail: str | None = None,
+    cycles: int = 1,
 ) -> FailureReport:
     """The model's story, checked against the harness's facts.
 
@@ -37,4 +38,5 @@ def failure_report(
         telemetry=telemetry,
         suite=suite,
         integration_detail=integration_detail,
+        cycles=cycles,
     )

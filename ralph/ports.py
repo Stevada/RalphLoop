@@ -119,6 +119,11 @@ class Git(Protocol):
 
     def move_worktree(self, wt: Worktree, to: Path) -> Worktree: ...
 
+    def discard_worktree(self, wt: Worktree) -> None:
+        """Destroy the checkout **and its branch**. What "the Implementer's work is discarded"
+        means in git: the next cycle re-cuts the same branch name from the integration branch, and
+        it must be cut from the integration branch — not from the wreckage of the last attempt."""
+
     def rebase(self, wt: Worktree, onto: str) -> bool: ...
 
     def merge_ff_only(self, branch: str) -> bool: ...

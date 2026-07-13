@@ -15,11 +15,19 @@ are not marked skipped, blocked, or failed — they are simply never eligible, b
 never reaches LANDED. Eligibility is derived, never stored, and that is the whole mechanism. The
 damage those failures cost is looked up once, at the end, for the notification.
 
-**Nothing is ever retried.** There is no loop around a session here and no backoff anywhere. A
-sub-issue gets one Implementer session; what follows is the Editor (#07), which is a different
-actor reading a failure report, not the same actor having another go.
+**Nothing is ever retried.** The loop below is not a retry loop, and the difference is the whole
+design. A retry runs the same actor against the same brief and hopes for a better sample. A
+**cycle** is an Implementer session *plus the Editor session that follows it*: the failure is
+adjudicated by a different actor, which rewrites the brief, and only then does the Implementer run
+again — against something that has **changed**. Nothing is re-run; something else is run. There is
+no backoff anywhere.
 
-Still to come: the Editor and the cycle cap (#07), and the context ceiling (#08).
+**The cycle cap is the scheduler's, and only the scheduler's.** At most three. The adapters *tell*
+the model it is the final cycle (`must_be_terminal`); the scheduler **rejects** a `revise` that
+comes back anyway. Enforcing it in each Editor adapter would give one rule two homes, and two homes
+drift.
+
+Still to come: the context ceiling (#08).
 """
 
 from __future__ import annotations
@@ -32,14 +40,19 @@ from pathlib import Path
 
 from ralph.domain import (
     Actor,
+    Brief,
+    CycleLedger,
     Destination,
     EventKind,
     FailureReport,
+    Findings,
     Notification,
     Outcome,
     SubIssue,
     SubIssueId,
     SubIssueState,
+    Verdict,
+    classify_editor,
     classify_implementer,
     eligible,
     failure_report,
@@ -48,7 +61,16 @@ from ralph.domain import (
 )
 from ralph.events import event
 from ralph.mergequeue import LandResult, MergeQueue
-from ralph.ports import Budget, Git, Implementer, IssueStore, RunLog, TestRunner, Worktree
+from ralph.ports import (
+    Budget,
+    Editor,
+    Git,
+    Implementer,
+    IssueStore,
+    RunLog,
+    TestRunner,
+    Worktree,
+)
 
 ACTIVE = Path(".worktrees") / "active"
 QUARANTINE = Path(".worktrees") / "failed"
@@ -97,6 +119,18 @@ class _Closed:
 
 
 class Scheduler:
+    """The run.
+
+    `editor` is optional, and the `None` is meant literally: **there is no Editor in this run**. It
+    is not a null Editor. The tempting alternative — an adapter that always returns no verdict — is
+    a lie the taxonomy would faithfully propagate: `classify_editor` calls a verdictless Editor
+    `infra-failed`, so every impasse in the run would reach the human reported as a harness crash.
+
+    Without an Editor a failure escalates on the Implementer's own outcome and the run is
+    quarantine-and-drain. That is a real mode, not a degraded one: it is the cheap run, with no
+    second model and no second bill.
+    """
+
     def __init__(
         self,
         *,
@@ -109,6 +143,7 @@ class Scheduler:
         merge_queue: MergeQueue,
         integration: str,
         budget: Budget,
+        editor: Editor | None = None,
         concurrency: int = DEFAULT_CONCURRENCY,
     ) -> None:
         self._repo = repo
@@ -117,10 +152,12 @@ class Scheduler:
         self._run_log = run_log
         self._runner = runner
         self._implementer = implementer
+        self._editor = editor
         self._merge_queue = merge_queue
         self._integration = integration
         self._budget = budget
         self._concurrency = concurrency
+        self._ledger = CycleLedger()
 
     async def run(self) -> RunReport:
         await self._refuse_a_red_base()
@@ -177,51 +214,164 @@ class Scheduler:
             )
 
     async def _pipeline(self, sub: SubIssue, capacity: asyncio.Semaphore) -> _Closed:
-        """One sub-issue, one session. What makes it a *cycle* — the Editor — arrives in #07.
+        """One sub-issue, to a terminal state — however many cycles that takes.
 
-        The semaphore is held for the whole pipeline, landing included: a sub-issue is not finished
-        until it is on the integration branch, and counting it as free while it waits for the merge
-        lock would let the cap be exceeded in the only place that matters.
+        The semaphore is held for the whole pipeline, every cycle and the landing included: a
+        sub-issue is not finished until it is on the integration branch, and counting it as free
+        while it waits for the merge lock would let the cap be exceeded in the only place it matters.
         """
         async with capacity:
-            await self._record(sub.id, "session-opened", SubIssueState.IN_PROGRESS)
+            while True:
+                closed = await self._cycle(sub)
+                if closed is not None:
+                    return closed
+                # `revise`: the work is discarded and the sub-issue restarts clean against the
+                # rewritten brief. This cannot spin — `_cycle` returns None only after spending a
+                # cycle, and the third spend makes `must_be_terminal` true, which no longer lets a
+                # `revise` through.
 
-            wt = self._git.add_worktree(
-                f"ralph/{sub.id}", self._repo / ACTIVE / str(sub.id), self._integration
+    async def _cycle(self, sub: SubIssue) -> _Closed | None:
+        """One Implementer session, plus the Editor session that follows it if it failed.
+
+        Returns the terminal state, or `None` to mean *the Editor said `revise`; go round again*.
+        """
+        attempt = self._ledger.spent(sub.id) + 1
+        await self._record(sub.id, Actor.IMPLEMENTER, "session-opened", SubIssueState.IN_PROGRESS)
+
+        wt = self._git.add_worktree(
+            f"ralph/{sub.id}", self._repo / ACTIVE / str(sub.id), self._integration
+        )
+        # The newest revision, or the Planner's original if the Editor has never touched this. On
+        # cycle two this is the **rewritten** brief — which is what makes this a cycle, not a retry.
+        brief, findings = self._store.content(sub.id)
+
+        telemetry = await self._implementer.run(brief, findings, wt, self._budget)
+        # The suite result, not the exit code, is the outcome. The harness runs the tests.
+        suite = await self._runner.run(wt.path)
+        outcome = classify_implementer(telemetry, suite)
+        detail: str | None = None
+
+        if route(Actor.IMPLEMENTER, outcome) is Destination.MERGE_QUEUE:
+            land = await self._merge_queue.land(wt)
+            if land.result is LandResult.LANDED:
+                await self._record(sub.id, Actor.IMPLEMENTER, "session-closed", Outcome.SUCCESS)
+                # After the fast-forward, never before. Fail toward redundant work, never toward
+                # missing code.
+                await self._record(sub.id, Actor.IMPLEMENTER, "terminal", SubIssueState.LANDED)
+                return _Closed(sub.id, None)
+
+            # Green in isolation, and it will not integrate. The Implementer could not have observed
+            # this about itself — which is why it goes to the Editor rather than back to the actor
+            # that produced it, and why it spends a cycle exactly like an impasse does.
+            outcome, detail = Outcome.INTEGRATION_FAILED, land.result.value
+            if land.suite is not None:
+                # The suite on the *prospective merge*, not the one that was green in the worktree
+                # as it stood. Handing the Editor an `integration-failed` alongside a green
+                # SuiteResult would be handing it a contradiction we manufactured.
+                suite = land.suite
+
+        await self._record(sub.id, Actor.IMPLEMENTER, "session-closed", outcome)
+        report = failure_report(outcome, telemetry, suite, detail, attempt)
+
+        if route(Actor.IMPLEMENTER, outcome) is not Destination.EDITOR:
+            # `ceiling-exceeded` and `infra-failed`: the two outcomes no Editor can help with. The
+            # session did not reason badly — it reasoned over too much, or the harness broke. Both
+            # go straight to the human, and both **spend no cycle**: a cycle is an Implementer
+            # session plus an Editor session, and no Editor is involved in either.
+            return await self._quarantine(sub.id, Actor.IMPLEMENTER, wt, report)
+
+        if self._editor is None:
+            # No Editor in this run: it is quarantine-and-drain, and the failure escalates on the
+            # Implementer's own outcome. The harness does not invent a verdict it never got.
+            return await self._quarantine(sub.id, Actor.IMPLEMENTER, wt, report)
+
+        return await self._adjudicate(sub, wt, brief, findings, report)
+
+    async def _adjudicate(
+        self,
+        sub: SubIssue,
+        wt: Worktree,
+        brief: Brief,
+        findings: Findings,
+        report: FailureReport,
+    ) -> _Closed | None:
+        """The Editor half of the cycle: read the failure, return a verdict, and act on it.
+
+        **The Editor never writes code.** It reads the brief, the findings, the failure report and
+        the failed worktree, and it returns a judgment. Every *consequence* of that judgment —
+        storing the revision, writing the run log, spending the cycle, refusing a fourth — happens
+        here, in the scheduler, and nowhere else. The port takes no `RunLog` and no `IssueStore` on
+        purpose.
+        """
+        # A cycle is spent the moment an Implementer failure routes to the Editor: that is when the
+        # Editor half begins. Spent *before* the session, so that a killed Editor still costs one —
+        # otherwise an Editor that reliably times out would buy a sub-issue infinite Implementers,
+        # and the cap would hold only along the paths that were working anyway.
+        self._ledger.spend(sub.id)
+        must_be_terminal = self._ledger.must_be_terminal(sub.id)
+
+        await self._record(sub.id, Actor.EDITOR, "session-opened", SubIssueState.IN_PROGRESS)
+        telemetry, verdict = await self._editor_of(sub).adjudicate(
+            brief, findings, report, wt, self._budget, must_be_terminal
+        )
+        outcome = classify_editor(telemetry, verdict)
+        await self._record(sub.id, Actor.EDITOR, "session-closed", outcome)
+
+        if route(Actor.EDITOR, outcome) is Destination.HUMAN or verdict is None:
+            # The Editor itself was killed, or came back with nothing. Escalate on the **Editor's**
+            # outcome and telemetry: the Implementer's failure is no longer the interesting fact —
+            # that the harness cannot adjudicate it is. A human told `impasse` here would go and
+            # rewrite a brief, when what actually needs fixing is the Editor.
+            #
+            # (`verdict is None` is already covered by the route above: `classify_editor` calls a
+            # verdictless Editor `infra-failed`, which routes to the human. It is restated only
+            # because the type-checker cannot read the taxonomy.)
+            failed = failure_report(outcome, telemetry, report.suite, None, report.cycles)
+            return await self._quarantine(sub.id, Actor.EDITOR, wt, failed)
+
+        await self._record(sub.id, Actor.EDITOR, "verdict", verdict.verdict)
+
+        if verdict.verdict is not Verdict.REVISE:
+            # `planning-defect` — the brief cannot be satisfied as written, and rewriting it is a
+            # Planner's call, not an Editor's. `inconclusive` — the Editor could not tell. Both are
+            # terminal: another Implementer session would be a coin flip we have already paid for.
+            return await self._quarantine(sub.id, Actor.EDITOR, wt, report)
+
+        if must_be_terminal:
+            # **The scheduler rejects it, and only the scheduler.** The Editor was told this was the
+            # final cycle and asked for another anyway. Its verdict is refused rather than obeyed:
+            # the cap is the harness's rule, and a rule enforced by asking a model nicely is not a
+            # rule. The sub-issue escalates on the Implementer's failure, which is what a human
+            # needs to see.
+            log.warning(
+                "%s: the Editor returned `revise` on its final cycle; refusing a fourth "
+                "Implementer session. Escalating to a human.",
+                sub.id,
             )
-            brief, findings = self._store.content(sub.id)
+            return await self._quarantine(sub.id, Actor.EDITOR, wt, report)
 
-            telemetry = await self._implementer.run(brief, findings, wt, self._budget)
-            # The suite result, not the exit code, is the outcome. The harness runs the tests.
-            suite = await self._runner.run(wt.path)
-            outcome = classify_implementer(telemetry, suite)
-            detail: str | None = None
+        revised_brief, revised_findings = verdict.revision
+        # Knowledge survives **only** through the findings. Nothing else crosses: the diff is
+        # discarded, the transcript is discarded, and what the Editor chose to write down is all the
+        # next session gets. That choice is the Editor's judgment, unmandated — and keeping it out
+        # of the brief is what lets a session be *helped* without the bar being *lowered*.
+        await self._store.record_revision(
+            sub.id,
+            revised_brief,
+            revised_findings if revised_findings is not None else findings,
+        )
+        self._git.discard_worktree(wt)
+        return None
 
-            if route(Actor.IMPLEMENTER, outcome) is Destination.MERGE_QUEUE:
-                land = await self._merge_queue.land(wt)
-                if land.result is LandResult.LANDED:
-                    await self._record(sub.id, "session-closed", Outcome.SUCCESS)
-                    # After the fast-forward, never before. Fail toward redundant work, never
-                    # toward missing code.
-                    await self._record(sub.id, "terminal", SubIssueState.LANDED)
-                    return _Closed(sub.id, None)
+    def _editor_of(self, sub: SubIssue) -> Editor:
+        """`_cycle` has already established there is one. This is for the type-checker."""
+        if self._editor is None:
+            raise RuntimeError(f"{sub.id}: reached the Editor with no Editor configured")
+        return self._editor
 
-                # Green in isolation, and it will not integrate. The Implementer could not have
-                # observed this about itself — which is why it goes to the Editor (in #07) rather
-                # than back to the actor that produced it.
-                outcome, detail = Outcome.INTEGRATION_FAILED, land.result.value
-                if land.suite is not None:
-                    # The suite on the *prospective merge*, not the one that was green in the
-                    # worktree as it stood. Handing the Editor an `integration-failed` alongside a
-                    # green SuiteResult would be handing it a contradiction we manufactured.
-                    suite = land.suite
-
-            await self._record(sub.id, "session-closed", outcome)
-            self._quarantine(sub.id, wt)
-            await self._record(sub.id, "terminal", SubIssueState.NEEDS_HUMAN)
-            return _Closed(sub.id, failure_report(outcome, telemetry, suite, detail))
-
-    def _quarantine(self, id: SubIssueId, wt: Worktree) -> None:
+    async def _quarantine(
+        self, id: SubIssueId, actor: Actor, wt: Worktree, report: FailureReport
+    ) -> _Closed:
         """The worktree is the evidence, and evidence is only preserved if it can be found.
 
         Raises if the destination is occupied — which means a previous run's wreckage for this same
@@ -229,16 +379,22 @@ class Scheduler:
         anyway. That is worth stopping for; quietly clobbering it is not.
         """
         self._git.move_worktree(wt, self._repo / QUARANTINE / str(id))
+        await self._record(id, actor, "terminal", SubIssueState.NEEDS_HUMAN)
+        return _Closed(id, report)
 
     async def _record(
-        self, id: SubIssueId, kind: EventKind, payload: Outcome | SubIssueState
+        self,
+        id: SubIssueId,
+        actor: Actor,
+        kind: EventKind,
+        payload: Outcome | Verdict | SubIssueState,
     ) -> None:
         """Two sinks, different durability. The run log is **authoritative** — failing to write it
         fails the run. The issue store is **best-effort**: it mirrors the transition back into the
         tracker for a human's benefit, and a run must not die because the tracker was unreachable
         (a read-only file today; Linear being down tomorrow).
         """
-        e = event(id, kind, payload)
+        e = event(id, actor, kind, payload)
         await self._run_log.write(e)
         try:
             await self._store.write_event(e)

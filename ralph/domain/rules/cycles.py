@@ -29,13 +29,22 @@ class CycleLedger:
             raise ValueError(
                 f"{id!r} has already spent {self.MAX_CYCLES} cycles; there is no fourth"
             )
-        count = self._spent.get(id, 0) + 1
+        count = self.spent(id) + 1
         self._spent[id] = count
         return count
 
+    def spent(self, id: SubIssueId) -> int:
+        """How many cycles `id` has already spent. Zero before its first session.
+
+        The scheduler reads this to number the attempt it is about to make — `spent(id) + 1` is the
+        cycle a session belongs to, and that number ends up in the `FailureReport` the Editor and
+        the human both read.
+        """
+        return self._spent.get(id, 0)
+
     def exhausted(self, id: SubIssueId) -> bool:
         """True once `MAX_CYCLES` cycles have been spent. No further Implementer session runs."""
-        return self._spent.get(id, 0) >= self.MAX_CYCLES
+        return self.spent(id) >= self.MAX_CYCLES
 
     def must_be_terminal(self, id: SubIssueId) -> bool:
         """True on the final cycle. The Editor may not return `revise`; the harness rejects it

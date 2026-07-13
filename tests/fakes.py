@@ -52,11 +52,18 @@ class FakeImplementer:
 
 @dataclass(slots=True)
 class FakeEditor:
-    """Returns scripted verdicts. Records `must_be_terminal` so a test can prove the harness *told*
-    the Editor it was the final cycle, rather than trusting it to remember."""
+    """Returns scripted verdicts, and records everything it was handed.
+
+    `must_be_terminal` is recorded so a test can prove the harness *told* the Editor it was the
+    final cycle rather than trusting it to remember — and, separately, that the harness refuses a
+    `revise` from an Editor that was told and asked anyway.
+
+    The last scripted entry repeats, so `[revise]` means "always revise" — which is how the cycle
+    cap gets an adversary rather than a collaborator.
+    """
 
     scripted: Sequence[tuple[SessionTelemetry, EditorVerdict | None]] = field(default_factory=list)
-    calls: list[tuple[FailureReport, bool]] = field(default_factory=list)
+    calls: list[tuple[Brief, Findings, FailureReport, bool]] = field(default_factory=list)
 
     async def adjudicate(
         self,
@@ -67,7 +74,7 @@ class FakeEditor:
         budget: Budget,
         must_be_terminal: bool,
     ) -> tuple[SessionTelemetry, EditorVerdict | None]:
-        self.calls.append((failure, must_be_terminal))
+        self.calls.append((brief, findings, failure, must_be_terminal))
         if not self.scripted:
             return telemetry(commits=0), None
         return self.scripted[min(len(self.calls) - 1, len(self.scripted) - 1)]
@@ -138,6 +145,7 @@ class FakeGit:
     worktrees: list[Worktree] = field(default_factory=list)
     merged: list[str] = field(default_factory=list)
     moved: list[tuple[str, Path]] = field(default_factory=list)
+    discarded: list[str] = field(default_factory=list)
 
     def add_worktree(self, branch: str, at: Path, base: str) -> Worktree:
         wt = Worktree(path=at, branch=branch, base=base)
@@ -147,6 +155,9 @@ class FakeGit:
     def move_worktree(self, wt: Worktree, to: Path) -> Worktree:
         self.moved.append((wt.branch, to))
         return Worktree(path=to, branch=wt.branch, base=wt.base)
+
+    def discard_worktree(self, wt: Worktree) -> None:
+        self.discarded.append(wt.branch)
 
     def rebase(self, wt: Worktree, onto: str) -> bool:
         return wt.branch not in self.rebase_conflicts

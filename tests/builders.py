@@ -13,12 +13,16 @@ from typing import Literal
 
 from ralph.domain import (
     Approach,
+    Brief,
+    EditorVerdict,
+    Findings,
     ImpasseReport,
     IssueGraph,
     SessionTelemetry,
     SubIssue,
     SubIssueId,
     SuiteResult,
+    Verdict,
 )
 
 
@@ -66,6 +70,30 @@ def impasse(
         approaches=approaches,
         unsatisfiable_criterion=unsatisfiable_criterion,
         what_would_satisfy=what_would_satisfy,
+    )
+
+
+def verdict(
+    v: Verdict = Verdict.INCONCLUSIVE,
+    *,
+    brief: str = "the brief, rewritten",
+    findings: str | None = None,
+    rationale: str = "because",
+) -> EditorVerdict:
+    """A `revise` carries the brief to restart against; a terminal verdict may not carry one at all.
+
+    The builder mirrors the invariant rather than working around it — `verdict(Verdict.REVISE)` gets
+    a brief because a `revise` without one is not a thing that can exist.
+
+    `findings=None` means the Editor left them alone, which is the common case: most revisions
+    rewrite the bar, not what was learned about the repo.
+    """
+    revising = v is Verdict.REVISE
+    return EditorVerdict(
+        verdict=v,
+        revised_brief=Brief(body=brief) if revising else None,
+        revised_findings=Findings(body=findings) if findings is not None else None,
+        rationale=rationale,
     )
 
 

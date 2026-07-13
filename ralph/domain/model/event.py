@@ -17,7 +17,7 @@ from typing import Literal
 
 from ralph.domain.model.graph import SubIssueId
 from ralph.domain.model.state import SubIssueState
-from ralph.domain.model.session import Outcome
+from ralph.domain.model.session import Actor, Outcome
 from ralph.domain.model.verdict import Verdict
 
 EventKind = Literal["session-opened", "session-closed", "terminal", "verdict"]
@@ -27,5 +27,15 @@ EventKind = Literal["session-opened", "session-closed", "terminal", "verdict"]
 class Event:
     ts: datetime
     sub_issue: SubIssueId
+    actor: Actor
+    """Whose session this is about.
+
+    Load-bearing once the Editor exists: a cycle closes *two* sessions against the same sub-issue,
+    and `session-closed: infra-failed` means something entirely different depending on whether the
+    Implementer crashed or the Editor did. Without this field the authoritative record of the run
+    cannot tell them apart, and a reader has to infer the actor from position — which is exactly the
+    kind of thing that is right until the day it matters.
+    """
+
     kind: EventKind
     payload: Outcome | Verdict | SubIssueState

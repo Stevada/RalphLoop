@@ -31,7 +31,7 @@ wire format here — where the only writer lives — keeps the writer and the re
 
 
 class Behaviour(StrEnum):
-    """What the stand-in agent has been told to do. Seven shapes, and the harness must tell them
+    """What the stand-in agent has been told to do. Eight shapes, and the harness must tell them
     apart: five of them exit in ways that look alike from the outside."""
 
     SUCCEED = "succeed"
@@ -41,6 +41,16 @@ class Behaviour(StrEnum):
     IMPASSE = "impasse"
     HANG = "hang"
     CONFLICT = "conflict"
+    IMPASSE_ONCE = "impasse-once"
+    """Declares an impasse the first time it is asked, and succeeds the second.
+
+    The only behaviour that is not a pure function of its argv, and it exists for one reason: it is
+    how a *cycle* becomes observable from outside. An Editor's `revise` is supposed to discard the
+    work and restart the sub-issue clean — and a sub-issue restarted against a fresh worktree looks
+    identical, from the harness's side, to one that was never restarted at all. Unless the agent
+    remembers. It counts its own sessions in a file beside the script, outside the repo, so the
+    count survives the worktree being destroyed — which is the very thing being tested.
+    """
 
 
 SLOW_S = 0.75
@@ -241,10 +251,33 @@ def main() -> int:
         mark("-", tag)
 
 
+def sessions_so_far(tag: str) -> int:
+    """How many times this agent has been asked about `tag`, counted in a file beside the script.
+
+    Beside the *script*, which lives outside the repo — not in the worktree, which is destroyed on
+    every revise. A counter that did not survive the discard could not observe the discard.
+    """
+    counter = Path(__file__).parent / f".sessions-{tag}"
+    before = int(counter.read_text()) if counter.exists() else 0
+    counter.write_text(str(before + 1))
+    return before
+
+
 def act(behaviour: str, tag: str, cwd: Path) -> int:
     if behaviour == "slow":
         time.sleep(SLOW_S)
         behaviour = "succeed"
+
+    if behaviour == "impasse-once":
+        if sessions_so_far(tag):
+            behaviour = "succeed"
+        else:
+            # A first attempt that got somewhere and then got stuck. The partial work is *committed*
+            # on purpose: it is what makes "the Implementer's work is discarded" observable at all.
+            # A first session that committed nothing would leave nothing to fail to discard.
+            (cwd / f"partial_{tag}.py").write_text("# half an idea, abandoned\\n")
+            commit(f"wip({tag}): as far as I got")
+            behaviour = "impasse"
 
     if behaviour == "succeed":
         (cwd / f"feature_{tag}.py").write_text(f"VALUE = {tag!r}\\n")

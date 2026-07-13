@@ -27,7 +27,7 @@ from ralph.domain import (
     notify,
     route,
 )
-from tests.builders import graph_of, impasse, suite, telemetry
+from tests.builders import graph_of, impasse, suite, telemetry, verdict
 
 # --- classify_implementer: one test per row of the taxonomy -------------------------------------
 
@@ -105,17 +105,8 @@ def test_the_implementer_never_classifies_integration_failed() -> None:
 # --- classify_editor ----------------------------------------------------------------------------
 
 
-def _verdict(v: Verdict = Verdict.INCONCLUSIVE) -> EditorVerdict:
-    return EditorVerdict(
-        verdict=v,
-        revised_brief=None,
-        revised_findings=None,
-        rationale="because",
-    )
-
-
 def test_editor_success_is_a_verdict_returned() -> None:
-    assert classify_editor(telemetry(commits=0), _verdict()) is Outcome.SUCCESS
+    assert classify_editor(telemetry(commits=0), verdict()) is Outcome.SUCCESS
 
 
 def test_an_editor_that_returned_no_verdict_is_infra_failed() -> None:
@@ -145,7 +136,7 @@ def test_classify_editor_cannot_return_impasse_or_silent_red_for_any_input() -> 
         telemetry(killed="ceiling"),
         telemetry(commits=7, impasse_report=impasse()),  # an Editor that committed and whinged
     ]
-    verdicts: list[EditorVerdict | None] = [None, *(_verdict(v) for v in Verdict)]
+    verdicts: list[EditorVerdict | None] = [None, *(verdict(v) for v in Verdict)]
 
     for t in telemetries:
         for v in verdicts:

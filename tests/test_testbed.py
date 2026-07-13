@@ -11,7 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from tests.testbed import Behaviour, StandInAgent, TargetRepo, impasse_body
+from tests.testbed import (
+    _AGENT_SOURCE,
+    Behaviour,
+    StandInAgent,
+    TargetRepo,
+    impasse_body,
+)
 
 # --- the throwaway repo -------------------------------------------------------------------------
 
@@ -189,3 +195,34 @@ def test_two_succeeding_agents_do_not_conflict(repo: TargetRepo, agent: StandInA
 
     assert rebase.returncode == 0
     assert repo.run_suite(cwd=right) is True
+
+
+def test_the_stand_in_agents_source_is_valid_python() -> None:
+    """A guard against the nastiest bug this file can have.
+
+    `_AGENT_SOURCE` is a plain triple-quoted string, so a `\\n` written where `\\\\n` was meant lands
+    in the generated script as a *real* newline and breaks a string literal. The agent then dies of a
+    `SyntaxError` on every session — and the harness, working perfectly, classifies that as
+    `silent-red` and carries on.
+
+    Which means nothing fails. Every test still runs, every one of them still passes or fails for
+    plausible-looking reasons, and all of them are now testing a crash instead of the behaviour they
+    are named after. The one line below is what stands between that and a green suite.
+    """
+    compile(_AGENT_SOURCE, "stand_in_agent.py", "exec")
+
+
+async def test_impasse_once_declares_an_impasse_then_succeeds(
+    repo: TargetRepo, agent: StandInAgent
+) -> None:
+    """The behaviour the Editor loop is observed through: it must really change its mind, and its
+    first attempt must really leave a commit behind for the harness to discard."""
+    wt = repo.add_worktree("01")
+
+    first = subprocess.run(agent.argv(Behaviour.IMPASSE_ONCE, "01"), cwd=wt, capture_output=True, text=True)
+    assert impasse_body(first.stdout)["unsatisfiable_criterion"] == "the second acceptance criterion of 01"
+    assert (wt / "partial_01.py").exists()  # it committed something before giving up
+
+    second = subprocess.run(agent.argv(Behaviour.IMPASSE_ONCE, "01"), cwd=wt, capture_output=True, text=True)
+    assert "<impasse>" not in second.stdout
+    assert (wt / "feature_01.py").exists()  # and the second time, it built the thing

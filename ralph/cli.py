@@ -22,9 +22,9 @@ from ralph.adapters.git import GitCli
 from ralph.adapters.runlog import JsonlRunLog
 from ralph.adapters.session import SubprocessImplementer
 from ralph.adapters.suite import SubprocessTestRunner, detect_test_cmd, install_once
-from ralph.domain import Notification
+from ralph.domain import CycleLedger, Notification
 from ralph.mergequeue import MergeQueue
-from ralph.ports import Budget, Worktree
+from ralph.ports import Budget, Editor, Worktree
 from ralph.scheduler import DEFAULT_CONCURRENCY, RunReport, Scheduler
 
 AGENT_CMD_ENV = "RALPH_AGENT_CMD"
@@ -65,7 +65,11 @@ async def run(
     issues: Path | None,
     budget: Budget | None = None,
     concurrency: int = DEFAULT_CONCURRENCY,
+    editor: Editor | None = None,
 ) -> RunReport:
+    """`editor=None` means there is no Editor: failures quarantine on the Implementer's own outcome
+    and the run drains around them. The real one — Claude Code, read-only, enforced by the harness —
+    is named here in #09; until then the only Editors that exist are the stubs the tests inject."""
     repo = repo.resolve()
     git = GitCli(repo=repo)
     integration = git.head_branch()
@@ -84,6 +88,7 @@ async def run(
         implementer=SubprocessImplementer(
             build_argv=lambda brief, findings, wt: _agent_argv(wt)
         ),
+        editor=editor,
         merge_queue=MergeQueue(git=git, runner=runner, integration=integration),
         integration=integration,
         budget=budget or Budget(),
@@ -106,7 +111,15 @@ def render(n: Notification) -> str:
 
     lines.append(f"\nneeds a human ({len(n.escalations)}), most urgent first:")
     for e in n.escalations:
-        lines.append(f"\n  {e.sub_issue}  {e.outcome.value}")
+        # The cycle count only earns a line when it is not 1. A sub-issue the Editor rewrote twice
+        # and which still failed is a different animal from one that failed on first contact, and
+        # the difference should be visible without opening the run log.
+        spent = (
+            f"  (cycle {e.report.cycles} of {CycleLedger.MAX_CYCLES})"
+            if e.report.cycles > 1
+            else ""
+        )
+        lines.append(f"\n  {e.sub_issue}  {e.outcome.value}{spent}")
         if e.stranded:
             lines.append(f"    holding up: {', '.join(e.stranded)}")
         if e.report.claim is not None:

@@ -12,11 +12,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from ralph.domain import Event, EventKind, Outcome, SubIssueId, SubIssueState, Verdict
+from ralph.domain import Actor, Event, EventKind, Outcome, SubIssueId, SubIssueState, Verdict
 
 
 def event(
-    sub_issue: SubIssueId, kind: EventKind, payload: Outcome | Verdict | SubIssueState
+    sub_issue: SubIssueId,
+    actor: Actor,
+    kind: EventKind,
+    payload: Outcome | Verdict | SubIssueState,
 ) -> Event:
     """UTC, because a run log gets read across a timezone boundary at 3am."""
-    return Event(ts=datetime.now(UTC), sub_issue=sub_issue, kind=kind, payload=payload)
+    return Event(
+        ts=datetime.now(UTC), sub_issue=sub_issue, actor=actor, kind=kind, payload=payload
+    )

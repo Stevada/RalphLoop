@@ -31,6 +31,13 @@ _BULLET = re.compile(r"^\s*[-*]\s+(.*)$", re.MULTILINE)
 _NUMBER = re.compile(r"\d+")
 _FINDINGS = "## Findings"
 
+REVISIONS = "revisions"
+"""Where the Editor's rewrites live, beside the sub-issue files rather than on top of them.
+
+A directory, not a suffix on the `.md`, so that `_files()`'s `*.md` glob — which is what defines
+the graph — never sees a revision and mistakes it for a sub-issue.
+"""
+
 
 class IssueParseError(ValueError):
     """The issue file does not say what the harness needs it to say. Always fatal, never guessed."""
@@ -156,13 +163,70 @@ class FilesystemIssueStore:
                 return path
         raise IssueParseError(f"no sub-issue {id!r} in {self.issues_dir}")
 
-    def content(self, id: SubIssueId) -> tuple[Brief, Findings]:
-        """The brief is the file. The findings are the one section the Editor owns."""
+    def _revisions_of(self, id: SubIssueId) -> Path:
+        return self.issues_dir / REVISIONS / str(id)
+
+    def _latest_revision(self, id: SubIssueId) -> int | None:
+        """The highest revision on disk, or None when the Editor has never touched this sub-issue."""
+        dir = self._revisions_of(id)
+        if not dir.is_dir():
+            return None
+        numbers = [int(n.group()) for p in dir.glob("*-brief.md") if (n := _ID.match(p.name))]
+        return max(numbers) if numbers else None
+
+    def _planners_original(self, id: SubIssueId) -> tuple[Brief, Findings]:
+        """Revision 0: the sub-issue file exactly as the Planner wrote it. The brief is the file;
+        the findings are the one section the Editor owns."""
         body = self._path_of(id).read_text()
         return Brief(body=body), Findings(body=_section(body, _FINDINGS).strip())
 
+    def content(self, id: SubIssueId) -> tuple[Brief, Findings]:
+        """What the next Implementer session works from: the newest revision, or the Planner's
+        original when there is none.
+
+        Brief and findings round-trip as **separate** fields, which is the point of storing them in
+        separate files. A revision may change one and leave the other alone — the findings are a
+        channel for adding information *without* lowering the bar, and conflating them with the
+        brief is exactly how a bar gets lowered by accident.
+        """
+        latest = self._latest_revision(id)
+        if latest is None:
+            return self._planners_original(id)
+        dir = self._revisions_of(id)
+        return (
+            Brief(body=(dir / f"{latest}-brief.md").read_text(), revision=latest),
+            Findings(body=(dir / f"{latest}-findings.md").read_text()),
+        )
+
     async def record_revision(self, id: SubIssueId, brief: Brief, findings: Findings) -> None:
-        raise NotImplementedError("revisions land with the Editor loop, in sub-issue #07")
+        """Written **alongside** the Planner's original, never over it.
+
+        Revision 0 is what a human diffs against to see whether the spec drifted — whether three
+        rounds of Editor revision quietly softened "reject the request" into "log a warning". If the
+        harness overwrote the brief in place, the evidence for the one bet most likely to fail
+        (`docs/prd.md` §8: spec drift) would be destroyed by the very mechanism under suspicion.
+
+        So revision 0 is snapshotted here, on the first revision, before anything is written. The
+        live `.md` file keeps its own life — the `Status:` line is mirrored into it — and the
+        snapshot is the frozen copy that stays diffable.
+
+        The revision **number is the store's to assign**, not the Editor's. An Editor that could
+        choose its own could overwrite an earlier one, and the store is the only thing that knows
+        what is already on disk.
+        """
+        dir = self._revisions_of(id)
+        dir.mkdir(parents=True, exist_ok=True)
+
+        latest = self._latest_revision(id)
+        if latest is None:
+            original_brief, original_findings = self._planners_original(id)
+            (dir / "0-brief.md").write_text(original_brief.body)
+            (dir / "0-findings.md").write_text(original_findings.body)
+            latest = 0
+
+        next = latest + 1
+        (dir / f"{next}-brief.md").write_text(brief.body)
+        (dir / f"{next}-findings.md").write_text(findings.body)
 
     async def write_event(self, e: Event) -> None:
         """Mirror a terminal state into the `Status:` line. Other events are the run log's job."""

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from ralph.domain import Event, EventKind, Outcome, SubIssueId, SubIssueState, Verdict
+from ralph.domain import Actor, Event, EventKind, Outcome, SubIssueId, SubIssueState, Verdict
 
 _PAYLOAD_OF: dict[str, type[Outcome] | type[Verdict] | type[SubIssueState]] = {
     "session-opened": SubIssueState,
@@ -40,6 +40,7 @@ class JsonlRunLog:
             {
                 "ts": e.ts.isoformat(),
                 "sub_issue": str(e.sub_issue),
+                "actor": e.actor.value,
                 "kind": e.kind,
                 "payload": e.payload.value,
             }
@@ -64,6 +65,7 @@ class JsonlRunLog:
             return Event(
                 ts=datetime.fromisoformat(raw["ts"]),
                 sub_issue=SubIssueId(raw["sub_issue"]),
+                actor=Actor(raw["actor"]),
                 kind=kind,
                 payload=_PAYLOAD_OF[kind](raw["payload"]),
             )

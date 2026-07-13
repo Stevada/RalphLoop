@@ -22,7 +22,7 @@ from ralph.adapters.suite import (
     detect_test_cmd,
     install_once,
 )
-from ralph.domain import Outcome, SubIssueId, SubIssueState
+from ralph.domain import Actor, Outcome, SubIssueId, SubIssueState
 from ralph.events import event
 from tests.testbed import TargetRepo
 
@@ -124,9 +124,9 @@ async def test_a_successful_install_really_runs_the_command(
 async def test_the_run_log_is_append_only_jsonl(tmp_path: Path) -> None:
     log = JsonlRunLog(path=tmp_path / "run.jsonl")
 
-    await log.write(event(SubIssueId("01"), "session-opened", SubIssueState.IN_PROGRESS))
+    await log.write(event(SubIssueId("01"), Actor.IMPLEMENTER, "session-opened", SubIssueState.IN_PROGRESS))
     first = (tmp_path / "run.jsonl").read_text()
-    await log.write(event(SubIssueId("01"), "session-closed", Outcome.SUCCESS))
+    await log.write(event(SubIssueId("01"), Actor.IMPLEMENTER, "session-closed", Outcome.SUCCESS))
     second = (tmp_path / "run.jsonl").read_text()
 
     assert second.startswith(first)  # the second write did not rewrite the first line
@@ -135,8 +135,8 @@ async def test_the_run_log_is_append_only_jsonl(tmp_path: Path) -> None:
 
 async def test_the_run_log_reads_back_as_typed_events_in_order(tmp_path: Path) -> None:
     log = JsonlRunLog(path=tmp_path / "run.jsonl")
-    await log.write(event(SubIssueId("01"), "session-closed", Outcome.SILENT_RED))
-    await log.write(event(SubIssueId("02"), "terminal", SubIssueState.LANDED))
+    await log.write(event(SubIssueId("01"), Actor.IMPLEMENTER, "session-closed", Outcome.SILENT_RED))
+    await log.write(event(SubIssueId("02"), Actor.IMPLEMENTER, "terminal", SubIssueState.LANDED))
 
     events = JsonlRunLog(path=tmp_path / "run.jsonl").events()
 
@@ -153,11 +153,11 @@ async def test_the_run_log_carries_no_token_spend_no_diffstat_and_no_test_output
     find the next event is not being told a story — those belong in the failure report, which has a
     different reader."""
     log = JsonlRunLog(path=tmp_path / "run.jsonl")
-    await log.write(event(SubIssueId("01"), "session-closed", Outcome.SUCCESS))
+    await log.write(event(SubIssueId("01"), Actor.IMPLEMENTER, "session-closed", Outcome.SUCCESS))
 
     line = (tmp_path / "run.jsonl").read_text()
 
-    assert set(json.loads(line)) == {"ts", "sub_issue", "kind", "payload"}
+    assert set(json.loads(line)) == {"ts", "sub_issue", "actor", "kind", "payload"}
 
 
 def test_an_unparseable_line_is_loud_never_skipped(tmp_path: Path) -> None:

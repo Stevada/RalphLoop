@@ -65,17 +65,19 @@ async def test_the_run_log_tells_the_true_story_in_order(
     await run(repo.path, None)
 
     lines = [json.loads(x) for x in (repo.path / ".scratch" / "run.jsonl").read_text().splitlines()]
-    story = [(e["sub_issue"], e["kind"], e["payload"]) for e in lines]
+    story = [(e["sub_issue"], e["actor"], e["kind"], e["payload"]) for e in lines]
 
+    # Every session says whose it was. With no Editor in this run they are all the Implementer's —
+    # which is the baseline the Editor's own lines are added to in `test_editor_loop.py`.
     assert story == [
-        ("01", "session-opened", "in-progress"),
-        ("01", "session-closed", "success"),
-        ("01", "terminal", "landed"),  # after the fast-forward, never before
-        ("02", "session-opened", "in-progress"),
-        ("02", "session-closed", "success"),
-        ("02", "terminal", "landed"),
+        ("01", "implementer", "session-opened", "in-progress"),
+        ("01", "implementer", "session-closed", "success"),
+        ("01", "implementer", "terminal", "landed"),  # after the fast-forward, never before
+        ("02", "implementer", "session-opened", "in-progress"),
+        ("02", "implementer", "session-closed", "success"),
+        ("02", "implementer", "terminal", "landed"),
     ]
-    assert all(set(e) == {"ts", "sub_issue", "kind", "payload"} for e in lines)
+    assert all(set(e) == {"ts", "sub_issue", "actor", "kind", "payload"} for e in lines)
 
 
 async def test_a_red_base_aborts_the_run_before_a_single_agent_starts(
