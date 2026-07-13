@@ -331,7 +331,7 @@ class Scheduler:
 
         await self._record(sub.id, Actor.EDITOR, "verdict", verdict.verdict)
 
-        if verdict.verdict is not Verdict.REVISE:
+        if verdict.verdict.is_terminal:
             # `planning-defect` — the brief cannot be satisfied as written, and rewriting it is a
             # Planner's call, not an Editor's. `inconclusive` — the Editor could not tell. Both are
             # terminal: another Implementer session would be a coin flip we have already paid for.

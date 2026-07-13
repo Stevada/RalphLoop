@@ -28,10 +28,20 @@ every eligible sub-issue **concurrently** (default 4, `-j` to change it), landin
 time** through the merge lock. A failure is classified, quarantined, and drained around: the run
 does not stop, its dependents never get a turn, and one notification comes out at the end.
 
+**The Editor loop is closed.** A failure that routes to the Editor gets a verdict, and on `revise`
+the sub-issue **restarts clean** against a rewritten brief — the worktree and its branch are
+destroyed, and the next cycle is cut from the integration branch. Knowledge survives **only** through
+the findings. At most **three cycles**, enforced by the scheduler alone: the adapters *tell* the
+model it is the final cycle, and the scheduler **refuses** a `revise` that comes back anyway.
+
+There is **no Editor adapter yet** — `Scheduler(editor=None)` is the default, and it means *there is
+no Editor in this run*, not a null one. The run is then quarantine-and-drain and failures escalate on
+the Implementer's own outcome. #09 names the real one in `cli.py`.
+
 The agent it runs is whatever `RALPH_AGENT_CMD` names; Codex and Copilot become two more of those
 in #08 and #10.
 
-Still to come: the Editor and the cycle cap (#07), the context ceiling (#08), `ralph validate` (#11).
+Still to come: the context ceiling (#08), the real Editor (#09), `ralph validate` (#11).
 
 ## Issue format
 - Issues live in `.scratch/<phase>/issues/` inside the target repo (e.g. `.scratch/refine_data_flow/issues/`)
