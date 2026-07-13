@@ -17,6 +17,7 @@ import shlex
 from collections.abc import Sequence
 from pathlib import Path
 
+from ralph.adapters.codex import codex_implementer
 from ralph.adapters.filesystem import FilesystemIssueStore
 from ralph.adapters.git import GitCli
 from ralph.adapters.runlog import JsonlRunLog
@@ -24,12 +25,15 @@ from ralph.adapters.session import SubprocessImplementer
 from ralph.adapters.suite import SubprocessTestRunner, detect_test_cmd, install_once
 from ralph.domain import CycleLedger, Notification
 from ralph.mergequeue import MergeQueue
-from ralph.ports import Budget, Editor, Worktree
+from ralph.ports import Budget, Editor, Implementer, Worktree
 from ralph.scheduler import DEFAULT_CONCURRENCY, RunReport, Scheduler
 
 AGENT_CMD_ENV = "RALPH_AGENT_CMD"
+IMPLEMENTER_ENV = "RALPH_IMPLEMENTER"
 SUB_ISSUE_PLACEHOLDER = "{sub_issue}"
 BRANCH_PREFIX = "ralph/"
+
+CODEX = "codex"
 
 
 class NoAgent(RuntimeError):
@@ -44,6 +48,21 @@ def _agent_argv(worktree: Worktree) -> Sequence[str]:
         raise NoAgent(f"set {AGENT_CMD_ENV} to the agent's command line")
     sub_issue = worktree.branch.removeprefix(BRANCH_PREFIX)
     return [arg.replace(SUB_ISSUE_PLACEHOLDER, sub_issue) for arg in shlex.split(template)]
+
+
+def implementer() -> Implementer:
+    """Which model implements — the one decision only this module is allowed to make.
+
+    Unset means *the argv in `RALPH_AGENT_CMD`*: the stand-in agent, or any other command-line
+    agent. It is bounded on the clock alone, because it publishes no context signal to meter.
+    `codex` is the first Implementer that does. Copilot joins it in #10.
+    """
+    named = os.environ.get(IMPLEMENTER_ENV)
+    if named is None:
+        return SubprocessImplementer(build_argv=lambda brief, findings, wt: _agent_argv(wt))
+    if named == CODEX:
+        return codex_implementer()
+    raise NoAgent(f"{IMPLEMENTER_ENV}={named!r} names no Implementer. Known: {CODEX}.")
 
 
 def find_issues_dir(repo: Path, given: Path | None) -> Path:
@@ -85,9 +104,7 @@ async def run(
         store=FilesystemIssueStore(issues_dir=find_issues_dir(repo, issues)),
         run_log=JsonlRunLog(path=repo / ".scratch" / "run.jsonl"),
         runner=runner,
-        implementer=SubprocessImplementer(
-            build_argv=lambda brief, findings, wt: _agent_argv(wt)
-        ),
+        implementer=implementer(),
         editor=editor,
         merge_queue=MergeQueue(git=git, runner=runner, integration=integration),
         integration=integration,

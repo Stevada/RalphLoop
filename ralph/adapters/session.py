@@ -2,8 +2,8 @@
 
 **This is the whole of an Implementer that is not model-specific.** Codex and Copilot are this
 plus an argv and a context source; the stand-in agent is this plus an argv. Everything that makes
-a session a session — the wall-clock bound, counting the commits, reading the diffstat, finding
-the `<impasse>` sentinel — happens here, once.
+a session a session — both bounds, counting the commits, reading the diffstat, finding the
+`<impasse>` sentinel — happens here, once.
 
 The model's exit code is its opinion. Everything in the `SessionTelemetry` this returns is the
 harness's own observation, and the two are allowed to disagree. That disagreement is the signal.
@@ -16,11 +16,11 @@ import json
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal
 
+from ralph.adapters.context import run_bounded
 from ralph.adapters.git import run_git
 from ralph.domain import Approach, Brief, Findings, ImpasseReport, SessionTelemetry
-from ralph.ports import Budget, Worktree
+from ralph.ports import Budget, ContextSource, Worktree
 
 IMPASSE_OPEN, IMPASSE_CLOSE = "<impasse>", "</impasse>"
 
@@ -63,33 +63,95 @@ def parse_impasse(output: str) -> ImpasseReport | None:
         raise ImpasseParseError(f"unreadable impasse report: {body!r}") from exc
 
 
-async def run_agent(argv: Sequence[str], wt: Worktree, budget: Budget) -> SessionTelemetry:
-    """One session. Bounded on the wall clock; the context ceiling arrives with #08, which is
-    where there is a live context signal to meter.
+class Transcript:
+    """The session's stdout: accumulated in full for telemetry, and republished line by line while
+    it is still arriving.
 
-    The two bounds catch different failures. A session spinning on a failing suite has a *flat*
-    context and would never trip a ceiling — only the clock stops it.
+    Two consumers with different needs, and pretending they were one is what would go wrong.
+    Telemetry wants the whole transcript, at the end, in order — that is `text`. A `ContextSource`
+    wants **one fact, live**: Codex announces its `thread_id` on the first line of stdout and that
+    id is the only link between this process and its rollout file. So `first()` watches the stream
+    until it finds what it came for and then stops republishing; nothing accumulates behind a
+    consumer that has lost interest.
+    """
+
+    def __init__(self) -> None:
+        self._chunks: list[str] = []
+        self._live: asyncio.Queue[str | None] | None = asyncio.Queue()
+        self.closed = asyncio.Event()
+        """Set when stdout reaches EOF — the session has said everything it is going to say. This
+        is a `ContextSource`'s signal to stop tailing, and it fires slightly *before* the process
+        exits, which is why the tail reads once more afterwards."""
+
+    def append(self, line: str) -> None:
+        self._chunks.append(line)
+        if self._live is not None:
+            self._live.put_nowait(line)
+
+    def close(self) -> None:
+        if self._live is not None:
+            self._live.put_nowait(None)
+        self.closed.set()
+
+    @property
+    def text(self) -> str:
+        return "".join(self._chunks)
+
+    async def first(self, extract: Callable[[str], str | None]) -> str | None:
+        """The first thing `extract` finds on a line of stdout, or None if the session ended
+        without ever saying it. Watchable once: there is only one such fact, and only one asker."""
+        live = self._live
+        if live is None:
+            raise RuntimeError("stdout is watchable once, and something is already watching it")
+        try:
+            while (line := await live.get()) is not None:
+                found = extract(line)
+                if found is not None:
+                    return found
+            return None
+        finally:
+            self._live = None  # stop republishing; `text` keeps accumulating regardless
+
+
+SourceFactory = Callable[[Transcript], ContextSource]
+"""How an Implementer finds its own context signal. Both CLIs publish it to a file, and both need
+something from stdout to know *which* file is theirs — so the transcript is what a source is built
+from."""
+
+
+async def _pump(stream: asyncio.StreamReader, transcript: Transcript) -> None:
+    async for line in stream:
+        transcript.append(line.decode(errors="replace"))
+    transcript.close()
+
+
+async def run_agent(
+    argv: Sequence[str], wt: Worktree, budget: Budget, context: SourceFactory | None = None
+) -> SessionTelemetry:
+    """One session, under both bounds.
+
+    `context=None` is an agent with no context signal — the stand-in, or a bare `RALPH_AGENT_CMD`.
+    It runs on the clock alone and reports a peak of zero, which is the truth: nobody was watching.
     """
     started = time.monotonic()
-    killed: Literal["ceiling", "wall-clock"] | None = None
 
     proc = await asyncio.create_subprocess_exec(
         *argv, cwd=wt.path, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
     )
-    try:
-        async with asyncio.timeout(budget.wall_clock_s):
-            out, _ = await proc.communicate()
-    except TimeoutError:
-        proc.kill()
-        out, _ = await proc.communicate()  # whatever it managed to say before we stopped it
-        killed = "wall-clock"
+    if proc.stdout is None:  # pragma: no cover — PIPE was asked for above
+        raise RuntimeError("the session has no stdout to read")
 
-    output = out.decode(errors="replace")
+    transcript = Transcript()
+    pump = asyncio.create_task(_pump(proc.stdout, transcript))
+    bound = await run_bounded(proc, context(transcript) if context is not None else None, budget)
+    await pump  # the process is dead; drain whatever it managed to say before we stopped it
+
+    output = transcript.text
     return SessionTelemetry(
         exit_code=proc.returncode if proc.returncode is not None else -1,
-        killed=killed,
-        peak_context_tokens=0,  # no context source yet — #08 meters this
-        consumed_tokens=0,
+        killed=bound.killed,
+        peak_context_tokens=bound.peak_context_tokens,
+        consumed_tokens=bound.consumed_tokens,
         wall_clock_s=time.monotonic() - started,
         commits=int(run_git(wt.path, "rev-list", "--count", f"{wt.base}..HEAD")),
         diffstat=run_git(wt.path, "diff", "--stat", f"{wt.base}..HEAD"),
@@ -100,11 +162,19 @@ async def run_agent(argv: Sequence[str], wt: Worktree, budget: Budget) -> Sessio
 
 @dataclass(frozen=True, slots=True)
 class SubprocessImplementer:
-    """An Implementer is an argv and a worktree. That is the insight this ticket buys."""
+    """An Implementer is an argv, a worktree, and — where the CLI publishes one — a context source.
+
+    That is the whole of it. Codex is this with `codex exec` and a rollout tail; Copilot is this
+    with `copilot -p` and a debug-log tail; the stand-in agent is this with neither. Nothing above
+    this line knows the difference.
+    """
 
     build_argv: BuildArgv
+    context: SourceFactory | None = None
 
     async def run(
         self, brief: Brief, findings: Findings, worktree: Worktree, budget: Budget
     ) -> SessionTelemetry:
-        return await run_agent(self.build_argv(brief, findings, worktree), worktree, budget)
+        return await run_agent(
+            self.build_argv(brief, findings, worktree), worktree, budget, self.context
+        )

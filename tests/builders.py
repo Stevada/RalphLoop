@@ -9,7 +9,6 @@ what the silent-red test means.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Literal
 
 from ralph.domain import (
     Approach,
@@ -21,15 +20,27 @@ from ralph.domain import (
     SessionTelemetry,
     SubIssue,
     SubIssueId,
+    Killed,
     SuiteResult,
     Verdict,
 )
+from ralph.ports import Observation
+
+
+def observation(
+    context: int = 20_000, *, consumed: int = 50_000, rate_limit: float | None = None
+) -> Observation:
+    """One model call. `context` is the only number the ceiling reads, so it is the positional one
+    — a test that says `observation(130_000)` is saying the thing it means."""
+    return Observation(
+        context_tokens=context, consumed_tokens=consumed, rate_limit_used_percent=rate_limit
+    )
 
 
 def telemetry(
     *,
     exit_code: int = 0,
-    killed: Literal["ceiling", "wall-clock"] | None = None,
+    killed: Killed | None = None,
     peak_context_tokens: int = 20_000,
     consumed_tokens: int = 50_000,
     wall_clock_s: float = 60.0,

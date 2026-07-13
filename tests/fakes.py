@@ -14,7 +14,7 @@ above, which have no business knowing what git is.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncGenerator, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,7 +30,7 @@ from ralph.domain import (
     SubIssueState,
     SuiteResult,
 )
-from ralph.ports import Budget, Worktree
+from ralph.ports import Budget, Observation, Worktree
 from tests.builders import telemetry
 
 
@@ -177,10 +177,10 @@ class FakeGit:
 
 @dataclass(slots=True)
 class FakeContextSource:
-    """Replays a canned sequence of context sizes, as if tailing a rollout file."""
+    """Replays a canned sequence of observations, as if tailing a rollout file."""
 
-    sizes: Iterable[int] = field(default_factory=list)
+    scripted: Iterable[Observation] = field(default_factory=list)
 
-    async def observations(self) -> AsyncIterator[int]:
-        for size in self.sizes:
-            yield size
+    async def observations(self) -> AsyncGenerator[Observation, None]:
+        for o in self.scripted:
+            yield o

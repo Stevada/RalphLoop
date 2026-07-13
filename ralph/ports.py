@@ -8,7 +8,7 @@ the only way to guarantee that is for `ralph/` not to contain one.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -133,12 +133,39 @@ class Git(Protocol):
     def head_branch(self) -> str: ...
 
 
+@dataclass(frozen=True, slots=True)
+class Observation:
+    """One model call, as the CLI recorded it.
+
+    Three numbers arrive together and only one of them is a bound. Keeping them in one value is
+    what stops them being confused for each other: every CLI reports context and consumption in
+    the *same* event, adjacent, with names that read alike (`last_token_usage` beside
+    `total_token_usage`; `prompt_tokens` beside `total_tokens`), and picking the wrong one builds
+    a ceiling that fires on a long cheap session and never on a bloated one.
+    """
+
+    context_tokens: int
+    """What the model was reasoning over on this call. **The ceiling is on this, and only this.**"""
+
+    consumed_tokens: int
+    """Cumulative spend. Telemetry only — nothing is gated on it. It climbs forever, so a bound on
+    it would be a bound on session *length*, which is what the wall clock is for."""
+
+    rate_limit_used_percent: float | None
+    """How much of the account's rate limit is gone. Logged, never gated: free early warning for
+    the 429 that would otherwise arrive as an unexplained `infra-failed`."""
+
+
 @runtime_checkable
 class ContextSource(Protocol):
-    """Yields the context size on each model call, live, while a session runs.
+    """Yields an observation per model call, live, while a session runs.
 
     Neither CLI puts this on stdout; both write it to disk as the session runs, so every
     implementation of this tails a file.
+
+    An `AsyncGenerator` and not merely an `AsyncIterator`, because **closing is part of the
+    contract**: a source that tails a file holds a file handle, and the ceiling kill breaks out of
+    the loop mid-stream. `run_bounded` closes it; the type is what obliges it to.
     """
 
-    def observations(self) -> AsyncIterator[int]: ...
+    def observations(self) -> AsyncGenerator[Observation, None]: ...
