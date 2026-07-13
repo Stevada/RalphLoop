@@ -25,6 +25,7 @@ from collections.abc import AsyncGenerator
 from contextlib import aclosing
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from ralph.domain import Killed
 from ralph.ports import Budget, ContextSource, Observation
@@ -68,9 +69,25 @@ class Bound:
     consumed_tokens: int
 
 
-async def run_bounded(
-    proc: asyncio.subprocess.Process, source: ContextSource | None, budget: Budget
-) -> Bound:
+@runtime_checkable
+class Killable(Protocol):
+    """A session the harness can stop. An `asyncio.subprocess.Process` is one; so is the Editor's
+    in-process SDK conversation, which is not a subprocess at all.
+
+    Not in `ports.py`, because it is not a seam of the *harness* — nothing above the adapters knows
+    a session can be killed. It is the shape `run_bounded` needs, and it lives where `run_bounded`
+    does. Two implementations, so it is a real seam and not a hypothetical one.
+    """
+
+    @property
+    def returncode(self) -> int | None: ...
+
+    def kill(self) -> None: ...
+
+    async def wait(self) -> int: ...
+
+
+async def run_bounded(proc: Killable, source: ContextSource | None, budget: Budget) -> Bound:
     """Run a process to completion under both bounds. Every adapter's `run` is this plus a prompt.
 
     `source=None` means *this session publishes no context signal* — the stand-in agent, or any

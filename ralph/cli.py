@@ -17,6 +17,7 @@ import shlex
 from collections.abc import Sequence
 from pathlib import Path
 
+from ralph.adapters.claude_editor import ClaudeCodeEditor, claude_sdk_session
 from ralph.adapters.codex import codex_implementer
 from ralph.adapters.filesystem import FilesystemIssueStore
 from ralph.adapters.git import GitCli
@@ -30,10 +31,12 @@ from ralph.scheduler import DEFAULT_CONCURRENCY, RunReport, Scheduler
 
 AGENT_CMD_ENV = "RALPH_AGENT_CMD"
 IMPLEMENTER_ENV = "RALPH_IMPLEMENTER"
+EDITOR_ENV = "RALPH_EDITOR"
 SUB_ISSUE_PLACEHOLDER = "{sub_issue}"
 BRANCH_PREFIX = "ralph/"
 
 CODEX = "codex"
+CLAUDE = "claude"
 
 
 class NoAgent(RuntimeError):
@@ -48,6 +51,25 @@ def _agent_argv(worktree: Worktree) -> Sequence[str]:
         raise NoAgent(f"set {AGENT_CMD_ENV} to the agent's command line")
     sub_issue = worktree.branch.removeprefix(BRANCH_PREFIX)
     return [arg.replace(SUB_ISSUE_PLACEHOLDER, sub_issue) for arg in shlex.split(template)]
+
+
+def editor_of(repo: Path) -> Editor | None:
+    """Which model adjudicates — or **whether one does at all**.
+
+    `None` is not a null Editor. It means *there is no Editor in this run*: failures quarantine on
+    the Implementer's own outcome and the run drains around them. A null Editor returning no verdict
+    would classify `infra-failed` and misreport every impasse in the run as a harness crash.
+
+    The Editor and the Implementer should not be the same model on the same failure — an Editor
+    adjudicating an impasse declared by *itself* is the least independent sensor the system could
+    have. Nothing here enforces that; it is why two CLIs back each role.
+    """
+    named = os.environ.get(EDITOR_ENV)
+    if named is None:
+        return None
+    if named == CLAUDE:
+        return ClaudeCodeEditor(open_session=claude_sdk_session, suite=detect_test_cmd(repo))
+    raise NoAgent(f"{EDITOR_ENV}={named!r} names no Editor. Known: {CLAUDE}.")
 
 
 def implementer() -> Implementer:
@@ -86,9 +108,8 @@ async def run(
     concurrency: int = DEFAULT_CONCURRENCY,
     editor: Editor | None = None,
 ) -> RunReport:
-    """`editor=None` means there is no Editor: failures quarantine on the Implementer's own outcome
-    and the run drains around them. The real one — Claude Code, read-only, enforced by the harness —
-    is named here in #09; until then the only Editors that exist are the stubs the tests inject."""
+    """An explicit `editor` overrides `RALPH_EDITOR` — that is the seam the tests inject a stub
+    through, and the reason no test in the suite calls Opus."""
     repo = repo.resolve()
     git = GitCli(repo=repo)
     integration = git.head_branch()
@@ -105,7 +126,7 @@ async def run(
         run_log=JsonlRunLog(path=repo / ".scratch" / "run.jsonl"),
         runner=runner,
         implementer=implementer(),
-        editor=editor,
+        editor=editor if editor is not None else editor_of(repo),
         merge_queue=MergeQueue(git=git, runner=runner, integration=integration),
         integration=integration,
         budget=budget or Budget(),

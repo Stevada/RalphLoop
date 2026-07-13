@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
+editor = ["claude-agent-sdk>=0.1"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
@@ -35,6 +36,14 @@ strict = true
 # Protocol is an annotation in tests/test_contract.py, and only mypy can check it. Runtime
 # isinstance on a Protocol compares method names, not signatures.
 files = ["ralph", "tests"]
+
+# The one import-fallback boundary in the package. `claude-agent-sdk` is an optional dependency —
+# a run with a Codex Implementer and no Editor must not require it installed — so its types are not
+# available to check against. Everything it returns is converted into our own values at the
+# boundary (`_turns_of`, `_observed`) and never carried inward.
+[[tool.mypy.overrides]]
+module = "claude_agent_sdk.*"
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
