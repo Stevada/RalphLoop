@@ -19,6 +19,7 @@ from pathlib import Path
 
 from ralph.adapters.claude_editor import ClaudeCodeEditor, claude_sdk_session
 from ralph.adapters.codex import codex_implementer
+from ralph.adapters.copilot import copilot_editor, copilot_implementer
 from ralph.adapters.filesystem import FilesystemIssueStore
 from ralph.adapters.git import GitCli
 from ralph.adapters.runlog import JsonlRunLog
@@ -37,6 +38,7 @@ BRANCH_PREFIX = "ralph/"
 
 CODEX = "codex"
 CLAUDE = "claude"
+COPILOT = "copilot"
 
 
 class NoAgent(RuntimeError):
@@ -69,7 +71,13 @@ def editor_of(repo: Path) -> Editor | None:
         return None
     if named == CLAUDE:
         return ClaudeCodeEditor(open_session=claude_sdk_session, suite=detect_test_cmd(repo))
-    raise NoAgent(f"{EDITOR_ENV}={named!r} names no Editor. Known: {CLAUDE}.")
+    if named == COPILOT:
+        # Read-only, but guaranteed by Copilot's own permission engine rather than by a function
+        # this harness owns and tests. Weaker on purpose, and worth knowing here at the point of
+        # choosing: see `CopilotEditor`. It buys independence — an Editor that is not the model
+        # that just failed.
+        return copilot_editor(suite=detect_test_cmd(repo))
+    raise NoAgent(f"{EDITOR_ENV}={named!r} names no Editor. Known: {CLAUDE}, {COPILOT}.")
 
 
 def implementer() -> Implementer:
@@ -84,7 +92,9 @@ def implementer() -> Implementer:
         return SubprocessImplementer(build_argv=lambda brief, findings, wt: _agent_argv(wt))
     if named == CODEX:
         return codex_implementer()
-    raise NoAgent(f"{IMPLEMENTER_ENV}={named!r} names no Implementer. Known: {CODEX}.")
+    if named == COPILOT:
+        return copilot_implementer()
+    raise NoAgent(f"{IMPLEMENTER_ENV}={named!r} names no Implementer. Known: {CODEX}, {COPILOT}.")
 
 
 def find_issues_dir(repo: Path, given: Path | None) -> Path:

@@ -189,7 +189,10 @@ def codex_implementer() -> SubprocessImplementer:
     sessions = codex_sessions_dir()
     return SubprocessImplementer(
         build_argv=codex_argv,
-        context=lambda transcript: CodexContextSource(
+        # The worktree is no help to Codex: its rollout lives in a directory shared with every
+        # other session on the machine, and the only thing that picks its own out of that pile is
+        # the thread id it announces on stdout.
+        context=lambda transcript, _worktree: CodexContextSource(
             transcript=transcript, sessions_dir=sessions
         ),
     )

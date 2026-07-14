@@ -95,20 +95,33 @@ def test_the_nouns_do_not_know_about_the_verbs(module: Path) -> None:
         )
 
 
-ORCHESTRATION = [PACKAGE / "mergequeue.py", PACKAGE / "scheduler.py", PACKAGE / "events.py"]
+CLI = PACKAGE / "cli.py"
+UPSTREAM = [m for m in SHIPPED if m != CLI and (PACKAGE / "adapters") not in m.parents]
 
 
-@pytest.mark.parametrize("module", ORCHESTRATION, ids=_rel)
-def test_orchestration_never_names_a_concrete_adapter(module: Path) -> None:
-    """`cli.py` is the composition root and the only module allowed to know that the Implementer
-    is Codex, or that git is git. The moment the scheduler imports an adapter, the seam it was
-    built around has stopped existing — and swapping Codex for Copilot becomes a code change in
-    the scheduler.
+@pytest.mark.parametrize("module", UPSTREAM, ids=_rel)
+def test_only_the_composition_root_names_a_concrete_adapter(module: Path) -> None:
+    """`cli.py` is the composition root and the only module allowed to know that the Implementer is
+    Codex rather than Copilot, that the Editor is Claude Code rather than Copilot, or that git is
+    git. The moment the scheduler imports an adapter, the seam it was built around has stopped
+    existing — and swapping one model for another becomes a code change in the scheduler.
+
+    Every module upstream of the adapters is walked, not a hand-kept list of three: the next
+    orchestration module somebody adds is exactly the one a list would have failed to cover.
     """
     for imported in _ralph_imports(module):
         assert not imported.startswith("ralph.adapters"), (
             f"{_rel(module)} imports {imported!r} — only cli.py may name an adapter"
         )
+
+
+def test_the_composition_root_is_where_both_actors_are_chosen() -> None:
+    """And the other half of the same rule: `cli.py` really does name them, so that the walk above
+    is a statement about where the knowledge *lives* and not merely that nobody has it."""
+    named = _ralph_imports(CLI)
+
+    assert {"ralph.adapters.codex", "ralph.adapters.copilot"} <= named  # the Implementers
+    assert {"ralph.adapters.claude_editor", "ralph.adapters.copilot"} <= named  # the Editors
 
 
 def test_the_scheduler_asks_the_routing_table_rather_than_reimplementing_it() -> None:

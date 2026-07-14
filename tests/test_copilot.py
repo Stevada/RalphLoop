@@ -1,0 +1,377 @@
+"""The Copilot adapter: the invocation, the log parser, the ceiling, and the read-only ask.
+
+**No test here runs the real `copilot` binary.** The fixture at `tests/fixtures/copilot-debug.log`
+is a genuine debug log from a real session, and the stub process below replays one. What is under
+test is everything the harness does with that log — not whether GitHub's CLI keeps its promises.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+from collections.abc import AsyncGenerator, Sequence
+from pathlib import Path
+
+import pytest
+
+from ralph.adapters.copilot import (
+    READ_ONLY_TOOLS,
+    CopilotContextSource,
+    CopilotEditor,
+    CopilotLogError,
+    copilot_argv,
+    fresh_log_dir,
+    json_blocks,
+    read_only_patterns,
+    usage_of,
+)
+from ralph.adapters.session import Transcript
+from ralph.domain import (
+    Brief,
+    EditorVerdict,
+    Findings,
+    Outcome,
+    SessionTelemetry,
+    Verdict,
+    failure_report,
+)
+from ralph.ports import Budget, Worktree
+from tests.builders import impasse, suite, telemetry
+
+FIXTURE = Path(__file__).parent / "fixtures" / "copilot-debug.log"
+
+SUITE: Sequence[str] = ("python", "-m", "pytest")
+
+FAILURE = failure_report(
+    Outcome.IMPASSE, telemetry(commits=0, impasse_report=impasse()), suite(green=True)
+)
+
+
+# ── the fixture is real, and it is the whole point ───────────────────────────────────────────
+
+
+def test_the_real_log_yields_the_real_context() -> None:
+    """A genuine Copilot session, parsed.
+
+    8,362 is what it actually reasoned over, and `↑ 8.4k` is what the CLI printed on its way out —
+    so this is the number, and it is the one the ceiling reads. The session was launched the way
+    this adapter launches an Editor: MCP disabled, tools cut to the read-only four. Launched the
+    default way, the *same* one-word exchange cost **56.5k** — 47% of the smart zone spent before
+    the brief was read.
+    """
+    usages = [usage_of(b) for b in _blocks(FIXTURE.read_text())]
+    found = [u for u in usages if u is not None]
+
+    assert found == [(8_362, 8_366)]
+    assert found[0][0] < 0.1 * 120_000  # room to actually think in
+
+
+def test_the_model_capabilities_block_is_not_mistaken_for_usage() -> None:
+    """The same real log carries `max_prompt_tokens: 200000` — the model's context *limit*.
+
+    Anything that went looking for the string `prompt_tokens` would find it, read 200,000, and kill
+    every Copilot session ever run before it took its first turn. `usage_of` reads the parsed
+    object's top-level `usage` key, so the capabilities block is simply not a completion.
+    """
+    text = FIXTURE.read_text()
+    assert "max_prompt_tokens" in text  # the trap is really in there
+    capabilities = [b for b in _blocks(text) if "capabilities" in b]
+    assert capabilities, "the fixture should contain the model-info block"
+    assert all(usage_of(b) is None for b in capabilities)
+
+
+def _blocks(text: str) -> list[dict[str, object]]:
+    async def collect() -> list[dict[str, object]]:
+        return [b async for b in json_blocks(_lines(text))]
+
+    return asyncio.run(collect())
+
+
+async def _lines(text: str) -> AsyncGenerator[str, None]:
+    for line in text.split("\n"):
+        yield line
+
+
+# ── the block extractor ──────────────────────────────────────────────────────────────────────
+
+
+def test_it_reassembles_a_pretty_printed_block() -> None:
+    """The log is JSON *inside* a text log. `json.loads` per line finds nothing at all."""
+    log = '2026-01-01T00:00:00Z [DEBUG] {\n  "usage": {\n    "prompt_tokens": 7,\n'
+    log += '    "total_tokens": 9\n  }\n}\n'
+    assert [usage_of(b) for b in _blocks(log)] == [(7, 9)]
+
+
+def test_a_brace_inside_a_string_does_not_close_a_block() -> None:
+    """Copilot logs whole system prompts, and prose is full of braces and escaped quotes. Counting
+    braces naively ends the block early and the JSON never parses."""
+    log = '2026-01-01T00:00:00Z [DEBUG] {\n  "system": "use {curly} and \\" quotes",\n'
+    log += '  "usage": {"prompt_tokens": 11, "total_tokens": 12}\n}\n'
+    assert [usage_of(b) for b in _blocks(log)] == [(11, 12)]
+
+
+def test_prose_between_blocks_is_ignored() -> None:
+    log = "2026-01-01T00:00:00Z [INFO] Starting Copilot CLI: 1.0.70\n"
+    log += '2026-01-01T00:00:00Z [DEBUG] Got model info: {\n  "capabilities": {}\n}\n'
+    log += "2026-01-01T00:00:00Z [ERROR] Started MCP client\n"
+    log += '2026-01-01T00:00:00Z [DEBUG] {\n  "usage": {"prompt_tokens": 3, "total_tokens": 4}\n}\n'
+    assert [usage_of(b) for b in _blocks(log)] == [None, (3, 4)]
+
+
+def test_a_usage_block_with_no_numbers_is_loud() -> None:
+    """A `usage` block the harness cannot read is not a session that used no context."""
+    with pytest.raises(CopilotLogError):
+        usage_of({"usage": {"prompt_tokens": None, "total_tokens": 4}})
+
+
+# ── the source: metering a live session ──────────────────────────────────────────────────────
+
+
+async def test_it_meters_a_session_while_it_is_still_running(tmp_path: Path) -> None:
+    transcript = Transcript()
+    log = tmp_path / "process-1.log"
+    log.write_text(_completion(10_000, 10_050))
+
+    source = CopilotContextSource(transcript=transcript, log_dir=tmp_path, poll_s=0.01)
+    seen = []
+
+    async def read() -> None:
+        async for o in source.observations():
+            seen.append(o)
+
+    task = asyncio.create_task(read())
+    await asyncio.sleep(0.05)
+    with log.open("a") as f:
+        f.write(_completion(20_000, 20_060))
+    await asyncio.sleep(0.05)
+    transcript.close()
+    await task
+
+    assert [o.context_tokens for o in seen] == [10_000, 20_000]
+
+
+async def test_consumption_accumulates_because_copilot_reports_it_per_call(tmp_path: Path) -> None:
+    """Codex reports a running total; Copilot reports the call in hand. The port's contract is
+    cumulative, so the adapter with the per-call number is the one that adds it up — otherwise the
+    meter, which takes a `max()`, would report the biggest single call as the session's whole cost.
+    """
+    transcript = Transcript()
+    (tmp_path / "process-1.log").write_text(
+        _completion(10_000, 10_050) + _completion(20_000, 20_060) + _completion(30_000, 30_070)
+    )
+    transcript.close()
+
+    source = CopilotContextSource(transcript=transcript, log_dir=tmp_path, poll_s=0.01)
+    seen = [o async for o in source.observations()]
+
+    assert [o.consumed_tokens for o in seen] == [10_050, 30_110, 60_180]
+    assert seen[-1].consumed_tokens > seen[-1].context_tokens  # spend outruns context. Always.
+
+
+async def test_a_log_with_no_usage_block_is_a_loud_error(tmp_path: Path) -> None:
+    """**The `--log-level debug` failure, and the reason it needs its own alarm.**
+
+    A log written at the default level has no `usage` blocks in it at all. Nothing crashes; the
+    session simply runs to the wall clock with nobody watching its context. Silence here would be
+    read as a cheap session, and the ceiling would have quietly stopped working.
+    """
+    transcript = Transcript()
+    (tmp_path / "process-1.log").write_text(
+        "2026-01-01T00:00:00Z [INFO] Starting Copilot CLI: 1.0.70\n"
+    )
+    transcript.close()
+
+    source = CopilotContextSource(transcript=transcript, log_dir=tmp_path, poll_s=0.01)
+    with pytest.raises(CopilotLogError, match="log-level debug"):
+        _ = [o async for o in source.observations()]
+
+
+async def test_no_log_at_all_is_a_loud_error(tmp_path: Path) -> None:
+    transcript = Transcript()
+    transcript.close()
+    source = CopilotContextSource(transcript=transcript, log_dir=tmp_path, poll_s=0.01)
+    with pytest.raises(CopilotLogError, match="unmetered"):
+        _ = [o async for o in source.observations()]
+
+
+def _completion(context: int, total: int) -> str:
+    body = json.dumps({"object": "chat.completion", "usage": {
+        "prompt_tokens": context, "completion_tokens": total - context, "total_tokens": total,
+    }}, indent=2)  # fmt: skip
+    return f"2026-01-01T00:00:00.000Z [DEBUG] {body}\n"
+
+
+# ── the invocation ───────────────────────────────────────────────────────────────────────────
+
+
+def test_debug_logging_is_set_never_assumed(tmp_path: Path) -> None:
+    argv = copilot_argv("do it", tmp_path, mcp=())
+    assert "--log-level" in argv
+    assert argv[argv.index("--log-level") + 1] == "debug"
+
+
+def test_mcp_is_disabled_by_name_and_not_merely_the_builtin(tmp_path: Path) -> None:
+    """`--disable-builtin-mcps` turns off `github-mcp-server` and nothing else. The servers that
+    actually cost 30k of the smart zone come from plugins and the user's config."""
+    argv = copilot_argv("do it", tmp_path, mcp=("azure", "context7"))
+    assert "--disable-builtin-mcps" in argv
+    assert argv.count("--disable-mcp-server") == 2
+    assert "azure" in argv and "context7" in argv
+
+
+def test_the_implementer_may_use_every_tool(tmp_path: Path) -> None:
+    argv = copilot_argv("do it", tmp_path, mcp=(), allow_all=True)
+    assert "--allow-all-tools" in argv
+    assert not any(a.startswith("--available-tools") for a in argv)
+
+
+def test_the_editor_gets_an_allowlist_of_four_tools_and_no_more(tmp_path: Path) -> None:
+    """`create` and `edit` are denied by **absence** — the same shape as the SDK Editor's, and for
+    the same reason: a blocklist fails open on the tool nobody thought of."""
+    argv = copilot_argv("adjudicate", tmp_path, mcp=(), tools=READ_ONLY_TOOLS, allow=("shell(ls)",))
+    assert "--available-tools=view,glob,grep,bash" in argv
+    assert "create" not in "".join(argv)
+    assert "edit" not in "".join(a for a in argv if a.startswith("--available-tools"))
+
+
+def test_the_editor_never_gets_allow_all_tools(tmp_path: Path) -> None:
+    """Not passing it is itself enforcement: without `--allow-all-tools` Copilot denies any shell
+    command that was not allowed by name, and refuses shell redirection outright. That is what
+    closes the `git log > evidence.txt` hole, which no per-command check can see."""
+    argv = copilot_argv("adjudicate", tmp_path, mcp=(), tools=READ_ONLY_TOOLS)
+    assert "--allow-all-tools" not in argv
+    assert "--deny-tool=write" in argv
+
+
+def test_the_editor_may_run_the_suite_and_read_the_repo() -> None:
+    patterns = read_only_patterns(SUITE)
+    assert "shell(python -m pytest)" in patterns
+    assert "shell(python -m pytest:*)" in patterns  # it will want to narrow to the failing test
+    assert "shell(git diff)" in patterns
+    assert "shell(grep)" in patterns
+
+
+def test_the_editor_may_not_commit_or_write() -> None:
+    """The allowlist is shared with the SDK Editor: `READ_ONLY_GIT` has one home, and `commit` was
+    never in it."""
+    patterns = read_only_patterns(SUITE)
+    for forbidden in ("shell(git commit)", "shell(git cherry-pick)", "shell(git push)",
+                      "shell(git apply)", "shell(git reset)", "shell(tee)", "shell(sed)"):
+        assert forbidden not in patterns  # fmt: skip
+
+
+# ── the log directory ────────────────────────────────────────────────────────────────────────
+
+
+def test_the_log_lands_beside_the_worktree_never_inside_it(tmp_path: Path) -> None:
+    """A session told to commit its work would sweep its own debug log into the diff with the first
+    `git add -A`, and the merge queue would read it."""
+    wt = _worktree(tmp_path)
+    log_dir = fresh_log_dir(wt)
+    assert wt.path not in log_dir.parents
+    assert log_dir.is_dir()
+
+
+def test_a_revised_cycle_does_not_meter_against_the_last_cycle_s_log(tmp_path: Path) -> None:
+    """A revise re-cuts **the same branch at the same path**, so last cycle's log is sitting exactly
+    where this cycle's is about to be looked for. Metering against a predecessor's log is worse than
+    metering against nothing: it is a plausible number that describes a session which no longer
+    exists."""
+    wt = _worktree(tmp_path)
+    stale = fresh_log_dir(wt) / "process-old.log"
+    stale.write_text(_completion(119_000, 119_100))
+
+    again = fresh_log_dir(wt)
+
+    assert list(again.glob("*.log")) == []
+
+
+def _worktree(tmp_path: Path) -> Worktree:
+    path = tmp_path / ".worktrees" / "active" / "02-thing"
+    path.mkdir(parents=True)
+    return Worktree(path=path, branch="ralph/02-thing", base="integration")
+
+
+# ── the whole Editor, against a stub `copilot` ───────────────────────────────────────────────
+
+
+async def test_the_editor_is_bounded_by_the_ceiling_like_any_other_actor(tmp_path: Path) -> None:
+    """An Editor can leave the smart zone too, and when it does it pages a human like anyone else."""
+    telemetry, verdict = await _adjudicate(tmp_path, context=130_000, verdict=None)
+
+    assert telemetry.killed == "ceiling"
+    assert telemetry.peak_context_tokens == 130_000
+    assert verdict is None  # killed before it could answer. `infra-failed`, and a human reads it.
+
+
+async def test_the_editor_reports_no_commits_by_construction(tmp_path: Path) -> None:
+    """Not observed — *constructed*. It was denied every tool that could have made one."""
+    telemetry, verdict = await _adjudicate(tmp_path, context=9_000, verdict=Verdict.REVISE)
+
+    assert telemetry.commits == 0
+    assert telemetry.diffstat == ""
+    assert telemetry.killed is None
+    assert verdict is not None and verdict.verdict is Verdict.REVISE
+
+
+async def test_the_editor_reads_the_verdict_out_of_a_real_session(tmp_path: Path) -> None:
+    _, verdict = await _adjudicate(tmp_path, context=9_000, verdict=Verdict.PLANNING_DEFECT)
+
+    assert verdict is not None
+    assert verdict.verdict is Verdict.PLANNING_DEFECT
+    assert verdict.rationale.startswith("the brief assumed")
+
+
+async def test_the_prompt_reaches_the_model_and_the_log_dir_reaches_the_cli(tmp_path: Path) -> None:
+    """The two things the harness must actually deliver. A `--log-dir` that never arrived is a
+    session that runs unmetered; a brief that never arrived is a session adjudicating nothing."""
+    seen: list[tuple[str, Path]] = []
+    await _adjudicate(tmp_path, context=9_000, verdict=Verdict.REVISE, seen=seen)
+
+    prompt, log_dir = seen[0]
+    assert "You are the **Editor**" in prompt
+    assert "build it" in prompt  # the brief the Implementer was given
+    assert log_dir.is_dir()
+
+
+async def _adjudicate(
+    tmp_path: Path,
+    *,
+    context: int,
+    verdict: Verdict | None,
+    seen: list[tuple[str, Path]] | None = None,
+) -> tuple[SessionTelemetry, EditorVerdict | None]:
+    """The whole Editor, against a stub `copilot`: a process that writes a real debug log and says
+    a real verdict, through the same seam the real one is wired through in `cli.py`."""
+    said = ""
+    if verdict is not None:
+        answer: dict[str, str] = {
+            "verdict": verdict.value,
+            "rationale": "the brief assumed a module that is not there",
+        }
+        if verdict is Verdict.REVISE:
+            # Only a `revise` may carry one. A terminal verdict with a brief attached is a
+            # contradiction the domain refuses to construct — nothing would ever read it.
+            answer["revised_brief"] = "do it again, better"
+        said = f"<verdict>{json.dumps(answer)}</verdict>"
+
+    def argv(prompt: str, log_dir: Path) -> Sequence[str]:
+        if seen is not None:
+            seen.append((prompt, log_dir))
+        script = (
+            f"import pathlib\n"
+            f"pathlib.Path({str(log_dir)!r}, 'process-1.log')"
+            f".write_text({_completion(context, context + 50)!r})\n"
+            f"print({said!r})\n"
+        )
+        return [sys.executable, "-c", script]
+
+    return await CopilotEditor(argv=argv).adjudicate(
+        Brief(body="build it"),
+        Findings(body=""),
+        FAILURE,
+        _worktree(tmp_path),
+        Budget(max_context_tokens=120_000, wall_clock_s=20.0),
+        must_be_terminal=False,
+    )

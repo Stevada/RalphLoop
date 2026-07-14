@@ -22,7 +22,7 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from ralph.adapters.context import Killable, run_bounded
+from ralph.adapters.context import Bound, Killable, run_bounded
 from ralph.domain import Brief, EditorVerdict, Findings, SessionTelemetry, Verdict
 from ralph.ports import Budget, Observation
 
@@ -233,18 +233,34 @@ async def run_editor(
     await reading
 
     output = "".join(said)
-    telemetry = SessionTelemetry(
+    telemetry = editor_telemetry(
+        bound=bound,
         exit_code=session.returncode if session.returncode is not None else -1,
+        output=output,
+        wall_clock_s=time.monotonic() - started,
+    )
+    return telemetry, verdict_of(output)
+
+
+def editor_telemetry(bound: Bound, exit_code: int, output: str, wall_clock_s: float) -> SessionTelemetry:
+    """An Editor's telemetry, however it was run — an SDK conversation or a CLI subprocess.
+
+    `commits` is zero and `diffstat` empty **by construction, not by observation**: the Editor was
+    denied every tool that could have made them otherwise. Measuring them would suggest they might
+    come back non-zero, and if they ever did, the honest response is not to report it — it is that
+    the enforcement surface has failed and the Editor has become an Implementer.
+    """
+    return SessionTelemetry(
+        exit_code=exit_code,
         killed=bound.killed,
         peak_context_tokens=bound.peak_context_tokens,
         consumed_tokens=bound.consumed_tokens,
-        wall_clock_s=time.monotonic() - started,
+        wall_clock_s=wall_clock_s,
         commits=0,
         diffstat="",
         session_output=output,
         impasse_report=None,  # an Editor cannot declare an impasse. It adjudicates them.
     )
-    return telemetry, _verdict_of(output)
 
 
 def _killable(session: EditorSession) -> Killable:
@@ -254,7 +270,7 @@ def _killable(session: EditorSession) -> Killable:
     return session
 
 
-def _verdict_of(output: str) -> EditorVerdict | None:
+def verdict_of(output: str) -> EditorVerdict | None:
     """A verdict the harness cannot read is not worth killing the run over.
 
     An unreadable *impasse* is fatal, because it would be misclassified as `silent-red` and routed

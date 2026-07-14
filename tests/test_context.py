@@ -244,7 +244,9 @@ async def test_the_ceiling_reaches_the_telemetry_of_a_real_session(repo: TargetR
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
     implementer = SubprocessImplementer(
         build_argv=lambda brief, findings, worktree: (sys.executable, "-c", FOREVER),
-        context=lambda transcript: FakeContextSource([observation(200_000, consumed=210_000)]),
+        context=lambda transcript, worktree: FakeContextSource(
+            [observation(200_000, consumed=210_000)]
+        ),
     )
 
     t = await implementer.run(Brief(body="build it"), Findings(body=""), wt, SMART_ZONE)
