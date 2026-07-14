@@ -141,6 +141,44 @@ def test_the_scheduler_asks_the_routing_table_rather_than_reimplementing_it() ->
     assert "route" in calls, "the scheduler decides where a session goes without asking `route`"
 
 
+TESTS = Path(__file__).parent
+ZERO_MOCKS = sorted(
+    m for m in TESTS.glob("test_*.py") if "Zero mocks" in (ast.get_docstring(ast.parse(m.read_text())) or "")
+)
+
+
+def test_some_test_file_claims_zero_mocks() -> None:
+    assert len(ZERO_MOCKS) >= 3
+
+
+@pytest.mark.parametrize("module", ZERO_MOCKS, ids=lambda p: p.name)
+def test_a_file_that_claims_zero_mocks_imports_no_fake(module: Path) -> None:
+    """The end-to-end files say "Zero mocks" in their docstrings, and this is what makes that a
+    claim rather than a boast: the sentence is read, and the imports are checked against it.
+
+    Derived from the docstring rather than from a list kept here, so the next end-to-end file makes
+    the promise and is held to it in the same breath — a list would have to be remembered, and the
+    file that got left off it is exactly the one that would quietly start mocking git.
+    """
+    assert "tests.fakes" not in _imported_modules(module), (
+        f"{module.name} says 'Zero mocks' in its docstring and then imports a fake"
+    )
+
+
+def _imported_modules(module: Path) -> set[str]:
+    tree = ast.parse(module.read_text(), filename=str(module))
+    return {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    } | {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+
+
 @pytest.mark.parametrize("module", SHIPPED, ids=_rel)
 def test_the_shipped_package_never_imports_a_test(module: Path) -> None:
     """The fakes live under `tests/` so that this is enforceable at all. An adapter that reaches

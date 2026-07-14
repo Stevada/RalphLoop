@@ -94,3 +94,23 @@ class GitCli:
         if branch == DETACHED:
             raise GitError(f"{self.repo} is on a detached HEAD; there is no branch to land onto")
         return branch
+
+    def dirty_files(self) -> tuple[str, ...]:
+        """Uncommitted changes in the base checkout — tracked files only.
+
+        Untracked files are not dirt: the harness itself writes `.scratch/run.jsonl` into the repo
+        while it runs, and a pre-flight that refused its own run log would be unusable. Untracked
+        files also do not stand in the way of a fast-forward, which is what this check is for.
+
+        Not on the `Git` port. The scheduler and the merge queue never ask this — only the
+        pre-flight does, and a Protocol is the list of what orchestration needs, not an inventory of
+        what git can do.
+        """
+        status = run_git(
+            self.repo, "status", "--porcelain", "--untracked-files=no", "--no-renames"
+        )
+        # Split on whitespace rather than slicing the two-column status code off the front:
+        # `run_git` strips the output, so the *first* line has already lost its leading space and
+        # a fixed slice would eat a character of its path. `--no-renames` keeps every line to one
+        # path, so the split is unambiguous.
+        return tuple(line.split(maxsplit=1)[1] for line in status.splitlines() if line.strip())

@@ -1,0 +1,304 @@
+"""**`ralph validate` refuses; it does not warn.**
+
+Two halves, and they are tested differently on purpose.
+
+The *rule* is pure — facts in, refusals out — so its tests hand it facts and never touch a
+repository. That is what makes it cheap to assert the thing that actually matters: that each refusal
+says something **specific**. "Your graph has a cycle" and "you are on `main`" are different
+mornings, and a pre-flight that only reported *that* validation failed would have given the human
+the smaller half of what it knew.
+
+The *gathering* is real: a real git repo, a real dirty tree, a real cyclic graph on disk. A refusal
+that fires on a hand-built `RepoFacts` and never on a real repository is a refusal that does not
+exist.
+
+**Zero mocks.** Nothing in this file imports `tests.fakes`.
+"""
+
+from __future__ import annotations
+
+import sys
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from ralph.adapters.filesystem import FilesystemIssueStore
+from ralph.cli import Refused, main, render_plan, render_refusals, run, validate
+from ralph.domain import (
+    Check,
+    IssueGraph,
+    RepoFacts,
+    SubIssue,
+    SubIssueId,
+    SubIssueState,
+    build_order,
+    refusals,
+)
+from tests.testbed import Behaviour, StandInAgent, TargetRepo
+
+BUILD_HARNESS = Path(__file__).parent.parent / ".scratch" / "build_harness" / "issues"
+
+CLEAN = RepoFacts(
+    head_branch="feature/x",
+    protected=frozenset({"main", "master"}),
+    dirty=(),
+    suite_error=None,
+    graph_error=None,
+    pre_commit_config=None,
+    pre_commit_installed=False,
+)
+
+
+def script_the_agent(
+    monkeypatch: pytest.MonkeyPatch, agent: StandInAgent, spec: Behaviour | str
+) -> None:
+    monkeypatch.setenv("RALPH_AGENT_CMD", f"{sys.executable} {agent.script} {spec} {{sub_issue}}")
+
+
+# ── the rule ─────────────────────────────────────────────────────────────────────────────────
+
+
+def test_a_clean_repo_is_not_refused() -> None:
+    assert refusals(CLEAN) == ()
+
+
+def test_each_refusal_says_which_morning_it_is() -> None:
+    """The one property the whole pre-flight exists for. Five different repositories, five different
+    sentences — and none of them is "validation failed"."""
+    said = {
+        r.check: r.reason
+        for r in refusals(
+            RepoFacts(
+                head_branch="main",
+                protected=frozenset({"main", "master"}),
+                dirty=("src/app.py",),
+                suite_error="no test suite detected in /repo",
+                graph_error="03-sub.md has no `## Acceptance criteria`",
+                pre_commit_config=".pre-commit-config.yaml",
+                pre_commit_installed=False,
+            )
+        )
+    }
+
+    assert set(said) == set(Check)  # all five fire, and all five are reported
+    assert len(set(said.values())) == 5  # and no two of them say the same thing
+
+    assert "main" in said[Check.BRANCH]
+    assert "src/app.py" in said[Check.DIRTY]
+    assert "no test suite detected" in said[Check.SUITE]
+    assert "pre-commit install" in said[Check.HOOKS]
+    assert "no `## Acceptance criteria`" in said[Check.GRAPH]
+
+
+def test_the_graph_refusal_quotes_the_parser_rather_than_summarising_it() -> None:
+    """A cycle and a missing acceptance criterion arrive through the same check, and they must not
+    arrive as the same sentence. The parser already said exactly what was wrong; the pre-flight's
+    job is to carry that, not to paraphrase it into "the graph is bad"."""
+    cycle = "01-sub.md, 02-sub.md: the graph has a cycle"
+    (refused,) = refusals(replace(CLEAN, graph_error=cycle))
+
+    assert refused.check is Check.GRAPH
+    assert refused.reason == cycle
+
+
+def test_a_repo_without_pre_commit_is_not_refused_for_not_having_it() -> None:
+    """Most repos do not use pre-commit, and that is a fact, not a failure. The refusal is for the
+    repo that *asks* for the hook and did not install it — where every commit an Implementer makes
+    quietly skips the checks the repo believes it enforces."""
+    assert refusals(replace(CLEAN, pre_commit_config=None, pre_commit_installed=False)) == ()
+
+    (refused,) = refusals(replace(CLEAN, pre_commit_config=".pre-commit-config.yaml"))
+    assert refused.check is Check.HOOKS
+
+
+def test_the_dirty_list_is_elided_rather_than_unrolled() -> None:
+    """Listing the paths is to remind someone what they forgot to commit. A hundred lines of
+    `node_modules` does not do that."""
+    (refused,) = refusals(replace(CLEAN, dirty=tuple(f"f{n}.py" for n in range(12))))
+
+    assert "f0.py" in refused.reason
+    assert "and 7 more" in refused.reason
+    assert "f11.py" not in refused.reason
+
+
+# ── the gathering ────────────────────────────────────────────────────────────────────────────
+
+
+def test_a_protected_branch_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
+    repo.git("checkout", "main")
+
+    (refused,) = validate(repo.path)
+
+    assert refused.check is Check.BRANCH
+    assert "'main'" in refused.reason
+
+
+def test_the_protected_list_is_the_humans_to_set(
+    repo: TargetRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RALPH_PROTECTED_BRANCHES", "integration trunk")
+
+    (refused,) = validate(repo.path)
+
+    assert refused.check is Check.BRANCH  # `integration` is the fixture's HEAD, and now protected
+
+
+def test_a_dirty_tree_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
+    (repo.path / "calculator.py").write_text("def add(a: int, b: int) -> int:\n    return a - b\n")
+
+    (refused,) = validate(repo.path)
+
+    assert refused.check is Check.DIRTY
+    assert "calculator.py" in refused.reason
+
+
+def test_the_harnesss_own_run_log_does_not_count_as_dirt(repo: TargetRepo) -> None:
+    """Untracked files are not dirt. The harness writes `.scratch/run.jsonl` into the repo *while
+    the run is in flight*, and a pre-flight that refused its own run log would refuse every second
+    run."""
+    (repo.path / ".scratch" / "run.jsonl").write_text('{"kind": "session-opened"}\n')
+
+    assert validate(repo.path) == ()
+
+
+def test_a_cyclic_graph_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
+    repo.write_graph({"01": ["02"], "02": ["01"]})
+
+    (refused,) = validate(repo.path)
+
+    assert refused.check is Check.GRAPH
+    assert "cycle" in refused.reason
+
+
+def test_a_sub_issue_with_no_acceptance_criteria_is_refused(repo: TargetRepo) -> None:
+    """An unattended agent has nothing else to aim at. A brief with no acceptance criteria does not
+    fail the run — it produces a session that cannot be judged, which is worse."""
+    (repo.issues_dir / "01-first.md").write_text("# 01 — first\n\nStatus: ready\n\nDo the thing.\n")
+    repo.git("commit", "-am", "drop the criteria")
+
+    (refused,) = validate(repo.path)
+
+    assert refused.check is Check.GRAPH
+    assert "Acceptance criteria" in refused.reason
+
+
+def test_a_repo_with_no_detectable_suite_is_refused(
+    repo: TargetRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The most dangerous of the five to let through: a repo whose tests the harness cannot find is
+    a repo where every session is `success` and `silent-red` is unreachable."""
+    (repo.path / "test_calculator.py").unlink()
+    (repo.path / "calculator.py").unlink()
+    (repo.path / "shared.py").unlink()
+    repo.git("commit", "-am", "no suite here")
+
+    (refused,) = validate(repo.path)
+
+    assert refused.check is Check.SUITE
+    assert "will not run a repo whose tests it cannot run" in refused.reason
+
+
+def test_the_fixture_repo_is_ready_to_run(repo: TargetRepo) -> None:
+    """The guard that stops every test above from passing vacuously: the same five checks, against
+    the repo they are all built on, say nothing at all."""
+    assert validate(repo.path) == ()
+    assert render_refusals(()) == "ready to run."
+
+
+# ── and the run runs them too ────────────────────────────────────────────────────────────────
+
+
+async def test_the_run_refuses_what_validate_refuses(
+    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A check that only fires when a human remembers to ask for it is a check the run does not
+    have. `ralph run` on `main` would fast-forward `main`."""
+    script_the_agent(monkeypatch, agent, Behaviour.SUCCEED)
+    repo.git("checkout", "main")
+
+    with pytest.raises(Refused, match="protected"):
+        await run(repo.path, None)
+
+    assert not repo.branch_exists("ralph/01")  # zero agents started
+    assert not (repo.path / ".scratch" / "run.jsonl").exists()
+
+
+# ── the dry run ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_the_dry_run_reports_the_build_order(repo: TargetRepo) -> None:
+    repo.write_graph({"01": [], "02": ["01"], "03": ["01"], "04": ["02", "03"]})
+
+    plan = render_plan(repo.path, None)
+
+    assert "4 sub-issues, 4 edges, no cycle." in plan
+    assert "wave 1: 01" in plan
+    assert "wave 2: 02, 03" in plan
+    assert "wave 3: 04" in plan
+
+
+def test_the_dry_run_opens_no_session_and_touches_no_branch(
+    repo: TargetRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """It costs nothing to run, which is the whole reason it is worth having."""
+    before = repo.head("integration")
+
+    assert main(["run", "--dry-run", str(repo.path)]) == 0
+
+    assert "sub-issues" in capsys.readouterr().out
+    assert repo.head("integration") == before
+    assert not repo.branch_exists("ralph/01")
+    assert not (repo.path / ".worktrees").exists()
+
+
+def test_the_build_order_is_derived_from_the_rule_the_scheduler_asks() -> None:
+    """A dry run whose plan is not the run's plan is worse than no dry run: it is a second opinion
+    about the graph, free to disagree with the one the scheduler acts on. `build_order` gets its
+    waves by asking `eligible` the same question, repeatedly — so it cannot disagree.
+
+    A sub-issue that is not `ready` is absent from the plan, not silently promoted into it: that is
+    the same rule, honestly applied to a graph that is half-finished.
+    """
+    graph = IssueGraph(
+        sub_issues={
+            SubIssueId(id): SubIssue(
+                id=SubIssueId(id), title=id, blocked_by=frozenset(map(SubIssueId, blockers))
+            )
+            for id, blockers in {"01": (), "02": ("01",), "03": ("01",)}.items()
+        }
+    )
+    landed = {
+        SubIssueId("01"): SubIssueState.LANDED,
+        SubIssueId("02"): SubIssueState.READY,
+        SubIssueId("03"): SubIssueState.NEEDS_HUMAN,
+    }
+
+    assert build_order(graph, landed) == ((SubIssueId("02"),),)
+
+
+# ── the cheapest dogfood there is ────────────────────────────────────────────────────────────
+
+
+def test_the_harness_can_read_its_own_issue_graph() -> None:
+    """`ralph run --dry-run` against **this repo's own** build order. Every sub-issue that built the
+    harness is parsed, every edge resolved, and the graph proved acyclic — by the same code that
+    would run them. It costs nothing, and it is the only test in the suite whose input is the real
+    thing rather than a fixture shaped like it.
+    """
+    graph, _ = FilesystemIssueStore(issues_dir=BUILD_HARNESS).read_graph()
+
+    assert len(graph.sub_issues) == 11
+    assert graph.blockers_of(SubIssueId("11")) == frozenset(map(SubIssueId, ("05", "07", "10")))
+    assert graph.transitively_blocked_by(SubIssueId("11")) >= frozenset(map(SubIssueId, ("01", "02")))
+
+    # The order the harness would have built itself in, had it existed to do so. Asserted as a
+    # property rather than a literal: the states on disk change as the build lands, and a test that
+    # pinned today's waves would be a test of the calendar.
+    order = build_order(graph, dict.fromkeys(graph.sub_issues, SubIssueState.READY))
+    landed_by = {id: n for n, wave in enumerate(order) for id in wave}
+
+    assert sorted(landed_by) == sorted(graph.sub_issues)  # every one of them is reachable
+    for id, sub in graph.sub_issues.items():
+        for blocker in sub.blocked_by:
+            assert landed_by[blocker] < landed_by[id]

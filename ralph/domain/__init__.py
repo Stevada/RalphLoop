@@ -20,13 +20,15 @@ from ralph.domain.model.failure import FailureReport
 from ralph.domain.model.graph import GraphError, IssueGraph, SubIssue, SubIssueId
 from ralph.domain.model.impasse import Approach, ImpasseReport
 from ralph.domain.model.notification import Escalation, Notification
+from ralph.domain.model.preflight import Check, Refusal, RepoFacts
 from ralph.domain.model.session import Actor, Killed, Outcome, SessionTelemetry, SuiteResult
 from ralph.domain.model.state import SubIssueState
 from ralph.domain.model.verdict import EditorVerdict, Verdict
 from ralph.domain.rules.classify import classify_editor, classify_implementer
 from ralph.domain.rules.cycles import CycleLedger
-from ralph.domain.rules.eligibility import eligible, never_eligible
+from ralph.domain.rules.eligibility import build_order, eligible, never_eligible
 from ralph.domain.rules.notify import ATTENTION_ORDER, notify
+from ralph.domain.rules.preflight import refusals
 from ralph.domain.rules.report import failure_report
 from ralph.domain.rules.routing import Destination, route
 
@@ -35,6 +37,7 @@ __all__ = [
     "Actor",
     "Approach",
     "Brief",
+    "Check",
     "EditorVerdict",
     "Escalation",
     "Event",
@@ -47,6 +50,8 @@ __all__ = [
     "Killed",
     "Notification",
     "Outcome",
+    "Refusal",
+    "RepoFacts",
     "SessionTelemetry",
     "SubIssue",
     "SubIssueId",
@@ -57,11 +62,13 @@ __all__ = [
     "ATTENTION_ORDER",
     "CycleLedger",
     "Destination",
+    "build_order",
     "classify_editor",
     "classify_implementer",
     "eligible",
     "failure_report",
     "never_eligible",
     "notify",
+    "refusals",
     "route",
 ]

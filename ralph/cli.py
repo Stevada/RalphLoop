@@ -20,12 +20,28 @@ from pathlib import Path
 from ralph.adapters.claude_editor import ClaudeCodeEditor, claude_sdk_session
 from ralph.adapters.codex import codex_implementer
 from ralph.adapters.copilot import copilot_editor, copilot_implementer
-from ralph.adapters.filesystem import FilesystemIssueStore
-from ralph.adapters.git import GitCli
+from ralph.adapters.filesystem import FilesystemIssueStore, IssueParseError
+from ralph.adapters.git import GitCli, run_git
 from ralph.adapters.runlog import JsonlRunLog
 from ralph.adapters.session import SubprocessImplementer
-from ralph.adapters.suite import SubprocessTestRunner, detect_test_cmd, install_once
-from ralph.domain import CycleLedger, Notification
+from ralph.adapters.suite import (
+    NoSuiteFound,
+    SubprocessTestRunner,
+    detect_test_cmd,
+    install_once,
+)
+from ralph.domain import (
+    CycleLedger,
+    GraphError,
+    IssueGraph,
+    Notification,
+    Refusal,
+    RepoFacts,
+    SubIssueId,
+    SubIssueState,
+    build_order,
+    refusals,
+)
 from ralph.mergequeue import MergeQueue
 from ralph.ports import Budget, Editor, Implementer, Worktree
 from ralph.scheduler import DEFAULT_CONCURRENCY, RunReport, Scheduler
@@ -33,8 +49,12 @@ from ralph.scheduler import DEFAULT_CONCURRENCY, RunReport, Scheduler
 AGENT_CMD_ENV = "RALPH_AGENT_CMD"
 IMPLEMENTER_ENV = "RALPH_IMPLEMENTER"
 EDITOR_ENV = "RALPH_EDITOR"
+PROTECTED_ENV = "RALPH_PROTECTED_BRANCHES"
 SUB_ISSUE_PLACEHOLDER = "{sub_issue}"
 BRANCH_PREFIX = "ralph/"
+
+DEFAULT_PROTECTED = ("main", "master")
+PRE_COMMIT_CONFIGS = (".pre-commit-config.yaml", ".pre-commit-config.yml")
 
 CODEX = "codex"
 CLAUDE = "claude"
@@ -43,6 +63,12 @@ COPILOT = "copilot"
 
 class NoAgent(RuntimeError):
     """No Implementer was configured. The harness will not invent one."""
+
+
+class Refused(RuntimeError):
+    """The pre-flight refused the run. Raised, not printed — `ralph run` does the same checks
+    `ralph validate` does, and a check that only fires when a human remembers to ask for it is a
+    check the run does not have."""
 
 
 def _agent_argv(worktree: Worktree) -> Sequence[str]:
@@ -111,6 +137,96 @@ def find_issues_dir(repo: Path, given: Path | None) -> Path:
     return candidates[0]
 
 
+def protected_branches() -> frozenset[str]:
+    named = os.environ.get(PROTECTED_ENV)
+    return frozenset(shlex.split(named) if named else DEFAULT_PROTECTED)
+
+
+def _pre_commit(repo: Path) -> tuple[str | None, bool]:
+    """Whether this repo asks for pre-commit, and whether it actually got it.
+
+    The hook path comes from git rather than from `.git/hooks/`, because a repo may move it with
+    `core.hooksPath` and a run in a worktree does not have a `.git` directory at all.
+    """
+    config = next((c for c in PRE_COMMIT_CONFIGS if (repo / c).exists()), None)
+    if config is None:
+        return None, False
+    hook = repo / run_git(repo, "rev-parse", "--git-path", "hooks/pre-commit")
+    return config, hook.exists()
+
+
+def _read_graph(repo: Path, issues: Path | None) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]:
+    return FilesystemIssueStore(issues_dir=find_issues_dir(repo, issues)).read_graph()
+
+
+def facts_about(repo: Path, issues: Path | None) -> RepoFacts:
+    """Ask the world the five questions, and hand the answers to a rule that cannot ask anything.
+
+    Each `except` is narrow and each keeps the raiser's own message: `IssueParseError` already says
+    exactly which file has no acceptance criteria, and `GraphError` already names the cycle. A
+    pre-flight that rephrased them would be a second, worse copy of a sentence that is already right.
+    """
+    git = GitCli(repo=repo)
+    config, installed = _pre_commit(repo)
+
+    suite_error: str | None = None
+    try:
+        detect_test_cmd(repo)
+    except NoSuiteFound as exc:
+        suite_error = str(exc)
+
+    graph_error: str | None = None
+    try:
+        _read_graph(repo, issues)
+    except (IssueParseError, GraphError, FileNotFoundError) as exc:
+        graph_error = str(exc)
+
+    return RepoFacts(
+        head_branch=git.head_branch(),
+        protected=protected_branches(),
+        dirty=git.dirty_files(),
+        suite_error=suite_error,
+        graph_error=graph_error,
+        pre_commit_config=config,
+        pre_commit_installed=installed,
+    )
+
+
+def validate(repo: Path, issues: Path | None = None) -> tuple[Refusal, ...]:
+    return refusals(facts_about(repo.resolve(), issues))
+
+
+def render_refusals(found: tuple[Refusal, ...]) -> str:
+    if not found:
+        return "ready to run."
+    lines = [f"refusing to run ({len(found)}):"]
+    lines += [f"\n  {r.check.value}\n    {r.reason}" for r in found]
+    return "\n".join(lines)
+
+
+def render_plan(repo: Path, issues: Path | None) -> str:
+    """What `--dry-run` prints: the graph as the harness reads it, and the order it would work in.
+
+    The cheapest possible dogfood — it parses every sub-issue, resolves every edge, and proves the
+    graph is acyclic, and it costs nothing to run because no session is ever opened.
+    """
+    graph, states = _read_graph(repo.resolve(), issues)
+    edges = sum(len(sub.blocked_by) for sub in graph.sub_issues.values())
+    lines = [f"{len(graph.sub_issues)} sub-issues, {edges} edges, no cycle."]
+
+    for n, wave in enumerate(build_order(graph, states), start=1):
+        lines.append(f"  wave {n}: {', '.join(wave)}")
+
+    # Named, because their absence from the waves above is otherwise indistinguishable from a
+    # sub-issue the harness failed to see at all.
+    idle = sorted(id for id, state in states.items() if state is not SubIssueState.READY)
+    if idle:
+        lines.append(
+            "  not dispatched: " + ", ".join(f"{id} ({states[id].value})" for id in idle)
+        )
+    return "\n".join(lines)
+
+
 async def run(
     repo: Path,
     issues: Path | None,
@@ -121,6 +237,13 @@ async def run(
     """An explicit `editor` overrides `RALPH_EDITOR` — that is the seam the tests inject a stub
     through, and the reason no test in the suite calls Opus."""
     repo = repo.resolve()
+
+    # The same checks `ralph validate` runs, and they are not advisory. A run that starts on `main`
+    # has already done the damage by the time anybody reads the warning it printed.
+    found = validate(repo, issues)
+    if found:
+        raise Refused(render_refusals(found))
+
     git = GitCli(repo=repo)
     integration = git.head_branch()
 
@@ -187,6 +310,7 @@ def render(n: Notification) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ralph")
     sub = parser.add_subparsers(dest="command", required=True)
+
     runner = sub.add_parser("run", help="run the issue graph to completion")
     runner.add_argument("repo", type=Path)
     runner.add_argument("issues", type=Path, nargs="?", default=None)
@@ -197,8 +321,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=DEFAULT_CONCURRENCY,
         help="how many sub-issues may run at once. They still land one at a time.",
     )
+    runner.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="read the graph and print the build order. No session is opened.",
+    )
+
+    checker = sub.add_parser("validate", help="refuse a run this repo is not ready for")
+    checker.add_argument("repo", type=Path)
+    checker.add_argument("issues", type=Path, nargs="?", default=None)
 
     args = parser.parse_args(argv)
+
+    if args.command == "validate":
+        found = validate(args.repo, args.issues)
+        print(render_refusals(found))
+        return 1 if found else 0
+
+    if args.dry_run:
+        print(render_plan(args.repo, args.issues))
+        return 0
+
     report = asyncio.run(run(args.repo, args.issues, concurrency=args.parallel))
     print(render(report.notification))
     return 0 if report.clean else 1

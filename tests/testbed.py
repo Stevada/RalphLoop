@@ -31,7 +31,7 @@ wire format here — where the only writer lives — keeps the writer and the re
 
 
 class Behaviour(StrEnum):
-    """What the stand-in agent has been told to do. Eight shapes, and the harness must tell them
+    """What the stand-in agent has been told to do. Ten shapes, and the harness must tell them
     apart: five of them exit in ways that look alike from the outside."""
 
     SUCCEED = "succeed"
@@ -41,6 +41,20 @@ class Behaviour(StrEnum):
     IMPASSE = "impasse"
     HANG = "hang"
     CONFLICT = "conflict"
+    RENAMES_THE_API = "renames-the-api"
+    CALLS_THE_API = "calls-the-api"
+    """The two halves of a **semantic** conflict, and the pair only means anything together.
+
+    Each is a correct, green, self-contained sub-issue: one renames `calculator.add` to `plus` and
+    updates its test; the other adds a test that calls `add`. They touch **different files**, so
+    there is no rebase conflict to catch them — git will merge them without a murmur, and the
+    integration branch will be red.
+
+    This is the failure `CONFLICT` cannot express. A textual conflict is git's to notice; a semantic
+    one is nobody's, unless the suite is re-run on the prospective merge — which is the merge
+    queue's entire reason for existing, and the thing these two exist to prove it does.
+    """
+
     IMPASSE_ONCE = "impasse-once"
     """Declares an impasse the first time it is asked, and succeeds the second.
 
@@ -326,6 +340,26 @@ def act(behaviour: str, tag: str, cwd: Path) -> int:
     if behaviour == "conflict":
         (cwd / "shared.py").write_text(f"MARKER = {tag!r}\\n")
         commit(f"feat({tag}): claim the shared line")
+        return 0
+
+    if behaviour == "renames-the-api":
+        # Green here, and green forever, as long as nobody else calls `add`.
+        (cwd / "calculator.py").write_text("def plus(a: int, b: int) -> int:\\n    return a + b\\n")
+        (cwd / "test_calculator.py").write_text(
+            "from calculator import plus\\n\\n\\ndef test_plus() -> None:\\n"
+            "    assert plus(1, 2) == 3\\n"
+        )
+        commit(f"feat({tag}): a better name for add")
+        return 0
+
+    if behaviour == "calls-the-api":
+        # Also green here, because `add` still exists on the base this was cut from. Neither agent
+        # can see the other; that is what makes it a semantic conflict rather than a mistake.
+        (cwd / "test_caller.py").write_text(
+            "from calculator import add\\n\\n\\ndef test_caller() -> None:\\n"
+            "    assert add(2, 2) == 4\\n"
+        )
+        commit(f"feat({tag}): rely on add")
         return 0
 
     raise SystemExit(f"unknown behaviour: {behaviour!r}")
