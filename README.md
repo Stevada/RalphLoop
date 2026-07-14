@@ -12,9 +12,22 @@ bounds every session, classifies every failure honestly, and lands work through 
 **merge queue** that rebases, re-runs the suite on the prospective merge, and fast-forwards — so
 the integration branch is correct by construction.
 
-> **Status: under construction.** A bash prototype proved the git plumbing and has been removed.
-> The Python harness is being built now — see `.scratch/build_harness/` for the build order and
-> `docs/architecture.md` for the contract. Nothing below is runnable yet.
+> **Status: it runs.** All eleven sub-issues in `.scratch/build_harness/` have landed. What has
+> **not** happened: no run has yet been driven end-to-end by a real model. Every test in the suite
+> uses a scripted stand-in agent — a real subprocess doing real git work, with no intelligence in it
+> — which is what makes the harness testable at all, and is also exactly the gap that remains.
+
+## Usage
+
+```bash
+ralph validate <repo> [issues-dir]        # refuses a run this repo is not ready for
+ralph run --dry-run <repo>                # the build order, without opening a session
+ralph run [-j N] <repo> [issues-dir]      # run the graph to completion
+```
+
+`validate` refuses; it does not warn. A protected branch, a dirty tree, a suite it cannot find, a
+pre-commit hook the repo asks for and has not installed, a graph that will not parse — each gets its
+own sentence, and `ralph run` runs the same checks before it dispatches anything.
 
 ## Reading order
 
@@ -91,9 +104,11 @@ unaffected still lands. The human is paged **once**, at the end. The run never s
 
 | Variable | Default | Description |
 |---|---|---|
-| `RALPH_IMPLEMENTER` | `codex` | `codex` or `copilot`. Named only in `cli.py` |
-| `RALPH_EDITOR` | `claude` | `claude` or `copilot`. Named only in `cli.py` |
-| `RALPH_TEST_CMD` | autodetected | Overrides suite detection. Neither present is a fatal error |
+| `RALPH_IMPLEMENTER` | *unset* | `codex` or `copilot`. **Unset is not a default** — it means the argv in `RALPH_AGENT_CMD`, bounded on the clock alone |
+| `RALPH_EDITOR` | *unset* | `claude` or `copilot`. **Unset means there is no Editor in this run** — quarantine-and-drain, failures escalating on the Implementer's own outcome |
+| `RALPH_AGENT_CMD` | — | The Implementer's argv when `RALPH_IMPLEMENTER` is unset. `{sub_issue}` is substituted |
+| `RALPH_TEST_CMD` | autodetected | Overrides suite detection. A repo with no detectable suite is refused |
+| `RALPH_INSTALL_CMD` | autodetected | Runs **once**, in the base checkout. A failure aborts the run |
 | `RALPH_PROTECTED_BRANCHES` | `main master` | Branches Ralph refuses to run on |
 | `CODEX_MODEL` | `gpt-5.3-codex` | Model passed to `codex exec --model` |
 | `CODEX_SANDBOX` | `workspace-write` | Sandbox passed to `codex exec --sandbox` |

@@ -963,6 +963,37 @@ A cycle's worth of run log, then, reads as a story with two characters in it:
 01  implementer  terminal        landed
 ```
 
+### The pre-flight — `domain/rules/preflight.py`, gathered in `cli.py`
+
+**It refuses; it does not warn.** Five checks, and each one describes a repository the harness
+would go on to damage or misjudge:
+
+| Check | What it would otherwise do |
+|---|---|
+| `protected-branch` | Fast-forward `main`. Ralph lands onto the branch it is run from. |
+| `dirty-tree` | Fight the merge queue's fast-forwards over uncommitted work, and lose it. |
+| `no-suite` | Call every session green. `silent-red` becomes **unreachable** — the most expensive of the five. |
+| `hooks-not-installed` | Land commits that skipped the checks the repo believes it enforces. |
+| `graph` | Read a graph it cannot read. |
+
+The **rule is pure** — `RepoFacts` in, `tuple[Refusal, ...]` out — so each refusal's sentence can
+be tested without a repository to be wrong about. The gathering is `cli.py`'s, because only the
+composition root may hold a `GitCli` and an `IssueStore` at once.
+
+Two things it does not do, both on purpose. It does not stop at the first refusal: a human fixing
+their morning should learn everything wrong with it in one pass. And it does not *paraphrase* — the
+graph's refusal carries `IssueParseError`'s own message verbatim, because "your graph has a cycle"
+and "`03-sub.md` has no acceptance criteria" are different mornings, and a pre-flight that flattened
+both into "the graph is bad" would have kept the more useful half to itself.
+
+`ralph run` runs the same checks and raises `Refused`. A check that only fires when a human
+remembers to ask for it is a check the run does not have.
+
+`ralph run --dry-run` reports the build order, and gets its waves by asking **`eligible`** — the
+same rule the scheduler asks — over and over, rather than by a second topological sort. A dry run
+whose plan is not the run's plan is worse than no dry run: it is a second opinion about the graph,
+free to disagree with the one the scheduler acts on.
+
 ---
 
 ## 5. Mapping to the build order
@@ -975,7 +1006,7 @@ A cycle's worth of run log, then, reads as a story with two characters in it:
 | Impasse report format | `domain/model/impasse.py`, `domain/model/failure.py` |
 | The Editor | `adapters/claude_editor.py`, `adapters/copilot.py`, `domain/rules/cycles.CycleLedger` |
 | Linear sync | `adapters/linear.py` behind the existing `IssueStore` protocol |
-| PR + CI + notification | `RunReport`, `ralph validate` refusing repos without PR CI |
+| Pre-flight + notification | `domain/rules/preflight.py`, `RunReport`, `cli.render` |
 
 ## 6. Verified against the CLIs
 

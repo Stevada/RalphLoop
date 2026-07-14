@@ -67,7 +67,18 @@ publishes `outputTokens` and never mentions the prompt.
 plugins and user config. Default launch: **56.5k of context to answer the word "pong"**, 47% of the
 smart zone gone before the brief is read. MCP off: 25.9k. Editor's tool allowlist too: 8.4k.
 
-Still to come: `ralph validate` (#11).
+**`ralph validate` refuses; it does not warn.** Five checks — a protected branch, a dirty tree, a
+suite it cannot find, a pre-commit hook the repo asks for and never installed, a graph that will not
+parse — and each carries **its own sentence**: the graph's refusal quotes the parser verbatim rather
+than paraphrasing it, because a cycle and a missing acceptance criterion are different mornings.
+The rule is pure (`RepoFacts` in, `Refusal`s out); only the gathering is `cli.py`'s. **`ralph run`
+runs the same checks and raises** — a check that fires only when a human remembers to ask for it is
+a check the run does not have. `ralph run --dry-run` prints the build order, derived by asking
+`eligible` the same question the scheduler asks, never by a second topological sort.
+
+**All eleven sub-issues have landed.** What has *not* happened: no run has yet been driven by a real
+model. The suite proves the harness against a scripted stand-in agent — real subprocess, real git,
+no intelligence — and that gap is the honest one to close next.
 
 ## Issue format
 - Issues live in `.scratch/<phase>/issues/` inside the target repo (e.g. `.scratch/refine_data_flow/issues/`)
