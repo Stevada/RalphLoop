@@ -103,12 +103,33 @@ def test_it_reassembles_a_pretty_printed_block() -> None:
     assert [usage_of(b) for b in _blocks(log)] == [(7, 9)]
 
 
-def test_a_brace_inside_a_string_does_not_close_a_block() -> None:
-    """Copilot logs whole system prompts, and prose is full of braces and escaped quotes. Counting
-    braces naively ends the block early and the JSON never parses."""
-    log = '2026-01-01T00:00:00Z [DEBUG] {\n  "system": "use {curly} and \\" quotes",\n'
+def test_an_unbalanced_brace_inside_a_string_does_not_break_the_block() -> None:
+    """**The brief is echoed into the log, and a brief is not JSON.**
+
+    Copilot logs the whole prompt it was sent — which contains the sub-issue, which routinely
+    contains a code fence. One `if (x) {` in a target repo's acceptance criteria is an unbalanced
+    brace inside a JSON string, and a parser counting braces naively never finds the end of the
+    block: the session then meters nothing and dies `infra-failed`, because somebody's brief
+    mentioned JavaScript.
+
+    An escaped quote is the same hazard one level down — get `in_string` wrong and every brace
+    after it is counted in the wrong régime.
+    """
+    brief = 'the handler opens with `if (x) {` — and mind the \\" quoting'
+    log = f'2026-01-01T00:00:00Z [DEBUG] {{\n  "system": "{brief}",\n'
     log += '  "usage": {"prompt_tokens": 11, "total_tokens": 12}\n}\n'
+
     assert [usage_of(b) for b in _blocks(log)] == [(11, 12)]
+
+
+def test_a_stray_closing_brace_in_prose_does_not_end_the_block_early() -> None:
+    """The other half of the same bug, and the one that fails *quietly*: an early close leaves a
+    fragment that happens to be valid JSON, so nothing raises — the usage block is simply never
+    reached, and the ceiling watches a session it cannot see."""
+    log = '2026-01-01T00:00:00Z [DEBUG] {\n  "system": "close the block with } to finish",\n'
+    log += '  "usage": {"prompt_tokens": 13, "total_tokens": 14}\n}\n'
+
+    assert [usage_of(b) for b in _blocks(log)] == [(13, 14)]
 
 
 def test_prose_between_blocks_is_ignored() -> None:

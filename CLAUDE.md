@@ -55,7 +55,19 @@ inverted, killing a long cheap focused session and waving through a bloated one.
 unset still means *the argv in `RALPH_AGENT_CMD`*: an agent with no context signal, bounded on the
 clock alone, reporting a peak of zero because nobody was watching.
 
-Still to come: Copilot on both sides (#10), `ralph validate` (#11).
+**Copilot backs both roles.** `RALPH_IMPLEMENTER=copilot` and `RALPH_EDITOR=copilot` — so the Editor
+need not be the same model as the Implementer, which is the whole point of having two on each side.
+Metered on `usage.prompt_tokens` from the `--log-dir` log, which requires `--log-level debug`: at
+the default level there are no usage blocks at all, and a session that publishes none is not cheap,
+it is **unmetered**, so the adapter raises. Copilot's `--output-format json` stream is a decoy — it
+publishes `outputTokens` and never mentions the prompt.
+
+**MCP is disabled on every Copilot run**, by name, from `copilot mcp list --json` — because
+`--disable-builtin-mcps` turns off `github-mcp-server` and nothing else, while the cost comes from
+plugins and user config. Default launch: **56.5k of context to answer the word "pong"**, 47% of the
+smart zone gone before the brief is read. MCP off: 25.9k. Editor's tool allowlist too: 8.4k.
+
+Still to come: `ralph validate` (#11).
 
 ## Issue format
 - Issues live in `.scratch/<phase>/issues/` inside the target repo (e.g. `.scratch/refine_data_flow/issues/`)
@@ -86,12 +98,14 @@ Place a `PRD.md` one level above the `issues/` dir (i.e. `.scratch/<phase>/PRD.m
 - `CODEX_APPROVAL` — approval policy passed to `codex exec --ask-for-approval` (default: `never`)
 - `CODEX_HOME` — where Codex keeps its sessions (default: `~/.codex`). The rollout files the
   context ceiling is read from live under `$CODEX_HOME/sessions/`
-- `RALPH_IMPLEMENTER` — `codex` today, `copilot` in #10 (named only in `cli.py`). **Unset** means
+- `RALPH_IMPLEMENTER` — `codex` or `copilot` (named only in `cli.py`). **Unset** means
   the argv in `RALPH_AGENT_CMD` — an agent with no context signal, bounded on the clock alone
 - `RALPH_REAL_CODEX` — set to `1` to un-skip the one test in the suite that calls a model
-- `RALPH_EDITOR` — `claude` today, `copilot` in #10 (named only in `cli.py`). **Unset** means there
-  is no Editor: quarantine-and-drain. Requires the optional `claude-agent-sdk` (`pip install -e
-  ".[editor]"`)
+- `RALPH_EDITOR` — `claude` or `copilot` (named only in `cli.py`). **Unset** means there
+  is no Editor: quarantine-and-drain. `claude` requires the optional `claude-agent-sdk` (`pip
+  install -e ".[editor]"`); `copilot` enforces read-only through the CLI's own permission engine,
+  which is a **weaker** guarantee than the SDK's — not because the list is shorter, but because it
+  is enforced inside a binary the harness cannot inspect or test
 - `RALPH_AGENT_CMD` — the Implementer's argv. `{sub_issue}` is substituted with the sub-issue's id,
   which the harness also puts on the worktree's branch. An Implementer, at this layer, *is* an argv.
 - `RALPH_TEST_CMD` — overrides suite autodetection (npm, pytest, make); a repo with neither is a

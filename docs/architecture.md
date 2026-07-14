@@ -600,30 +600,67 @@ warning for the 429 → `infra-failed` case. Log it; don't gate on it yet.
 
 ### `CopilotImplementer` — `adapters/copilot.py`
 
-`copilot -p <prompt> --allow-all-tools --model <m> --log-dir <wt> --log-level debug`.
+`copilot -p <prompt> --model <m> --log-dir <fresh> --log-level debug --no-color
+--disable-builtin-mcps --disable-mcp-server <each> --allow-all-tools`.
 
-Copilot has no `--json` event stream, but its **debug log** carries the same signal Codex's
-rollout file does — one `usage` block per model call. Verified against the CLI:
+**Copilot does have an event stream, and it is useless to us.** `--output-format json` emits
+clean JSONL — and the only token it ever publishes is `outputTokens`, the *completion* count.
+It never mentions the prompt. It is precisely the number the ceiling does not want. The context
+lives in the **debug log** and nowhere else:
 
 ```json
 "usage": {
-  "prompt_tokens": 56743,        ← the context on this call. THE CEILING.
-  "total_tokens":  56746,        ← consumption. telemetry only.
-  "prompt_tokens_details": { "cached_tokens": 56577 }
+  "prompt_tokens": 25885,        ← the context on this call. THE CEILING.
+  "completion_tokens": 4,
+  "total_tokens":  25889,        ← what THIS CALL spent. NOT a running total.
+  "prompt_tokens_details": { "cached_tokens": 0, "cache_creation_tokens": 25883 }
 }
 ```
 
-`CopilotContextSource` tails the log and yields `usage.prompt_tokens`. Three things differ
-from Codex and all three are load-bearing:
+`CopilotContextSource` tails the log and yields `usage.prompt_tokens`. Four things differ from
+Codex, and every one of them is a way the ceiling silently stops working:
 
-- **`--log-level debug` is required.** At the default level the `usage` blocks are absent and
-  the ceiling silently stops working. The adapter must set it, not assume it.
-- **The log is pretty-printed JSON inside a text log, not JSONL.** Parsing needs a streaming
-  brace-matched block extractor, not `json.loads` per line.
-- **Copilot starts at ~56k of context**, before the brief is even read — MCP servers and their
-  tool schemas are loaded into every session. That is **47% of the 120k smart zone consumed at
-  turn zero**. The harness must run Copilot with MCP servers disabled, or the ceiling will fire
-  on work that never had room to begin with. Codex, by comparison, started at ~16k.
+- **`--log-level debug` is required.** At the default level there are no `usage` blocks at all —
+  thirty-five logs on the dev machine, not one with a token count in it. A session that publishes
+  no observation is not a cheap session, it is an **unmetered** one, so the adapter *raises* rather
+  than let it run to the wall clock unwatched.
+- **The log is pretty-printed JSON inside a timestamped text log, not JSONL.** It needs a
+  brace-matched block extractor, counting braces **outside string literals only** — the blocks
+  embed the whole prompt, and the prompt embeds the brief. One `if (x) {` in a target repo's
+  acceptance criteria is an unbalanced brace inside a JSON string, and a naïve counter never finds
+  the end of the block.
+- **The block must be parsed before it is trusted.** The same log carries a model-capabilities
+  block containing `max_prompt_tokens: 200000`. Anything that went looking for the *string*
+  `prompt_tokens` would read the model's context **limit** as its context **usage** and kill every
+  Copilot session ever run, before its first turn. `usage` is read from the top level of the
+  parsed object.
+- **`total_tokens` is per-call, where Codex's `total_token_usage` is cumulative** (25,885 + 4 =
+  25,889, and the next call starts over). The adapter accumulates, because `ContextMeter` takes a
+  `max()` over what it is handed and would otherwise report the largest single call as the whole
+  session's spend.
+
+**Copilot loads the world into the prompt before it reads the brief.** Measured, one word in and
+one word out:
+
+| launched | context to answer "pong" | of the smart zone |
+|---|---|---|
+| default | **56.5k** | 47%, gone at turn zero |
+| MCP disabled | **25.9k** | 22% |
+| MCP disabled + read-only tool allowlist | **8.4k** | 7% |
+
+So the harness disables MCP on every Copilot run — a ceiling that fires on work which never had
+room to begin with is not a quality bound, it is a tax. **`--disable-builtin-mcps` is not enough
+on its own:** it disables `github-mcp-server` and nothing else, while the servers actually costing
+us the prompt come from the user's config, the workspace, and installed plugins. The harness asks
+`copilot mcp list --json` and disables each by name, because it cannot guess names it has never
+seen.
+
+Codex, by comparison, starts at ~16k and needs none of this.
+
+Unlike Codex, a Copilot session has **no thread id to announce and no shared directory to find
+itself in**: it is handed a private `--log-dir`, emptied first — a revised cycle re-cuts the same
+branch at the same path, so last cycle's log would otherwise be sitting exactly where this cycle's
+is about to be looked for. There is nothing to disambiguate, so there is no stdout handshake.
 
 `--max-ai-credits` is a *credit* cap, not a context cap. It is not a substitute for the ceiling.
 
@@ -682,17 +719,40 @@ rather than a subprocess: the SDK conversation is not a process at all.
 
 ### `CopilotEditor` — `adapters/copilot.py`
 
-Same contract, enforced by the CLI's own flags rather than an SDK callback:
+Same contract, delivered by the CLI's own permission engine rather than an SDK callback:
 
-```python
-class CopilotEditor:
-    DENY = ["write", "edit", "shell(git commit)", "shell(git cherry-pick)", ...]
-    # copilot -p <prompt> --deny-tool ... --allow-tool 'shell(git diff)' ...
+```
+--available-tools=view,glob,grep,bash     ← an ALLOWLIST. `create` and `edit` denied by absence.
+--deny-tool=write                         ← denial beats every allow, including --allow-all-tools
+--allow-tool='shell(git diff)' ...        ← one per read-only command; the suite gets a prefix match
+                                          ← and NO --allow-all-tools, which is itself enforcement
 ```
 
-`--deny-tool` / `--allow-tool` are the enforcement surface. They are coarser than the SDK's
-`can_use_tool` callback, so this adapter's read-only guarantee is **weaker** — worth knowing
-when choosing which Editor to run. Same ceiling caveat as `CopilotImplementer`.
+Three of those four lines are load-bearing, and the fourth is the *absence* of a line:
+
+- `--available-tools` is an allowlist and Copilot honours it by **never sending the other tools to
+  the model** — verified against a real session's wire request, where `create` and `edit` simply
+  were not there. Same shape as the SDK Editor's, for the same reason: a blocklist fails open on
+  the tool nobody thought of.
+- **Not passing `--allow-all-tools` is part of the enforcement.** Without it Copilot denies any
+  shell command not allowed by name, and refuses shell redirection outright — which is what closes
+  the `git log > evidence.txt` hole that no per-command check can see, because the write is in the
+  shell rather than the program.
+- What counts as read-only is **not redefined here**. `READ_ONLY_COMMANDS` and `READ_ONLY_GIT` are
+  the same frozensets the SDK Editor's permission callback consults, in `adapters/editor.py`; this
+  adapter only translates them into `shell(...)` patterns. Two Editors, one definition — the day
+  they drifted, the two would no longer be running under the same rules.
+
+**This Editor's read-only guarantee is weaker than `ClaudeCodeEditor`'s, and the difference is not
+that one list is shorter.** It is that `read_only()` is a pure function the harness owns and the
+suite attacks fifty ways, while this one's enforcement lives inside a binary we do not control,
+cannot inspect, and do not exercise in any test. What the tests here pin is that the harness *asks*
+correctly. That Copilot then *honours* the ask is an assumption — a reasonable one, and still an
+assumption. Prefer the SDK Editor where the choice is free; this exists so that the Editor need not
+be the same model as the Implementer, which matters more.
+
+Same ceiling caveat as `CopilotImplementer` — and the same 8.4k baseline, since the tool allowlist
+is most of what buys it back.
 
 ---
 
@@ -925,7 +985,15 @@ is on stdout; both are on disk, live.
 | | Context signal | Source | Baseline context |
 |---|---|---|---|
 | **Codex** | `info.last_token_usage.input_tokens` | `~/.codex/sessions/…/rollout-*.jsonl` (JSONL) | ~16k |
-| **Copilot** | `usage.prompt_tokens` | `--log-dir` log, `--log-level debug` (JSON blocks) | **~56k** |
+| **Copilot** | `usage.prompt_tokens` | `--log-dir` log, `--log-level debug` (JSON blocks) | **56.5k**, cut to **8.4k** |
 
-The Copilot baseline is the one to watch: 47% of the smart zone is gone before the brief is read,
-because MCP servers load their tool schemas into every session. Disable them for harness runs.
+The Copilot baseline is the one to watch: launched the default way, 47% of the smart zone is gone
+before the brief is read — MCP servers, skills and tool schemas, loaded into every session. The
+harness disables MCP by name and cuts the Editor's tools to four, which brings a one-word exchange
+down from 56.5k to 8.4k. Both signals, and both of those figures, come from running the real CLI
+and reading what came out.
+
+**Neither CLI's obvious channel is the right one.** Codex's `--json` stream reports `turn.completed`
+only at session end, when the ceiling has nothing left to prevent. Copilot's `--output-format json`
+stream reports `outputTokens` — the completion count, never the prompt. In both cases the number
+the ceiling needs is written to a file on disk, live, and in neither case is it on stdout.
