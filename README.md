@@ -17,12 +17,33 @@ the integration branch is correct by construction.
 > uses a scripted stand-in agent — a real subprocess doing real git work, with no intelligence in it
 > — which is what makes the harness testable at all, and is also exactly the gap that remains.
 
+## Setup
+
+The project is managed with [uv](https://docs.astral.sh/uv/). One command, from a fresh clone:
+
+```bash
+uv sync                        # creates .venv on the right Python, from uv.lock
+uv sync --extra editor         # ...and the Claude Agent SDK, if you want RALPH_EDITOR=claude
+```
+
+uv fetches the interpreter itself — `.python-version` pins the project to 3.12, the floor of
+`requires-python`, so a 3.13-only feature fails here rather than in the checkout of someone we
+promised 3.12 to.
+
+There is nothing to activate: `uv run <cmd>` syncs and runs in one step.
+
+```bash
+uv run pytest -q               # the suite
+uv run mypy                    # strict, over ralph/ and tests/
+uv run ruff check
+```
+
 ## Usage
 
 ```bash
-ralph validate <repo> [issues-dir]        # refuses a run this repo is not ready for
-ralph run --dry-run <repo>                # the build order, without opening a session
-ralph run [-j N] <repo> [issues-dir]      # run the graph to completion
+uv run ralph validate <repo> [issues-dir]    # refuses a run this repo is not ready for
+uv run ralph run --dry-run <repo>            # the build order, without opening a session
+uv run ralph run [-j N] <repo> [issues-dir]  # run the graph to completion
 ```
 
 `validate` refuses; it does not warn. A protected branch, a dirty tree, a suite it cannot find, a
@@ -41,7 +62,8 @@ own sentence, and `ralph run` runs the same checks before it dispatches anything
 
 ## Prerequisites
 
-- Python 3.12+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) — it fetches Python 3.12 itself,
+  so that is the only thing you must install first
 - `codex` or `copilot` CLI for the Implementer; Claude Code or `copilot` for the Editor
 - Git 2.38+ (worktree support)
 - [mattpocock/skills](https://github.com/mattpocock/skills) at user level (provides `/tdd`):

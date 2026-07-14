@@ -11,13 +11,21 @@ Do not reference `src/*.sh` — it is gone.
 
 ## Commands
 
-**Use `.venv/bin/python`, not `python3`.** The system `python3` is 3.10 and has no `StrEnum`, so
-it cannot even import `ralph.domain`. The venv is 3.12, created with `uv venv --python 3.12 &&
-uv pip install -e ".[dev]"`.
+**Use `uv run`, never a bare `python3`.** The system `python3` is 3.10 and has no `StrEnum`, so it
+cannot even import `ralph.domain`. `uv run` resolves the interpreter from `requires-python` and
+syncs the environment against `uv.lock` before it runs anything, so there is no activated venv to
+forget and no drifted dependency to debug. `uv sync` alone sets the environment up from scratch.
 
-- Test: `.venv/bin/python -m pytest -q` — must be green before every commit
-- Typecheck: `.venv/bin/python -m mypy` (strict; covers `ralph/` **and** `tests/`)
-- Lint: `.venv/bin/python -m ruff check`
+- Test: `uv run pytest -q` — must be green before every commit
+- Typecheck: `uv run mypy` (strict; covers `ralph/` **and** `tests/`)
+- Lint: `uv run ruff check`
+- The CLI: `uv run ralph …`
+
+**`uv.lock` is committed, and it is the single source of truth for the environment.** Add a
+dependency with `uv add` (`--group dev` for tooling), never by hand-editing `pyproject.toml` and
+hoping — the lock is what makes a green suite here and a green suite on someone else's machine the
+same claim. Dev tooling is a PEP 735 group; `editor` (the Claude Agent SDK) stays an optional
+**extra**, because it is a runtime capability a user opts into, not something we need to build.
 
 `tests/` is inside mypy's scope on purpose: the assertion that each fake satisfies its Protocol is
 a type annotation, and only mypy checks it. Runtime `isinstance` on a Protocol compares method

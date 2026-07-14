@@ -6,16 +6,23 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
+# An extra, not a dev dependency: `RALPH_EDITOR=claude` is a *runtime* capability a user opts into,
+# and a run with a Codex Implementer and no Editor must not require the SDK installed at all.
 editor = ["claude-agent-sdk>=0.1"]
+
+[project.scripts]
+ralph = "ralph.cli:main"
+
+# The suite, the typechecker and the linter are not something a consumer of `ralph` can opt into —
+# they are what *we* need to work on it. PEP 735 group rather than an extra, so `uv sync` installs
+# them by default and `pip install ralph[dev]` is not a thing anyone can ask for by mistake.
+[dependency-groups]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "mypy>=1.13",
     "ruff>=0.8",
 ]
-
-[project.scripts]
-ralph = "ralph.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
