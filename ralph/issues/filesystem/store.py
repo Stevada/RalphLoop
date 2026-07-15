@@ -228,3 +228,7 @@ class FilesystemIssueStore:
         path = self._path_of(e.sub_issue)
         body = path.read_text()
         path.write_text(_STATUS.sub(f"Status: {e.details.value}", body, count=1))
+
+    async def publish_notification(self, body: str) -> None:
+        """Filesystem runs already receive the notification through stdout."""
+        return None

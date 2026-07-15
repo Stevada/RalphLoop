@@ -80,6 +80,7 @@ class FakeIssueStore:
     contents: dict[SubIssueId, tuple[Brief, Findings]] = field(default_factory=dict)
     mirrored: list[Event] = field(default_factory=list)
     revisions: list[tuple[SubIssueId, Brief, Findings]] = field(default_factory=list)
+    notifications: list[str] = field(default_factory=list)
 
     def read_graph(self) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]:
         return self.graph, dict(self.states)
@@ -93,6 +94,9 @@ class FakeIssueStore:
 
     async def write_event(self, e: Event) -> None:
         self.mirrored.append(e)
+
+    async def publish_notification(self, body: str) -> None:
+        self.notifications.append(body)
 
 
 @dataclass(slots=True)

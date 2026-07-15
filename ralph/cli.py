@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import shlex
 from collections.abc import Sequence
@@ -50,6 +51,8 @@ from ralph.notification import Notification
 from ralph.ports import Budget, Editor, Implementer, Worktree
 from ralph.runlog import JsonlRunLog
 from ralph.scheduler import DEFAULT_CONCURRENCY, RunReport, Scheduler
+
+log = logging.getLogger("ralph")
 
 AGENT_CMD_ENV = "RALPH_AGENT_CMD"
 IMPLEMENTER_ENV = "RALPH_IMPLEMENTER"
@@ -309,10 +312,11 @@ async def run(
     runner = SubprocessTestRunner(cmd=detect_test_cmd(repo))
     await install_once(repo)
 
+    store = issue_store(repo, issues, linear)
     scheduler = Scheduler(
         repo=repo,
         git=git,
-        store=issue_store(repo, issues, linear),
+        store=store,
         run_log=JsonlRunLog(path=repo / ".scratch" / "run.jsonl"),
         runner=runner,
         implementer=implementer(),
@@ -322,7 +326,13 @@ async def run(
         budget=budget or Budget(),
         concurrency=concurrency,
     )
-    return await scheduler.run()
+    report = await scheduler.run()
+    notification = render(report.notification)
+    try:
+        await store.publish_notification(notification)
+    except Exception:  # noqa: BLE001 — stdout still carries the notification
+        log.warning("could not publish the final notification to the issue store", exc_info=True)
+    return report
 
 
 def render(n: Notification) -> str:

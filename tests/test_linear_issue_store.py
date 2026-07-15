@@ -56,12 +56,17 @@ class FakeLinearClient:
         self._replace_issue(replace(issue, comments=(*issue.comments, comment)))
 
     def _issue(self, issue_id: str) -> LinearIssue:
+        if self.parent.id == issue_id:
+            return self.parent
         for issue in self.parent.sub_issues:
             if issue.id == issue_id:
                 return issue
         raise AssertionError(f"no issue {issue_id}")
 
     def _replace_issue(self, updated: LinearIssue) -> None:
+        if updated.id == self.parent.id:
+            self.parent = updated
+            return
         children = tuple(
             updated if issue.id == updated.id else issue
             for issue in self.parent.sub_issues
@@ -208,6 +213,22 @@ async def test_terminal_events_are_mirrored_to_linear_state() -> None:
     )
 
     assert client.updated_states == [("linear-2", "Done")]
+
+
+async def test_final_notification_is_posted_to_the_linear_parent_issue() -> None:
+    client = FakeLinearClient(parent_with(sub_issue("RAL-2", id="linear-2")))
+    store = LinearIssueStore(parent_identifier="RAL-1", client=client)
+    store.read_graph()
+
+    await store.publish_notification("landed: RAL-2")
+
+    assert len(client.created_comments) == 1
+    issue_id, body = client.created_comments[0]
+    assert issue_id == "parent-id"
+    assert "<!-- ralph:run-notification -->" in body
+    assert "## Ralph run complete" in body
+    assert "Parent: RAL-1" in body
+    assert "landed: RAL-2" in body
 
 
 async def test_session_events_do_not_touch_linear_state() -> None:

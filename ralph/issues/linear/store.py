@@ -23,12 +23,15 @@ from ralph.issues.linear.model import (
 from ralph.issues.state import SubIssueState
 from ralph.runlog import Event, EventKind
 
+RUN_NOTIFICATION_MARKER = "<!-- ralph:run-notification -->"
+
 
 @dataclass(slots=True)
 class LinearIssueStore:
     parent_identifier: str
     client: LinearClient
     states: LinearStateMap = LinearStateMap()
+    _parent: LinearIssue | None = None
     _issues: dict[SubIssueId, LinearIssue] | None = None
 
     def read_graph(self) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]:
@@ -99,9 +102,18 @@ class LinearIssueStore:
         self.client.update_issue_state(issue.id, state)
         self._cache_issue(e.sub_issue, replace(issue, state=state))
 
+    async def publish_notification(self, body: str) -> None:
+        parent = self._parent_issue()
+        self.client.create_comment(parent.id, _render_notification_comment(parent.identifier, body))
+
+    def _parent_issue(self) -> LinearIssue:
+        if self._parent is None:
+            self._parent = self.client.parent_issue(self.parent_identifier)
+        return self._parent
+
     def _load_once(self) -> dict[SubIssueId, LinearIssue]:
         if self._issues is None:
-            parent = self.client.parent_issue(self.parent_identifier)
+            parent = self._parent_issue()
             self._issues = {SubIssueId(issue.identifier): issue for issue in parent.sub_issues}
         return self._issues
 
@@ -123,3 +135,7 @@ class LinearIssueStore:
         updated = replace(issue, comments=(*issue.comments, comment))
         self._cache_issue(id, updated)
         return updated
+
+
+def _render_notification_comment(parent_identifier: str, body: str) -> str:
+    return f"{RUN_NOTIFICATION_MARKER}\n## Ralph run complete\n\nParent: {parent_identifier}\n\n{body}\n"
