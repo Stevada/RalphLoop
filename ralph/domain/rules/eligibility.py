@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from ralph.domain.model.graph import IssueGraph, SubIssueId
-from ralph.domain.model.state import SubIssueState
+from ralph.issues.graph import IssueGraph, SubIssueId
+from ralph.issues.state import SubIssueState
 
 
 def eligible(

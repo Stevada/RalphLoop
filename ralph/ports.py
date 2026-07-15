@@ -13,17 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ralph.domain import (
-    Brief,
-    EditorVerdict,
-    FailureReport,
-    Findings,
-    IssueGraph,
-    SessionTelemetry,
-    SubIssueId,
-    SubIssueState,
-    SuiteResult,
-)
+from ralph.domain import EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
+from ralph.issues import Brief, Findings
 from ralph.runlog import Event
 
 
@@ -82,24 +73,6 @@ class Editor(Protocol):
         failure: FailureReport,
         must_be_terminal: bool,
     ) -> tuple[SessionTelemetry, EditorVerdict | None]: ...
-
-
-@runtime_checkable
-class IssueStore(Protocol):
-    """The issue tracker: the sub-issue files today, Linear later.
-
-    `write_event` mirrors a transition back into the tracker and is **best-effort** — the tracker
-    is a convenience for humans, and a run must not die because it was unreachable. The harness's
-    own authoritative record is the `RunLog`, which is a different sink with different durability.
-    """
-
-    def read_graph(self) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]: ...
-
-    def content(self, id: SubIssueId) -> tuple[Brief, Findings]: ...
-
-    async def record_revision(self, id: SubIssueId, brief: Brief, findings: Findings) -> None: ...
-
-    async def write_event(self, e: Event) -> None: ...
 
 
 @runtime_checkable

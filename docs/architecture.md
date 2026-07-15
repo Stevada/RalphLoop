@@ -31,13 +31,10 @@ ralph/
     __init__.py    ← THE INTERFACE. import `from ralph.domain import Outcome`, never from
                      `ralph.domain.model.session`. the layout below is nobody else's business.
     model/         the NOUNS — frozen values, zero logic. what the system is made of.
-      graph.py     SubIssueId, SubIssue, IssueGraph, GraphError
-      content.py   Brief, Findings
       session.py   Actor, Outcome, SessionTelemetry, SuiteResult
       impasse.py   Approach, ImpasseReport        ← the model's claim
       failure.py   FailureReport                  ← the claim + the harness's facts
       verdict.py   Verdict, EditorVerdict
-      state.py     SubIssueState
       notification.py  Escalation, Notification   ← the one thing a human reads afterwards
     rules/         the VERBS — pure functions. what the system DECIDES.
       classify.py     session → Outcome            (the failure taxonomy)
@@ -47,10 +44,17 @@ ralph/
       report.py       → FailureReport      (and the impasse it will NOT invent)
       notify.py       → Notification       (what each failure cost, and what to open first)
 
+  issues/          issue tracker values + seam + markdown storage.
+    __init__.py    ← THE INTERFACE for issue values.
+    graph.py       SubIssueId, SubIssue, IssueGraph, GraphError
+    content.py     Brief, Findings
+    state.py       SubIssueState
+    store.py       IssueStore Protocol
+    filesystem.py  FilesystemIssueStore, IssueParseError
   ports.py         Protocols — the seams. every one has a fake.
   runlog/          Event, EventKind, event(), JsonlRunLog — the authoritative run ledger
   adapters/        codex, copilot, claude_editor, context, prompt, session,
-                   git, filesystem, suite
+                   git, suite
   mergequeue.py    \  the merge queue and the scheduler, so not an adapter either
   scheduler.py      } orchestration — depends on ports only, never on a concrete adapter
   cli.py           composition root — the only place a concrete adapter is named
@@ -67,6 +71,9 @@ The rules that hold this shape together:
   is retried, how quarantine drains, the cycle cap, the report the harness will not fabricate, and
   which failure to open first. Everything else exists to feed them. To know what the system
   *decides*, read one folder.
+- **Issue tracker values live in `issues/`; eligibility stays in `domain/rules/`.** The graph,
+  content, and state are what the tracker stores. The question "who may run?" is still a harness
+  decision over those values.
 - **`rules/` may import `model/`; `model/` may not import `rules/`** — a test enforces it. A value
   that knows how it will be classified has stopped being a value.
 - **`domain/__init__.py` is the interface.** Import `from ralph.domain import Outcome`; the internal
@@ -84,9 +91,10 @@ or Copilot edits — and nothing downstream of `cli.py` knows which.
 
 ---
 
-## 1. Domain — `ralph/domain/`
+## 1. Issues — `ralph/issues/`
 
-Pure functions over frozen dataclasses. Tested with no subprocess, no git, no model.
+Issue tracker values and storage. The values are pure; the filesystem store is the markdown-backed
+adapter used today.
 
 ### Structure vs. content
 
@@ -97,8 +105,24 @@ rather than a rule someone must remember.
 
 | Type | Module | What it is |
 |---|---|---|
-| `SubIssueId`, `SubIssue`, `IssueGraph`, `GraphError` | [graph.py](../ralph/domain/model/graph.py) | The immutable graph. `IssueGraph` raises on cycles and dangling edges at construction. There is **no `kind`** field — contract/impl/integration roles are fully encoded in the `blocked by` edges, and a `kind` would be a second, un-checkable source of truth. |
-| `Brief`, `Findings` | [content.py](../ralph/domain/model/content.py) | The two mutable fields. `Brief` = *what "done" means* (revision 0 is the Planner's, never overwritten); `Findings` = *what the last session learned*, difficulty-neutral, kept out of the brief so the brief stays clean as spec. |
+| `SubIssueId`, `SubIssue`, `IssueGraph`, `GraphError` | [graph.py](../ralph/issues/graph.py) | The immutable graph. `IssueGraph` raises on cycles and dangling edges at construction. There is **no `kind`** field — contract/impl/integration roles are fully encoded in the `blocked by` edges, and a `kind` would be a second, un-checkable source of truth. |
+| `Brief`, `Findings` | [content.py](../ralph/issues/content.py) | The two mutable fields. `Brief` = *what "done" means* (revision 0 is the Planner's, never overwritten); `Findings` = *what the last session learned*, difficulty-neutral, kept out of the brief so the brief stays clean as spec. |
+| `SubIssueState` | [state.py](../ralph/issues/state.py) | `ready` → `in-progress` → `landed` \| `needs-human`. `landed` is a sub-issue's terminal state; `done` is the *parent's* and is banned here. |
+
+`IssueStore` ([store.py](../ralph/issues/store.py)) is the tracker seam: files today, Linear later.
+`content()` returns the **newest** revision. `write_event` is **best-effort** — a run must not die
+because Linear was unreachable.
+
+`FilesystemIssueStore` ([filesystem.py](../ralph/issues/filesystem.py)) reads
+`.scratch/<phase>/issues/*.md` with numeric-prefix edges. `LinearIssueStore` will implement the same
+Protocol and change nothing in the scheduler — which is how the Linear-sync gap collapses into
+"write a second class."
+
+---
+
+## 2. Domain — `ralph/domain/`
+
+Pure functions over frozen dataclasses. Tested with no subprocess, no git, no model.
 
 ### Session outcomes and the claim/corroboration split
 
@@ -133,12 +157,11 @@ the human different diagnoses (*cut too large* vs *environment broken*). The rea
 |---|---|---|
 | `Verdict`, `EditorVerdict` | [verdict.py](../ralph/domain/model/verdict.py) | `Verdict.is_terminal` is `True` for everything but `revise`. `EditorVerdict.revised_brief` is required iff `revise`. |
 | `CycleLedger` | [cycles.py](../ralph/domain/rules/cycles.py) | The cap of three, hard-enforced. `must_be_terminal(id)` is `True` on the final cycle — the Editor may not return `revise`, and the **scheduler** refuses it rather than trusting the Editor to remember. One rule, one home. |
-| `SubIssueState` | [state.py](../ralph/domain/model/state.py) | `ready` → `in-progress` → `landed` \| `needs-human`. `landed` is a sub-issue's terminal state; `done` is the *parent's* and is banned here. |
 | `eligible`, `never_eligible` | [eligibility.py](../ralph/domain/rules/eligibility.py) | `eligible` = every blocker has `LANDED`, **derived never stored**. `never_eligible` is report-time only: a sub-issue still `ready` at run end whose blockers never landed **never got a turn** — distinct from `needs-human` ("I failed") without inventing a state for it. Nothing propagates a skip through the graph. |
 
 ---
 
-## 2. Ports — `ralph/ports.py`
+## 3. Ports — `ralph/ports.py`
 
 The seams. **Every Protocol has a fake, and the fakes are what the suite runs against** — a test that
 needs a real model, network, or `codex` binary is in the wrong layer.
@@ -147,7 +170,6 @@ needs a real model, network, or `codex` binary is in the wrong layer.
 |---|---|---|
 | `Implementer` | writes code from a brief → `SessionTelemetry` | Either Codex or Copilot. |
 | `Editor` | adjudicates a failure → `(SessionTelemetry, EditorVerdict \| None)` | Bounded exactly like an Implementer — same `Budget`, same telemetry, can come back `ceiling-exceeded`. Takes `must_be_terminal`; takes **no** `RunLog` or `IssueStore`, so every *consequence* of a verdict happens in the scheduler. |
-| `IssueStore` | the tracker: files today, Linear later | `content()` returns the **newest** revision. `write_event` is **best-effort** — a run must not die because Linear was unreachable. |
 | `RunLog` | the harness's **authoritative** record | A Protocol, not the JSONL adapter, because the merge queue and scheduler both take one and orchestration may not name an adapter. |
 | `TestRunner` | a suite run → `SuiteResult` | The harness runs the tests; the model's exit code is only its opinion. |
 | `Git` | worktree / rebase / ff plumbing | `discard_worktree` destroys the checkout **and the branch** — the next cycle re-cuts `ralph/<id>` from integration, and `git worktree add -b` refuses an existing branch. |
@@ -176,7 +198,7 @@ Brief and findings are separate files because a revision may change one and leav
 
 ---
 
-## 3. Adapters — `ralph/adapters/`
+## 4. Adapters — `ralph/adapters/`
 
 Two CLIs, and **either can back either actor**. Chosen in `cli.py` from `RALPH_IMPLEMENTER` /
 `RALPH_EDITOR`; nothing else knows which is running.
@@ -252,16 +274,7 @@ the harness *asks* correctly; that Copilot *honours* the ask is a reasonable ass
 assumption. Prefer the SDK Editor where the choice is free; Copilot exists so the Editor need not be
 the same model as the Implementer, which matters more.
 
-### Stores
-
-`FilesystemIssueStore` ([filesystem.py](../ralph/adapters/filesystem.py)) reads
-`.scratch/<phase>/issues/*.md` with numeric-prefix edges. `LinearIssueStore` will implement the same
-Protocol and change nothing in the scheduler — which is how the Linear-sync gap collapses into
-"write a second class."
-
----
-
-## 4. Orchestration
+## 5. Orchestration
 
 Depends on ports only, never on a concrete adapter.
 
@@ -368,5 +381,5 @@ asks, never by a second topological sort that is free to disagree.
 | Context ceiling and timeout | `Budget`, [context.py](../ralph/adapters/context.py) + per-CLI `ContextSource` ([cli-metering.md](cli-metering.md)) |
 | Impasse report format | [impasse.py](../ralph/domain/model/impasse.py), [failure.py](../ralph/domain/model/failure.py) |
 | The Editor | [claude_editor.py](../ralph/adapters/claude_editor.py), [copilot.py](../ralph/adapters/copilot.py), `CycleLedger` |
-| Linear sync | `adapters/linear.py` behind the existing `IssueStore` Protocol |
+| Linear sync | `issues/linear.py` behind the existing `IssueStore` Protocol |
 | Pre-flight + notification | [preflight.py](../ralph/domain/rules/preflight.py), `RunReport`, `cli.render` |

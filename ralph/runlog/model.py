@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-from ralph.domain import Actor, Outcome, SubIssueId, SubIssueState, Verdict
+from ralph.domain import Actor, Outcome, Verdict
+from ralph.issues import SubIssueId, SubIssueState
 
 EventDetails = Outcome | Verdict | SubIssueState
 EventDetailsType = type[Outcome] | type[Verdict] | type[SubIssueState]

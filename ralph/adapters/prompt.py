@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from ralph.adapters.editor import VERDICT_CLOSE, VERDICT_OPEN
 from ralph.adapters.session import IMPASSE_CLOSE, IMPASSE_OPEN
-from ralph.domain import Brief, CycleLedger, FailureReport, Findings
+from ralph.domain import CycleLedger, FailureReport
+from ralph.issues import Brief, Findings
 
 COMMIT = """\
 ## What the harness will do when you stop

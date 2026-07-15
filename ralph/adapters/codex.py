@@ -36,7 +36,7 @@ from pathlib import Path
 from ralph.adapters.context import tail
 from ralph.adapters.prompt import implementer_prompt
 from ralph.adapters.session import SubprocessImplementer, Transcript
-from ralph.domain import Brief, Findings
+from ralph.issues import Brief, Findings
 from ralph.ports import Observation, Worktree
 
 log = logging.getLogger(__name__)

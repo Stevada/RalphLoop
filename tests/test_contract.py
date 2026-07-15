@@ -14,27 +14,23 @@ import pytest
 
 from ralph.domain import (
     Actor,
-    Brief,
     CycleLedger,
     Destination,
     EditorVerdict,
-    Findings,
     ImpasseReport,
-    IssueGraph,
     Outcome,
     SessionTelemetry,
-    SubIssue,
-    SubIssueState,
     SuiteResult,
     Verdict,
 )
+from ralph.issues import Brief, Findings, IssueGraph, SubIssue, SubIssueState
+from ralph.issues.store import IssueStore
 from ralph.ports import (
     Budget,
     ContextSource,
     Editor,
     Git,
     Implementer,
-    IssueStore,
     RunLog,
     SessionContext,
     TestRunner,

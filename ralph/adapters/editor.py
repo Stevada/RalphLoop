@@ -23,7 +23,8 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from ralph.adapters.context import Bound, Killable, run_bounded
-from ralph.domain import Brief, EditorVerdict, Findings, SessionTelemetry, Verdict
+from ralph.domain import EditorVerdict, SessionTelemetry, Verdict
+from ralph.issues import Brief, Findings
 from ralph.ports import Budget, Observation
 
 log = logging.getLogger(__name__)

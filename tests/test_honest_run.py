@@ -24,7 +24,8 @@ import sys
 import pytest
 
 from ralph.cli import render, run
-from ralph.domain import Outcome, SubIssueId
+from ralph.domain import Outcome
+from ralph.issues import SubIssueId
 from tests.testbed import Behaviour, StandInAgent, TargetRepo, behaviour_spec
 
 # A contract, two in parallel behind it, one integrating both. The smallest graph in which

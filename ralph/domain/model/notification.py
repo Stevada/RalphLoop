@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ralph.domain.model.failure import FailureReport
-from ralph.domain.model.graph import SubIssueId
+from ralph.issues.graph import SubIssueId
 from ralph.domain.model.session import Outcome
 
 

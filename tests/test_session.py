@@ -10,7 +10,8 @@ import pytest
 
 from ralph.adapters.git import GitCli
 from ralph.adapters.session import ImpasseParseError, SubprocessImplementer, parse_impasse
-from ralph.domain import Brief, Findings, Outcome, SuiteResult, classify_implementer
+from ralph.domain import Outcome, SuiteResult, classify_implementer
+from ralph.issues import Brief, Findings
 from ralph.ports import Budget, SessionContext, Worktree
 from tests.testbed import Behaviour, StandInAgent, TargetRepo
 

@@ -10,8 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from ralph.adapters.filesystem import FilesystemIssueStore, IssueParseError
-from ralph.domain import Actor, Brief, Findings, SubIssueId, SubIssueState
+from ralph.issues.filesystem import FilesystemIssueStore, IssueParseError
+from ralph.domain import Actor
+from ralph.issues import Brief, Findings, SubIssueId, SubIssueState
 from ralph.runlog import EventKind, event
 
 READY = "Status: ready\n\n## Acceptance criteria\n\n- [ ] It works.\n"

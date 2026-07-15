@@ -4,10 +4,12 @@ Three arrows, and each one is a design decision that would otherwise rot quietly
 
 1. `domain/` is pure — stdlib only. If a domain function needs a fact from the world, it takes it
    as an argument.
-2. `domain/model/` may not import `domain/rules/`. The nouns do not know what the system decides
+2. `domain/` may import the pure issue values, but not the issue store or filesystem adapter.
+   Issue structure is an input to the harness's decisions; tracker I/O is not.
+3. `domain/model/` may not import `domain/rules/`. The nouns do not know what the system decides
    about them; the verbs are free to depend on the nouns. This is the arrow that keeps `model/`
    inert and makes `rules/` the one place the design lives.
-3. Nothing in `ralph/` imports from `tests/`. The fakes live under `tests/` precisely so that an
+4. Nothing in `ralph/` imports from `tests/`. The fakes live under `tests/` precisely so that an
    adapter *cannot* reach for one.
 """
 
@@ -30,6 +32,7 @@ SHIPPED = sorted(PACKAGE.rglob("*.py"))
 
 # Stdlib modules that nonetheless touch the world. Importing one in `domain/` is how purity rots.
 BANNED = {"subprocess", "os", "io", "socket", "shutil", "asyncio", "pathlib", "tempfile"}
+ISSUE_VALUES = {"ralph.issues", "ralph.issues.content", "ralph.issues.graph", "ralph.issues.state"}
 
 
 def _rel(p: Path) -> str:
@@ -74,9 +77,9 @@ def test_domain_imports_stdlib_only(module: Path) -> None:
 
 @pytest.mark.parametrize("module", DOMAIN_MODULES, ids=_rel)
 def test_domain_never_imports_outward(module: Path) -> None:
-    """`domain/` may not import ports, adapters, or orchestration — only itself."""
+    """`domain/` may not import ports, adapters, orchestration, or issue I/O."""
     for imported in _ralph_imports(module):
-        assert imported.startswith("ralph.domain"), (
+        assert imported.startswith("ralph.domain") or imported in ISSUE_VALUES, (
             f"{_rel(module)} imports {imported!r} — that arrow points outward"
         )
 
@@ -110,7 +113,7 @@ def test_only_the_composition_root_names_a_concrete_adapter(module: Path) -> Non
     orchestration module somebody adds is exactly the one a list would have failed to cover.
     """
     for imported in _ralph_imports(module):
-        assert not imported.startswith("ralph.adapters"), (
+        assert not imported.startswith("ralph.adapters") and imported != "ralph.issues.filesystem", (
             f"{_rel(module)} imports {imported!r} — only cli.py may name an adapter"
         )
 

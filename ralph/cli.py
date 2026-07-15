@@ -20,7 +20,6 @@ from pathlib import Path
 from ralph.adapters.claude_editor import ClaudeCodeEditor, claude_sdk_session
 from ralph.adapters.codex import codex_implementer
 from ralph.adapters.copilot import copilot_editor, copilot_implementer
-from ralph.adapters.filesystem import FilesystemIssueStore, IssueParseError
 from ralph.adapters.git import GitCli, run_git
 from ralph.adapters.session import SubprocessImplementer
 from ralph.adapters.suite import (
@@ -31,16 +30,14 @@ from ralph.adapters.suite import (
 )
 from ralph.domain import (
     CycleLedger,
-    GraphError,
-    IssueGraph,
     Notification,
     Refusal,
     RepoFacts,
-    SubIssueId,
-    SubIssueState,
     build_order,
     refusals,
 )
+from ralph.issues import GraphError, IssueGraph, SubIssueId, SubIssueState
+from ralph.issues.filesystem import FilesystemIssueStore, IssueParseError
 from ralph.mergequeue import MergeQueue
 from ralph.ports import Budget, Editor, Implementer, Worktree
 from ralph.runlog import JsonlRunLog

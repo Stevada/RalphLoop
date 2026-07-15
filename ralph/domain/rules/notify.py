@@ -16,10 +16,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from ralph.domain.model.failure import FailureReport
-from ralph.domain.model.graph import IssueGraph, SubIssueId
+from ralph.issues.graph import IssueGraph, SubIssueId
 from ralph.domain.model.notification import Escalation, Notification
 from ralph.domain.model.session import Outcome
-from ralph.domain.model.state import SubIssueState
+from ralph.issues.state import SubIssueState
 from ralph.domain.rules.eligibility import never_eligible
 
 ATTENTION_ORDER: Mapping[Outcome, int] = {

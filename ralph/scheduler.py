@@ -26,9 +26,6 @@ from ralph.domain import (
     FailureReport,
     Notification,
     Outcome,
-    SubIssue,
-    SubIssueId,
-    SubIssueState,
     Verdict,
     classify_editor,
     classify_implementer,
@@ -37,13 +34,14 @@ from ralph.domain import (
     notify,
     route,
 )
+from ralph.issues import SubIssue, SubIssueId, SubIssueState
+from ralph.issues.store import IssueStore
 from ralph.mergequeue import LandResult, MergeQueue
 from ralph.ports import (
     Budget,
     Editor,
     Git,
     Implementer,
-    IssueStore,
     RunLog,
     SessionContext,
     TestRunner,

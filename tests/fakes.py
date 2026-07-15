@@ -19,16 +19,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ralph.domain import (
-    Brief,
     EditorVerdict,
     FailureReport,
-    Findings,
-    IssueGraph,
     SessionTelemetry,
-    SubIssueId,
-    SubIssueState,
     SuiteResult,
 )
+from ralph.issues import Brief, Findings, IssueGraph, SubIssueId, SubIssueState
 from ralph.ports import Observation, SessionContext, Worktree
 from ralph.runlog import Event
 from tests.builders import telemetry

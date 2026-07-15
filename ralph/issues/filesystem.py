@@ -13,14 +13,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from ralph.domain import (
-    Brief,
-    Findings,
-    IssueGraph,
-    SubIssue,
-    SubIssueId,
-    SubIssueState,
-)
+from ralph.issues.content import Brief, Findings
+from ralph.issues.graph import IssueGraph, SubIssue, SubIssueId
+from ralph.issues.state import SubIssueState
 from ralph.runlog import Event, EventKind
 
 ISSUE_GLOB = "*.md"

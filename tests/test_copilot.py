@@ -28,14 +28,13 @@ from ralph.adapters.copilot import (
 )
 from ralph.adapters.session import Transcript
 from ralph.domain import (
-    Brief,
     EditorVerdict,
-    Findings,
     Outcome,
     SessionTelemetry,
     Verdict,
     failure_report,
 )
+from ralph.issues import Brief, Findings
 from ralph.ports import Budget, SessionContext, Worktree
 from tests.builders import impasse, suite, telemetry
 

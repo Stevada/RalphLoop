@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from ralph.domain import Actor, SubIssueId
+from ralph.domain import Actor
+from ralph.issues import SubIssueId
 from ralph.runlog.model import DETAILS_OF, Event, event_kind
 
 

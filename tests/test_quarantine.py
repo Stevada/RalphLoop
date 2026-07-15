@@ -18,7 +18,8 @@ import sys
 import pytest
 
 from ralph.cli import render, run
-from ralph.domain import Outcome, SubIssueId
+from ralph.domain import Outcome
+from ralph.issues import SubIssueId
 from ralph.ports import Budget
 from tests.testbed import Behaviour, StandInAgent, TargetRepo, behaviour_spec
 

@@ -12,18 +12,14 @@ from collections.abc import Iterable, Mapping
 
 from ralph.domain import (
     Approach,
-    Brief,
     EditorVerdict,
-    Findings,
     ImpasseReport,
-    IssueGraph,
     SessionTelemetry,
-    SubIssue,
-    SubIssueId,
     Killed,
     SuiteResult,
     Verdict,
 )
+from ralph.issues import Brief, Findings, IssueGraph, SubIssue, SubIssueId
 from ralph.ports import Observation
 
 

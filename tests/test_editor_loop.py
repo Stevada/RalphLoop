@@ -23,17 +23,14 @@ import pytest
 
 from ralph.domain import (
     Actor,
-    Brief,
     CycleLedger,
     Destination,
-    Findings,
     Outcome,
     SessionTelemetry,
-    SubIssueId,
-    SubIssueState,
     Verdict,
     route,
 )
+from ralph.issues import Brief, Findings, SubIssueId, SubIssueState
 from ralph.cli import render, run
 from ralph.mergequeue import MergeQueue
 from ralph.ports import Budget, Editor

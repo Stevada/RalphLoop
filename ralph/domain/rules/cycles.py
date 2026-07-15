@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from ralph.domain.model.graph import SubIssueId
+from ralph.issues.graph import SubIssueId
 
 
 @dataclass(slots=True)

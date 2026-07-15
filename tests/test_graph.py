@@ -7,7 +7,7 @@ import dataclasses
 
 import pytest
 
-from ralph.domain import GraphError, IssueGraph, SubIssue, SubIssueId
+from ralph.issues import GraphError, IssueGraph, SubIssue, SubIssueId
 from tests.builders import graph_of
 
 

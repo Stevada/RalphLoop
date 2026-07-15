@@ -24,15 +24,14 @@ from ralph.adapters.editor import (
     read_only,
 )
 from ralph.domain import (
-    Brief,
     EditorVerdict,
-    Findings,
     Outcome,
     SessionTelemetry,
     Verdict,
     classify_editor,
     failure_report,
 )
+from ralph.issues import Brief, Findings
 from ralph.ports import Budget, SessionContext, Worktree
 from tests.builders import impasse, observation, suite, telemetry
 

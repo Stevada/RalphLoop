@@ -23,18 +23,15 @@ from pathlib import Path
 
 import pytest
 
-from ralph.adapters.filesystem import FilesystemIssueStore
+from ralph.issues.filesystem import FilesystemIssueStore
 from ralph.cli import Refused, main, render_plan, render_refusals, run, validate
 from ralph.domain import (
     Check,
-    IssueGraph,
     RepoFacts,
-    SubIssue,
-    SubIssueId,
-    SubIssueState,
     build_order,
     refusals,
 )
+from ralph.issues import IssueGraph, SubIssue, SubIssueId, SubIssueState
 from tests.testbed import Behaviour, StandInAgent, TargetRepo
 
 BUILD_HARNESS = Path(__file__).parent.parent / ".scratch" / "build_harness" / "issues"

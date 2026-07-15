@@ -16,8 +16,6 @@ from ralph.domain import (
     FailureReport,
     EditorVerdict,
     Outcome,
-    SubIssueId,
-    SubIssueState,
     Verdict,
     classify_editor,
     classify_implementer,
@@ -27,6 +25,7 @@ from ralph.domain import (
     notify,
     route,
 )
+from ralph.issues import SubIssueId, SubIssueState
 from tests.builders import graph_of, impasse, suite, telemetry, verdict
 
 # --- classify_implementer: one test per row of the taxonomy -------------------------------------

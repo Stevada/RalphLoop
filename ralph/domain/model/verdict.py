@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from ralph.domain.model.content import Brief, Findings
+from ralph.issues.content import Brief, Findings
 
 
 class Verdict(StrEnum):
