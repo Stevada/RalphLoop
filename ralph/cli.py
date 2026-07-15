@@ -37,6 +37,14 @@ from ralph.harness import (
 )
 from ralph.issues import GraphError, IssueGraph, SubIssueId, SubIssueState
 from ralph.issues.filesystem import FilesystemIssueStore, IssueParseError
+from ralph.issues.linear import (
+    LinearApiError,
+    LinearGraphQLClient,
+    LinearIssueStore,
+    LinearIssueStoreError,
+    LinearStateMap,
+)
+from ralph.issues.store import IssueStore
 from ralph.mergequeue import MergeQueue
 from ralph.notification import Notification
 from ralph.ports import Budget, Editor, Implementer, Worktree
@@ -47,6 +55,12 @@ AGENT_CMD_ENV = "RALPH_AGENT_CMD"
 IMPLEMENTER_ENV = "RALPH_IMPLEMENTER"
 EDITOR_ENV = "RALPH_EDITOR"
 PROTECTED_ENV = "RALPH_PROTECTED_BRANCHES"
+LINEAR_API_KEY_ENV = "LINEAR_API_KEY"
+LINEAR_PARENT_ENV = "RALPH_LINEAR_PARENT"
+LINEAR_READY_ENV = "RALPH_LINEAR_STATE_READY"
+LINEAR_IN_PROGRESS_ENV = "RALPH_LINEAR_STATE_IN_PROGRESS"
+LINEAR_LANDED_ENV = "RALPH_LINEAR_STATE_LANDED"
+LINEAR_NEEDS_HUMAN_ENV = "RALPH_LINEAR_STATE_NEEDS_HUMAN"
 SUB_ISSUE_PLACEHOLDER = "{sub_issue}"
 BRANCH_PREFIX = "ralph/"
 
@@ -66,6 +80,10 @@ class Refused(RuntimeError):
     """The pre-flight refused the run. Raised, not printed — `ralph run` does the same checks
     `ralph validate` does, and a check that only fires when a human remembers to ask for it is a
     check the run does not have."""
+
+
+class IssueSourceError(ValueError):
+    """The CLI was not given a coherent issue source."""
 
 
 def _agent_argv(worktree: Worktree) -> Sequence[str]:
@@ -134,6 +152,35 @@ def find_issues_dir(repo: Path, given: Path | None) -> Path:
     return candidates[0]
 
 
+def linear_parent(given: str | None) -> str | None:
+    return given or os.environ.get(LINEAR_PARENT_ENV)
+
+
+def linear_states() -> LinearStateMap:
+    defaults = LinearStateMap()
+    return LinearStateMap(
+        ready=os.environ.get(LINEAR_READY_ENV, defaults.ready),
+        in_progress=os.environ.get(LINEAR_IN_PROGRESS_ENV, defaults.in_progress),
+        landed=os.environ.get(LINEAR_LANDED_ENV, defaults.landed),
+        needs_human=os.environ.get(LINEAR_NEEDS_HUMAN_ENV, defaults.needs_human),
+    )
+
+
+def issue_store(repo: Path, issues: Path | None, linear: str | None) -> IssueStore:
+    if linear is None:
+        return FilesystemIssueStore(issues_dir=find_issues_dir(repo, issues))
+    if issues is not None:
+        raise IssueSourceError("pass either an issues directory or --linear-parent, not both")
+    api_key = os.environ.get(LINEAR_API_KEY_ENV)
+    if not api_key:
+        raise IssueSourceError(f"set {LINEAR_API_KEY_ENV} to use --linear-parent")
+    return LinearIssueStore(
+        parent_identifier=linear,
+        client=LinearGraphQLClient(api_key=api_key),
+        states=linear_states(),
+    )
+
+
 def protected_branches() -> frozenset[str]:
     named = os.environ.get(PROTECTED_ENV)
     return frozenset(shlex.split(named) if named else DEFAULT_PROTECTED)
@@ -152,11 +199,13 @@ def _pre_commit(repo: Path) -> tuple[str | None, bool]:
     return config, hook.exists()
 
 
-def _read_graph(repo: Path, issues: Path | None) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]:
-    return FilesystemIssueStore(issues_dir=find_issues_dir(repo, issues)).read_graph()
+def _read_graph(
+    repo: Path, issues: Path | None, linear: str | None
+) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]:
+    return issue_store(repo, issues, linear).read_graph()
 
 
-def facts_about(repo: Path, issues: Path | None) -> RepoFacts:
+def facts_about(repo: Path, issues: Path | None, linear: str | None = None) -> RepoFacts:
     """Ask the world the five questions, and hand the answers to a rule that cannot ask anything.
 
     Each `except` is narrow and each keeps the raiser's own message: `IssueParseError` already says
@@ -174,8 +223,15 @@ def facts_about(repo: Path, issues: Path | None) -> RepoFacts:
 
     graph_error: str | None = None
     try:
-        _read_graph(repo, issues)
-    except (IssueParseError, GraphError, FileNotFoundError) as exc:
+        _read_graph(repo, issues, linear)
+    except (
+        IssueParseError,
+        GraphError,
+        FileNotFoundError,
+        IssueSourceError,
+        LinearIssueStoreError,
+        LinearApiError,
+    ) as exc:
         graph_error = str(exc)
 
     return RepoFacts(
@@ -189,8 +245,10 @@ def facts_about(repo: Path, issues: Path | None) -> RepoFacts:
     )
 
 
-def validate(repo: Path, issues: Path | None = None) -> tuple[Refusal, ...]:
-    return refusals(facts_about(repo.resolve(), issues))
+def validate(
+    repo: Path, issues: Path | None = None, linear: str | None = None
+) -> tuple[Refusal, ...]:
+    return refusals(facts_about(repo.resolve(), issues, linear_parent(linear)))
 
 
 def render_refusals(found: tuple[Refusal, ...]) -> str:
@@ -201,13 +259,13 @@ def render_refusals(found: tuple[Refusal, ...]) -> str:
     return "\n".join(lines)
 
 
-def render_plan(repo: Path, issues: Path | None) -> str:
+def render_plan(repo: Path, issues: Path | None, linear: str | None = None) -> str:
     """What `--dry-run` prints: the graph as the harness reads it, and the order it would work in.
 
     The cheapest possible dogfood — it parses every sub-issue, resolves every edge, and proves the
     graph is acyclic, and it costs nothing to run because no session is ever opened.
     """
-    graph, states = _read_graph(repo.resolve(), issues)
+    graph, states = _read_graph(repo.resolve(), issues, linear_parent(linear))
     edges = sum(len(sub.blocked_by) for sub in graph.sub_issues.values())
     lines = [f"{len(graph.sub_issues)} sub-issues, {edges} edges, no cycle."]
 
@@ -230,6 +288,7 @@ async def run(
     budget: Budget | None = None,
     concurrency: int = DEFAULT_CONCURRENCY,
     editor: Editor | None = None,
+    linear: str | None = None,
 ) -> RunReport:
     """An explicit `editor` overrides `RALPH_EDITOR` — that is the seam the tests inject a stub
     through, and the reason no test in the suite calls Opus."""
@@ -237,7 +296,8 @@ async def run(
 
     # The same checks `ralph validate` runs, and they are not advisory. A run that starts on `main`
     # has already done the damage by the time anybody reads the warning it printed.
-    found = validate(repo, issues)
+    linear = linear_parent(linear)
+    found = validate(repo, issues, linear)
     if found:
         raise Refused(render_refusals(found))
 
@@ -252,7 +312,7 @@ async def run(
     scheduler = Scheduler(
         repo=repo,
         git=git,
-        store=FilesystemIssueStore(issues_dir=find_issues_dir(repo, issues)),
+        store=issue_store(repo, issues, linear),
         run_log=JsonlRunLog(path=repo / ".scratch" / "run.jsonl"),
         runner=runner,
         implementer=implementer(),
@@ -312,6 +372,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     runner.add_argument("repo", type=Path)
     runner.add_argument("issues", type=Path, nargs="?", default=None)
     runner.add_argument(
+        "--linear-parent",
+        default=None,
+        help="read sub-issues from this Linear parent issue instead of .scratch/<phase>/issues",
+    )
+    runner.add_argument(
         "-j",
         "--parallel",
         type=int,
@@ -327,19 +392,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     checker = sub.add_parser("validate", help="refuse a run this repo is not ready for")
     checker.add_argument("repo", type=Path)
     checker.add_argument("issues", type=Path, nargs="?", default=None)
+    checker.add_argument(
+        "--linear-parent",
+        default=None,
+        help="read sub-issues from this Linear parent issue instead of .scratch/<phase>/issues",
+    )
 
     args = parser.parse_args(argv)
 
     if args.command == "validate":
-        found = validate(args.repo, args.issues)
+        found = validate(args.repo, args.issues, args.linear_parent)
         print(render_refusals(found))
         return 1 if found else 0
 
     if args.dry_run:
-        print(render_plan(args.repo, args.issues))
+        print(render_plan(args.repo, args.issues, args.linear_parent))
         return 0
 
-    report = asyncio.run(run(args.repo, args.issues, concurrency=args.parallel))
+    report = asyncio.run(
+        run(args.repo, args.issues, concurrency=args.parallel, linear=args.linear_parent)
+    )
     print(render(report.notification))
     return 0 if report.clean else 1
 

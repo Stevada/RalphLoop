@@ -49,6 +49,7 @@ ralph/
     state.py       SubIssueState
     store.py       IssueStore Protocol
     filesystem.py  FilesystemIssueStore, IssueParseError
+    linear.py      LinearIssueStore, LinearGraphQLClient
   notification/    Escalation, Notification, notify() — the one human-facing run artifact
   ports.py         Protocols — the seams. every one has a fake.
   runlog/          Event, EventKind, event(), JsonlRunLog — the authoritative run ledger
@@ -114,9 +115,14 @@ rather than a rule someone must remember.
 because Linear was unreachable.
 
 `FilesystemIssueStore` ([filesystem.py](../ralph/issues/filesystem.py)) reads
-`.scratch/<phase>/issues/*.md` with numeric-prefix edges. `LinearIssueStore` will implement the same
-Protocol and change nothing in the scheduler — which is how the Linear-sync gap collapses into
-"write a second class."
+`.scratch/<phase>/issues/*.md` with numeric-prefix edges. `LinearIssueStore`
+([linear.py](../ralph/issues/linear.py)) reads a Linear parent issue and turns its native
+sub-issues and `blocked by` relations into the same `IssueGraph`. The scheduler does not know which
+store it is using.
+
+In Linear mode, the current brief and findings live in the sub-issue description. Editor revisions
+are append-only Ralph comments on that sub-issue: revision 0 snapshots the Planner's original, and
+each later revision records the brief/findings Ralph just wrote back into the description.
 
 ---
 

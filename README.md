@@ -44,6 +44,7 @@ uv run ruff check
 uv run ralph validate <repo> [issues-dir]    # refuses a run this repo is not ready for
 uv run ralph run --dry-run <repo>            # the build order, without opening a session
 uv run ralph run [-j N] <repo> [issues-dir]  # run the graph to completion
+uv run ralph run <repo> --linear-parent ENG-123  # read the graph from Linear sub-issues
 ```
 
 `validate` refuses; it does not warn. A protected branch, a dirty tree, a suite it cannot find, a
@@ -112,6 +113,33 @@ or bare filenames. A sub-issue becomes eligible only once every sub-issue it is 
 **PRD:** place a `PRD.md` one level above the `issues/` directory. It is injected into every
 session as design context.
 
+## Linear issue source
+
+Filesystem issues remain the default. To run from Linear, pass the parent issue identifier and set
+`LINEAR_API_KEY`:
+
+```bash
+LINEAR_API_KEY=lin_api_... uv run ralph run --dry-run <repo> --linear-parent ENG-123
+```
+
+The Linear parent issue's sub-issues are Ralph's sub-issues. Linear's native issue relation
+`blocked by` supplies graph edges. Each sub-issue description stores the current Ralph content:
+
+```markdown
+## Brief
+
+The current brief, including acceptance criteria.
+
+## Findings
+
+The current findings, if any.
+```
+
+When the Editor records a revision, Ralph snapshots the original description as `Ralph revision 0`
+in a Linear comment, updates the sub-issue description to the latest brief/findings, then appends
+the new revision as another Ralph comment. The description stays readable; the revision trail stays
+attached to the sub-issue.
+
 ## Failure taxonomy
 
 Four outcomes, and each one routes somewhere specific:
@@ -134,6 +162,12 @@ unaffected still lands. The human is paged **once**, at the end. The run never s
 | `RALPH_IMPLEMENTER` | *unset* | `codex` or `copilot`. **Unset is not a default** — it means the argv in `RALPH_AGENT_CMD`, bounded on the clock alone |
 | `RALPH_EDITOR` | *unset* | `claude` or `copilot`. **Unset means there is no Editor in this run** — quarantine-and-drain, failures escalating on the Implementer's own outcome |
 | `RALPH_AGENT_CMD` | — | The Implementer's argv when `RALPH_IMPLEMENTER` is unset. `{sub_issue}` is substituted |
+| `LINEAR_API_KEY` | — | Linear API key, required when `--linear-parent` or `RALPH_LINEAR_PARENT` is used |
+| `RALPH_LINEAR_PARENT` | — | Linear parent issue identifier to use when `--linear-parent` is not passed |
+| `RALPH_LINEAR_STATE_READY` | `ready` | Linear workflow state name mapped to Ralph `ready` |
+| `RALPH_LINEAR_STATE_IN_PROGRESS` | `in-progress` | Linear workflow state name mapped to Ralph `in-progress` |
+| `RALPH_LINEAR_STATE_LANDED` | `landed` | Linear workflow state name mapped to Ralph `landed` |
+| `RALPH_LINEAR_STATE_NEEDS_HUMAN` | `needs-human` | Linear workflow state name mapped to Ralph `needs-human` |
 | `RALPH_TEST_CMD` | autodetected | Overrides suite detection. A repo with no detectable suite is refused |
 | `RALPH_INSTALL_CMD` | autodetected | Runs **once**, in the base checkout. A failure aborts the run |
 | `RALPH_PROTECTED_BRANCHES` | `main master` | Branches Ralph refuses to run on |
