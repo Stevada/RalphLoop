@@ -17,7 +17,7 @@ import pytest
 
 from ralph.adapters.git import GitCli
 from ralph.cli import run
-from ralph.domain import Outcome
+from ralph.harness import Outcome
 from ralph.issues import SubIssueId, SubIssueState
 from ralph.ports import Budget
 from ralph.scheduler import BaseIsRed

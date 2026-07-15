@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from ralph.cli import run
-from ralph.domain import Outcome
+from ralph.harness import Outcome
 from ralph.issues import SubIssueId
 from tests.testbed import (
     LEDGER_ENV,

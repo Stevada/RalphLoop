@@ -19,7 +19,7 @@ import pytest
 from ralph.adapters.context import Bound, ContextMeter, run_bounded, tail
 from ralph.adapters.git import GitCli
 from ralph.adapters.session import SubprocessImplementer
-from ralph.domain import Outcome, SuiteResult, classify_implementer
+from ralph.harness import Outcome, SuiteResult, classify_implementer
 from ralph.issues import Brief, Findings
 from ralph.ports import Budget, ContextSource, Observation, SessionContext
 from tests.builders import observation, telemetry

@@ -1,4 +1,4 @@
-"""Builders for domain values.
+"""Builders for harness values.
 
 Not fakes — a fake satisfies a Protocol at a seam; a builder constructs a value. These exist so a
 test can state the one field it is actually about and let the rest default to something plausible.
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
-from ralph.domain import (
+from ralph.harness import (
     Approach,
     EditorVerdict,
     ImpasseReport,

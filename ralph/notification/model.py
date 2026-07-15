@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ralph.domain import FailureReport, Outcome
+from ralph.harness import FailureReport, Outcome
 from ralph.issues.graph import SubIssueId
 
 

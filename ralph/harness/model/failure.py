@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ralph.domain.model.impasse import ImpasseReport
-from ralph.domain.model.session import Outcome, SessionTelemetry, SuiteResult
+from ralph.harness.model.impasse import ImpasseReport
+from ralph.harness.model.session import Outcome, SessionTelemetry, SuiteResult
 
 
 @dataclass(frozen=True, slots=True)

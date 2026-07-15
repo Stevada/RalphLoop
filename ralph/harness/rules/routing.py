@@ -10,7 +10,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import assert_never
 
-from ralph.domain.model.session import Actor, Outcome
+from ralph.harness.model.session import Actor, Outcome
 
 
 class Destination(StrEnum):

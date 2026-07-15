@@ -27,7 +27,7 @@ from ralph.adapters.copilot import (
     usage_of,
 )
 from ralph.adapters.session import Transcript
-from ralph.domain import (
+from ralph.harness import (
     EditorVerdict,
     Outcome,
     SessionTelemetry,
@@ -372,7 +372,7 @@ async def _adjudicate(
         }
         if verdict is Verdict.REVISE:
             # Only a `revise` may carry one. A terminal verdict with a brief attached is a
-            # contradiction the domain refuses to construct — nothing would ever read it.
+            # contradiction the harness refuses to construct — nothing would ever read it.
             answer["revised_brief"] = "do it again, better"
         said = f"<verdict>{json.dumps(answer)}</verdict>"
 

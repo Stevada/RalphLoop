@@ -21,7 +21,7 @@ from ralph.adapters.suite import (
     detect_test_cmd,
     install_once,
 )
-from ralph.domain import Actor, Outcome
+from ralph.harness import Actor, Outcome
 from ralph.issues import SubIssueId, SubIssueState
 from ralph.runlog import EventKind, JsonlRunLog, RunLogError, event
 from tests.testbed import TargetRepo

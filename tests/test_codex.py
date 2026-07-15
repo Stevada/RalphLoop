@@ -30,7 +30,7 @@ from ralph.adapters.codex import (
 )
 from ralph.adapters.git import GitCli
 from ralph.adapters.session import SubprocessImplementer, Transcript
-from ralph.domain import Outcome, SuiteResult, classify_implementer
+from ralph.harness import Outcome, SuiteResult, classify_implementer
 from ralph.issues import Brief, Findings
 from ralph.ports import Budget, SessionContext, Worktree
 from tests.testbed import TargetRepo

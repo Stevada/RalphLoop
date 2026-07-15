@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from ralph.domain import (
+from ralph.harness import (
     Actor,
     CycleLedger,
     Destination,

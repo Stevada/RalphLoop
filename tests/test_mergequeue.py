@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 from ralph.adapters.git import GitCli
 from ralph.adapters.suite import SubprocessTestRunner, detect_test_cmd
-from ralph.domain import SuiteResult
+from ralph.harness import SuiteResult
 from ralph.mergequeue import Land, LandResult, MergeQueue
 from ralph.ports import Worktree
 from tests.fakes import FakeGit, FakeTestRunner

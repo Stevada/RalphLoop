@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from ralph.domain import FailureReport, Outcome, never_eligible
+from ralph.harness import FailureReport, Outcome, never_eligible
 from ralph.issues.graph import IssueGraph, SubIssueId
 from ralph.issues.state import SubIssueState
 from ralph.notification.model import Escalation, Notification

@@ -23,7 +23,7 @@ from ralph.adapters.editor import (
     parse_verdict,
     read_only,
 )
-from ralph.domain import (
+from ralph.harness import (
     EditorVerdict,
     Outcome,
     SessionTelemetry,
@@ -338,7 +338,7 @@ async def test_an_editor_that_leaves_the_smart_zone_is_killed_like_any_other_act
 
 
 async def test_a_ceiling_killed_editor_pages_a_human_and_does_not_route_back() -> None:
-    from ralph.domain import Actor, Destination, route
+    from ralph.harness import Actor, Destination, route
 
     assert route(Actor.EDITOR, Outcome.CEILING_EXCEEDED) is Destination.HUMAN
 

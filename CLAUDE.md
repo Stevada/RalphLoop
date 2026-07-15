@@ -17,7 +17,7 @@ and is exactly the gap that remains.
 ## Commands
 
 **Use `uv run`, never a bare `python3`.** System `python3` is 3.10 and lacks `StrEnum`, so it cannot
-even import `ralph.domain`. `uv run` resolves the interpreter from `requires-python` and syncs against
+even import `ralph.harness`. `uv run` resolves the interpreter from `requires-python` and syncs against
 `uv.lock` before running — no venv to activate, no drifted dependency to debug.
 
 ```bash
@@ -54,9 +54,9 @@ load-bearing facts:
 - **One process, asyncio.** A run is a single process; the merge lock is an `asyncio.Lock`. No
   `flock`, no PID files, no result-file polling. Reaching for any of those means you mistranslated the
   design.
-- **Layers, dependency arrow inward:** `domain/` → `ports.py` → `adapters/` → orchestration →
-  `cli.py`. `domain/` is pure (stdlib only, no I/O). `domain/model/` is the nouns (frozen values,
-  zero logic); `domain/rules/` is the verbs (the pure functions that *are* the design). Every
+- **Layers, dependency arrow inward:** `harness/` → `ports.py` → `adapters/` → orchestration →
+  `cli.py`. `harness/` is pure (stdlib only, no I/O). `harness/model/` is the nouns (frozen values,
+  zero logic); `harness/rules/` is the verbs (the pure functions that *are* the design). Every
   `ports.py` Protocol has a fake in `tests/fakes.py`, and the fakes are what the suite runs against.
 - **Concrete adapters are named only in `cli.py`.** Nothing downstream knows whether the Implementer
   is Codex or Copilot, or the Editor is Claude Code or Copilot. Either CLI can back either actor.

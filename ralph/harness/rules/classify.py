@@ -10,8 +10,8 @@ Implementer session already succeeded, green in isolation. Only the merge queue 
 
 from __future__ import annotations
 
-from ralph.domain.model.session import Outcome, SessionTelemetry, SuiteResult
-from ralph.domain.model.verdict import EditorVerdict
+from ralph.harness.model.session import Outcome, SessionTelemetry, SuiteResult
+from ralph.harness.model.verdict import EditorVerdict
 
 WALL_CLOCK_EXIT = 124
 """`timeout(1)`'s exit code. A session that ran past its wall-clock bound is infra-failed."""

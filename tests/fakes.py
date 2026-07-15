@@ -18,7 +18,7 @@ from collections.abc import AsyncGenerator, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ralph.domain import (
+from ralph.harness import (
     EditorVerdict,
     FailureReport,
     SessionTelemetry,

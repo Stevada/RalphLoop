@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ralph.domain import EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
+from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
 from ralph.issues import Brief, Findings
 from ralph.runlog import Event
 

@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from ralph.domain import (
+from ralph.harness import (
     Actor,
     CycleLedger,
     Destination,

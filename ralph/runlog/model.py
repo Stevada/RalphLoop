@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-from ralph.domain import Actor, Outcome, Verdict
+from ralph.harness import Actor, Outcome, Verdict
 from ralph.issues import SubIssueId, SubIssueState
 
 EventDetails = Outcome | Verdict | SubIssueState

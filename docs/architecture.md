@@ -27,9 +27,9 @@ The dependency arrow points inward, always.
 
 ```
 ralph/
-  domain/          pure. no I/O. stdlib only.
-    __init__.py    ← THE INTERFACE. import `from ralph.domain import Outcome`, never from
-                     `ralph.domain.model.session`. the layout below is nobody else's business.
+  harness/         pure decision core. no I/O. stdlib only.
+    __init__.py    ← THE INTERFACE. import `from ralph.harness import Outcome`, never from
+                     `ralph.harness.model.session`. the layout below is nobody else's business.
     model/         the NOUNS — frozen values, zero logic. what the system is made of.
       session.py   Actor, Outcome, SessionTelemetry, SuiteResult
       impasse.py   Approach, ImpasseReport        ← the model's claim
@@ -69,19 +69,19 @@ The rules that hold this shape together:
 - **`rules/` is the harness.** Five files hold the core decisions — the failure taxonomy, that
   nothing is retried, how quarantine drains, the cycle cap, and the report the harness will not
   fabricate. Everything else exists to feed them. To know how the system *decides*, read one folder.
-- **Issue tracker values live in `issues/`; eligibility stays in `domain/rules/`.** The graph,
+- **Issue tracker values live in `issues/`; eligibility stays in `harness/rules/`.** The graph,
   content, and state are what the tracker stores. The question "who may run?" is still a harness
   decision over those values.
 - **Human notification lives in `notification/`.** It is pure, but it is no longer part of the
-  domain interface: it assembles the end-of-run artifact from domain failures and issue graph cost.
+  harness interface: it assembles the end-of-run artifact from harness failures and issue graph cost.
 - **`rules/` may import `model/`; `model/` may not import `rules/`** — a test enforces it. A value
   that knows how it will be classified has stopped being a value.
-- **`domain/__init__.py` is the interface.** Import `from ralph.domain import Outcome`; the internal
+- **`harness/__init__.py` is the interface.** Import `from ralph.harness import Outcome`; the internal
   `model/` ⁄ `rules/` layout is not a caller's business.
-- **The domain is not split by actor, and `adapters/` is not split by port.** `Outcome`,
+- **The harness core is not split by actor, and `adapters/` is not split by port.** `Outcome`,
   `SessionTelemetry`, and `SuiteResult` belong to *both* actors; `route(actor, outcome)` is about
   both; `copilot.py` is *both* an Implementer and an Editor. Either split would strand the shared
-  types in a `shared/` folder that swallows most of the domain.
+  types in a `shared/` folder that swallows most of the harness core.
 - **The fakes live under `tests/`, not in the package.** Ralph is an application: nothing downstream
   imports `ralph.fakes`, and a test asserts the package imports nothing from `tests/`. That is what
   makes "no adapter may reach for a fake" enforceable rather than aspirational.
@@ -120,7 +120,7 @@ Protocol and change nothing in the scheduler — which is how the Linear-sync ga
 
 ---
 
-## 2. Domain — `ralph/domain/`
+## 2. Harness — `ralph/harness/`
 
 Pure functions over frozen dataclasses. Tested with no subprocess, no git, no model.
 
@@ -128,11 +128,11 @@ Pure functions over frozen dataclasses. Tested with no subprocess, no git, no mo
 
 | Type | Module | What it is |
 |---|---|---|
-| `Actor`, `Outcome`, `SessionTelemetry`, `SuiteResult` | [session.py](../ralph/domain/model/session.py) | The classification vocabulary. `SessionTelemetry` is *what the harness observed* — the ceiling reads `peak_context_tokens`; `consumed_tokens` is telemetry only, gated on nothing. `SuiteResult.green` is deliberately not `verified`: a suite the harness runs is inside the **blast radius**; only CI on a clean checkout is **honest** (`docs/design.md` §6). |
-| `Approach`, `ImpasseReport` | [impasse.py](../ralph/domain/model/impasse.py) | The model's narration — a leaf that knows nothing about how it was classified. |
-| `FailureReport` | [failure.py](../ralph/domain/model/failure.py) | The claim beside the harness's facts. It sits downstream of `session.py` (which imports `impasse.py`); splitting them is what breaks the import cycle. The Editor's job is to check one against the other — *their disagreeing is itself a signal*. |
+| `Actor`, `Outcome`, `SessionTelemetry`, `SuiteResult` | [session.py](../ralph/harness/model/session.py) | The classification vocabulary. `SessionTelemetry` is *what the harness observed* — the ceiling reads `peak_context_tokens`; `consumed_tokens` is telemetry only, gated on nothing. `SuiteResult.green` is deliberately not `verified`: a suite the harness runs is inside the **blast radius**; only CI on a clean checkout is **honest** (`docs/design.md` §6). |
+| `Approach`, `ImpasseReport` | [impasse.py](../ralph/harness/model/impasse.py) | The model's narration — a leaf that knows nothing about how it was classified. |
+| `FailureReport` | [failure.py](../ralph/harness/model/failure.py) | The claim beside the harness's facts. It sits downstream of `session.py` (which imports `impasse.py`); splitting them is what breaks the import cycle. The Editor's job is to check one against the other — *their disagreeing is itself a signal*. |
 
-`classify_implementer` / `classify_editor` ([classify.py](../ralph/domain/rules/classify.py)) turn
+`classify_implementer` / `classify_editor` ([classify.py](../ralph/harness/rules/classify.py)) turn
 telemetry + suite into an `Outcome`. Two facts to know without reading the bodies: **precedence is
 load-bearing** (a ceiling kill and a crash both exit non-zero and are only separated by checking
 `killed` first), and **zero commits is never a benign skip** — it is an `impasse`. `INTEGRATION_FAILED`
@@ -140,7 +140,7 @@ is unreachable from either classifier; only the merge queue raises it.
 
 ### Routing — the taxonomy, executable
 
-`route(actor, outcome) → Destination` ([routing.py](../ralph/domain/rules/routing.py)) is the
+`route(actor, outcome) → Destination` ([routing.py](../ralph/harness/rules/routing.py)) is the
 taxonomy table with one test per row. Four destinations — `MERGE_QUEUE`, `ACT_ON_VERDICT`, `EDITOR`,
 `HUMAN` — and **no retry destination, because there is no retry anywhere in this system** (a test
 asserts no row returns anything else).
@@ -155,9 +155,9 @@ the human different diagnoses (*cut too large* vs *environment broken*). The rea
 
 | Type / function | Module | What it is |
 |---|---|---|
-| `Verdict`, `EditorVerdict` | [verdict.py](../ralph/domain/model/verdict.py) | `Verdict.is_terminal` is `True` for everything but `revise`. `EditorVerdict.revised_brief` is required iff `revise`. |
-| `CycleLedger` | [cycles.py](../ralph/domain/rules/cycles.py) | The cap of three, hard-enforced. `must_be_terminal(id)` is `True` on the final cycle — the Editor may not return `revise`, and the **scheduler** refuses it rather than trusting the Editor to remember. One rule, one home. |
-| `eligible`, `never_eligible` | [eligibility.py](../ralph/domain/rules/eligibility.py) | `eligible` = every blocker has `LANDED`, **derived never stored**. `never_eligible` is report-time only: a sub-issue still `ready` at run end whose blockers never landed **never got a turn** — distinct from `needs-human` ("I failed") without inventing a state for it. Nothing propagates a skip through the graph. |
+| `Verdict`, `EditorVerdict` | [verdict.py](../ralph/harness/model/verdict.py) | `Verdict.is_terminal` is `True` for everything but `revise`. `EditorVerdict.revised_brief` is required iff `revise`. |
+| `CycleLedger` | [cycles.py](../ralph/harness/rules/cycles.py) | The cap of three, hard-enforced. `must_be_terminal(id)` is `True` on the final cycle — the Editor may not return `revise`, and the **scheduler** refuses it rather than trusting the Editor to remember. One rule, one home. |
+| `eligible`, `never_eligible` | [eligibility.py](../ralph/harness/rules/eligibility.py) | `eligible` = every blocker has `LANDED`, **derived never stored**. `never_eligible` is report-time only: a sub-issue still `ready` at run end whose blockers never landed **never got a turn** — distinct from `needs-human` ("I failed") without inventing a state for it. Nothing propagates a skip through the graph. |
 
 ---
 
@@ -325,9 +325,9 @@ becomes eligible, every unaffected sub-issue lands, and the run ends with **one*
 Append-only, one line per event, two kinds of thing only: session states and Editor verdicts. Token
 spend, diffstats, and failing-test output belong in the impasse report, not here.
 
-`Event` and `EventKind` live in [runlog/model.py](../ralph/runlog/model.py), outside `domain/`,
-because they are the ledger vocabulary rather than a domain decision. `event()` lives beside them
-because it reads the clock, and the domain stays pure. `JsonlRunLog` is the concrete append-only
+`Event` and `EventKind` live in [runlog/model.py](../ralph/runlog/model.py), outside `harness/`,
+because they are the ledger vocabulary rather than a harness decision. `event()` lives beside them
+because it reads the clock, and the harness core stays pure. `JsonlRunLog` is the concrete append-only
 storage implementation in [runlog/jsonl.py](../ralph/runlog/jsonl.py). `ports.py` may import the
 run-log value, but orchestration still depends on the `RunLog` Protocol rather than the JSONL
 implementation. `Event` carries `actor` because a cycle closes **two** sessions against one
@@ -349,7 +349,7 @@ different durability. A cycle's worth reads as a story with two characters:
 01  implementer  sub-issue-closed   landed
 ```
 
-### The pre-flight — [preflight.py](../ralph/domain/rules/preflight.py), gathered in `cli.py`
+### The pre-flight — [preflight.py](../ralph/harness/rules/preflight.py), gathered in `cli.py`
 
 **It refuses; it does not warn.** Five checks, each describing a repo the harness would otherwise
 damage or misjudge:
@@ -377,9 +377,9 @@ asks, never by a second topological sort that is free to disagree.
 | Component | Module |
 |---|---|
 | Merge queue | [mergequeue.py](../ralph/mergequeue.py) |
-| Failure taxonomy + base-green | [classify.py](../ralph/domain/rules/classify.py), [routing.py](../ralph/domain/rules/routing.py), [runlog/](../ralph/runlog/), `Scheduler._refuse_a_red_base` |
+| Failure taxonomy + base-green | [classify.py](../ralph/harness/rules/classify.py), [routing.py](../ralph/harness/rules/routing.py), [runlog/](../ralph/runlog/), `Scheduler._refuse_a_red_base` |
 | Context ceiling and timeout | `Budget`, [context.py](../ralph/adapters/context.py) + per-CLI `ContextSource` ([cli-metering.md](cli-metering.md)) |
-| Impasse report format | [impasse.py](../ralph/domain/model/impasse.py), [failure.py](../ralph/domain/model/failure.py) |
+| Impasse report format | [impasse.py](../ralph/harness/model/impasse.py), [failure.py](../ralph/harness/model/failure.py) |
 | The Editor | [claude_editor.py](../ralph/adapters/claude_editor.py), [copilot.py](../ralph/adapters/copilot.py), `CycleLedger` |
 | Linear sync | `issues/linear.py` behind the existing `IssueStore` Protocol |
-| Pre-flight + notification | [preflight.py](../ralph/domain/rules/preflight.py), [notification/](../ralph/notification/), `RunReport`, `cli.render` |
+| Pre-flight + notification | [preflight.py](../ralph/harness/rules/preflight.py), [notification/](../ralph/notification/), `RunReport`, `cli.render` |

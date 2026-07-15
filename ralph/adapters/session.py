@@ -20,7 +20,7 @@ from pathlib import Path
 
 from ralph.adapters.context import Bound, run_bounded
 from ralph.adapters.git import run_git
-from ralph.domain import Approach, ImpasseReport, SessionTelemetry
+from ralph.harness import Approach, ImpasseReport, SessionTelemetry
 from ralph.issues import Brief, Findings
 from ralph.ports import Budget, ContextSource, SessionContext, Worktree
 

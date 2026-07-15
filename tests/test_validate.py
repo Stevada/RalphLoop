@@ -25,7 +25,7 @@ import pytest
 
 from ralph.issues.filesystem import FilesystemIssueStore
 from ralph.cli import Refused, main, render_plan, render_refusals, run, validate
-from ralph.domain import (
+from ralph.harness import (
     Check,
     RepoFacts,
     build_order,

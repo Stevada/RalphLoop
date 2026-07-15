@@ -25,7 +25,7 @@ import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
 
-from ralph.domain import SuiteResult
+from ralph.harness import SuiteResult
 from ralph.ports import Git, TestRunner, Worktree
 
 

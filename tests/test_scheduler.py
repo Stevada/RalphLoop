@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ralph.domain import Outcome
+from ralph.harness import Outcome
 from ralph.issues import SubIssueId, SubIssueState
 from ralph.mergequeue import MergeQueue
 from ralph.ports import Budget

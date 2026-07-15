@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from ralph.domain import Actor
+from ralph.harness import Actor
 from ralph.issues import SubIssueId
 from ralph.runlog.jsonl import JsonlRunLog, RunLogError
 from ralph.runlog.model import Event, EventDetails, EventKind

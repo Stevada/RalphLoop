@@ -15,8 +15,8 @@ entire rule, and because a rule with a name and a test does not quietly acquire 
 
 from __future__ import annotations
 
-from ralph.domain.model.failure import FailureReport
-from ralph.domain.model.session import Outcome, SessionTelemetry, SuiteResult
+from ralph.harness.model.failure import FailureReport
+from ralph.harness.model.session import Outcome, SessionTelemetry, SuiteResult
 
 
 def failure_report(

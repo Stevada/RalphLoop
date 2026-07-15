@@ -11,7 +11,7 @@ wrong with it in one pass, not one thing per attempt.
 
 from __future__ import annotations
 
-from ralph.domain.model.preflight import Check, Refusal, RepoFacts
+from ralph.harness.model.preflight import Check, Refusal, RepoFacts
 
 _ELIDE_AFTER = 5
 """How many dirty paths to name before saying "and N more". The point of listing them is to remind

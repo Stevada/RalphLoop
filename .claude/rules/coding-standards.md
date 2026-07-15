@@ -85,7 +85,7 @@ overcomplication, and clarifying questions come before implementation rather tha
 
 ### 3. Single source of truth
 
-- Each concept (schema, config shape, domain type, business rule) is owned by exactly one module.
+- Each concept (schema, config shape, harness type, business rule) is owned by exactly one module.
 - Other modules import from the owner — they never redefine or shadow it.
 - When a third-party type needs adaptation, create one wrapper/protocol in one place; consumers
   depend on that wrapper.
@@ -94,25 +94,25 @@ overcomplication, and clarifying questions come before implementation rather tha
 ### 4. Architecture conventions
 
 [`docs/architecture.md`](../../docs/architecture.md) is the map. Layers, and the dependency arrow
-points inward: `domain/` → `ports.py` → `adapters/` → orchestration → `cli.py`.
+points inward: `harness/` → `ports.py` → `adapters/` → orchestration → `cli.py`.
 
-- **`domain/` is pure.** Stdlib imports only. No I/O, no subprocess, no git, no model. If a domain
+- **`harness/` is pure.** Stdlib imports only. No I/O, no subprocess, no git, no model. If a harness
   function needs a fact from the world, it takes it as an argument.
-- **`ralph/domain/__init__.py` is the domain's interface.** Import `from ralph.domain import Outcome`,
-  never `from ralph.domain.model.session import Outcome`. The layout inside is an implementation
+- **`ralph/harness/__init__.py` is the harness interface.** Import `from ralph.harness import Outcome`,
+  never `from ralph.harness.model.session import Outcome`. The layout inside is an implementation
   detail; callers should not have to learn it.
-- **`domain/model/` is the nouns; `domain/rules/` is the verbs.** `model/` holds frozen values with
+- **`harness/model/` is the nouns; `harness/rules/` is the verbs.** `model/` holds frozen values with
   zero logic. `rules/` holds the pure functions that *are* the design — the failure taxonomy, the
   routing table, eligibility, the cycle cap. **`rules/` may import `model/`; `model/` may not import
   `rules/`** — a test enforces it. A value that knows how it will be classified has stopped being a
   value. New decision logic goes in `rules/`, never beside the type it decides about.
-- **The domain is not split by actor, and `adapters/` is not split by port.** `Outcome` and
+- **The harness core is not split by actor, and `adapters/` is not split by port.** `Outcome` and
   `SessionTelemetry` belong to both actors; `copilot.py` is both an Implementer and an Editor.
   Grouping either way forces a `shared/` folder that swallows everything.
 - **The fakes live in `tests/fakes.py`, never in `ralph/`.** Nothing in the shipped package may
   import from `tests/` — a test asserts it. An adapter that reaches for a fake has stopped being an
   adapter. `tests/builders.py` is a separate thing: builders make *values*, fakes satisfy *Protocols*.
-- **Structure is a frozen value; content is state.** `@dataclass(frozen=True, slots=True)` for domain
+- **Structure is a frozen value; content is state.** `@dataclass(frozen=True, slots=True)` for harness
   types. `IssueGraph` and `SubIssue` are immutable for a run's whole life — the invariant "the Editor
   may never re-link a sub-issue" is enforced by the type, not by a rule someone must remember.
 - **Enums, not strings.** `Outcome`, `Verdict`, `SubIssueState`, `Destination` are `StrEnum`. A raw
@@ -135,4 +135,4 @@ than code that has one.
 - **The suite result, not the exit code, is the outcome.** The harness runs the tests. A model's exit
   code is its opinion; the suite is a fact.
 - **No string-keyed intermediates.** Typed records throughout; no `dict[str, Any]` layers between a
-  CLI's JSON and a domain type — parse at the boundary, into a dataclass.
+  CLI's JSON and a harness type — parse at the boundary, into a dataclass.

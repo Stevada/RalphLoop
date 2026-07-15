@@ -27,7 +27,7 @@ from ralph.adapters.editor import (
     run_editor,
 )
 from ralph.adapters.prompt import editor_prompt
-from ralph.domain import EditorVerdict, FailureReport, SessionTelemetry
+from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry
 from ralph.ports import Observation, SessionContext
 
 MODEL = "claude-opus-4-8"

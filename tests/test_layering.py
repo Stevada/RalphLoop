@@ -2,11 +2,11 @@
 
 Three arrows, and each one is a design decision that would otherwise rot quietly:
 
-1. `domain/` is pure — stdlib only. If a domain function needs a fact from the world, it takes it
+1. `harness/` is pure — stdlib only. If a harness function needs a fact from the world, it takes it
    as an argument.
-2. `domain/` may import the pure issue values, but not the issue store or filesystem adapter.
+2. `harness/` may import the pure issue values, but not the issue store or filesystem adapter.
    Issue structure is an input to the harness's decisions; tracker I/O is not.
-3. `domain/model/` may not import `domain/rules/`. The nouns do not know what the system decides
+3. `harness/model/` may not import `harness/rules/`. The nouns do not know what the system decides
    about them; the verbs are free to depend on the nouns. This is the arrow that keeps `model/`
    inert and makes `rules/` the one place the design lives.
 4. Nothing in `ralph/` imports from `tests/`. The fakes live under `tests/` precisely so that an
@@ -22,22 +22,22 @@ from pathlib import Path
 import pytest
 
 import ralph
-import ralph.domain
+import ralph.harness
 import ralph.notification
 
 PACKAGE = Path(ralph.__file__).parent
-DOMAIN = Path(ralph.domain.__file__).parent
+HARNESS = Path(ralph.harness.__file__).parent
 NOTIFICATION = Path(ralph.notification.__file__).parent
-DOMAIN_MODULES = sorted(DOMAIN.rglob("*.py"))
+HARNESS_MODULES = sorted(HARNESS.rglob("*.py"))
 NOTIFICATION_MODULES = sorted(NOTIFICATION.rglob("*.py"))
-MODEL_MODULES = sorted((DOMAIN / "model").rglob("*.py"))
+MODEL_MODULES = sorted((HARNESS / "model").rglob("*.py"))
 SHIPPED = sorted(PACKAGE.rglob("*.py"))
 
-# Stdlib modules that nonetheless touch the world. Importing one in `domain/` is how purity rots.
+# Stdlib modules that nonetheless touch the world. Importing one in `harness/` is how purity rots.
 BANNED = {"subprocess", "os", "io", "socket", "shutil", "asyncio", "pathlib", "tempfile"}
 ISSUE_VALUES = {"ralph.issues", "ralph.issues.content", "ralph.issues.graph", "ralph.issues.state"}
 NOTIFICATION_INPUTS = ISSUE_VALUES | {
-    "ralph.domain",
+    "ralph.harness",
     "ralph.notification",
     "ralph.notification.assemble",
     "ralph.notification.model",
@@ -78,33 +78,33 @@ def _ralph_imports(module: Path) -> set[str]:
 
 def test_the_globs_found_something() -> None:
     """Guard against every test below passing vacuously."""
-    assert len(DOMAIN_MODULES) > 5
+    assert len(HARNESS_MODULES) > 5
     assert len(NOTIFICATION_MODULES) > 2
     assert len(MODEL_MODULES) > 5
     assert len(SHIPPED) > 5
 
 
-@pytest.mark.parametrize("module", DOMAIN_MODULES, ids=_rel)
-def test_domain_imports_stdlib_only(module: Path) -> None:
+@pytest.mark.parametrize("module", HARNESS_MODULES, ids=_rel)
+def test_harness_imports_stdlib_only(module: Path) -> None:
     for root in _imported_roots(module):
         if root == "ralph":
-            continue  # intra-domain; constrained further below
+            continue  # intra-harness; constrained further below
         assert root in sys.stdlib_module_names, f"{_rel(module)} imports third-party {root!r}"
         assert root not in BANNED, f"{_rel(module)} imports {root!r}, which touches the world"
 
 
-@pytest.mark.parametrize("module", DOMAIN_MODULES, ids=_rel)
-def test_domain_never_imports_outward(module: Path) -> None:
-    """`domain/` may not import ports, adapters, orchestration, or issue I/O."""
+@pytest.mark.parametrize("module", HARNESS_MODULES, ids=_rel)
+def test_harness_never_imports_outward(module: Path) -> None:
+    """`harness/` may not import ports, adapters, orchestration, or issue I/O."""
     for imported in _ralph_imports(module):
-        assert imported.startswith("ralph.domain") or imported in ISSUE_VALUES, (
+        assert imported.startswith("ralph.harness") or imported in ISSUE_VALUES, (
             f"{_rel(module)} imports {imported!r} — that arrow points outward"
         )
 
 
 @pytest.mark.parametrize("module", NOTIFICATION_MODULES, ids=_rel)
 def test_notification_is_pure(module: Path) -> None:
-    """Notification assembly is a pure feature over domain failures and issue graph cost."""
+    """Notification assembly is a pure feature over harness failures and issue graph cost."""
     for root in _imported_roots(module):
         if root == "ralph":
             continue
@@ -130,7 +130,7 @@ def test_the_nouns_do_not_know_about_the_verbs(module: Path) -> None:
     table, eligibility, the cycle cap — and keeps `model/` inert enough to be obviously correct.
     """
     for imported in _ralph_imports(module):
-        assert not imported.startswith("ralph.domain.rules"), (
+        assert not imported.startswith("ralph.harness.rules"), (
             f"{_rel(module)} imports {imported!r} — the nouns must not depend on the verbs"
         )
 
@@ -225,3 +225,12 @@ def test_the_shipped_package_never_imports_a_test(module: Path) -> None:
     for a fake has stopped being an adapter."""
     for root in _imported_roots(module):
         assert root != "tests", f"{_rel(module)} imports from tests/ — that is not shippable"
+
+
+@pytest.mark.parametrize("module", SHIPPED, ids=_rel)
+def test_the_shipped_package_imports_harness_not_domain(module: Path) -> None:
+    """The pure decision core is `ralph.harness`; `ralph.domain` is no longer a package."""
+    for imported in _imported_modules(module):
+        assert not (
+            imported == "ralph.domain" or imported.startswith("ralph.domain.")
+        ), f"{_rel(module)} imports {imported!r} — import from ralph.harness"

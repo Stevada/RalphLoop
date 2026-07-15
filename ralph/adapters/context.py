@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ralph.domain import Killed
+from ralph.harness import Killed
 from ralph.ports import Budget, ContextSource, Observation
 
 log = logging.getLogger(__name__)

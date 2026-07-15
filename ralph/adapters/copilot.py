@@ -49,7 +49,7 @@ from ralph.adapters.context import tail
 from ralph.adapters.editor import READ_ONLY_COMMANDS, READ_ONLY_GIT, editor_telemetry, verdict_of
 from ralph.adapters.prompt import editor_prompt, implementer_prompt
 from ralph.adapters.session import SubprocessImplementer, Transcript, run_session
-from ralph.domain import EditorVerdict, FailureReport, SessionTelemetry
+from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry
 from ralph.issues import Brief, Findings
 from ralph.ports import Observation, SessionContext, Worktree
 

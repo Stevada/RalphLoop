@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from ralph.issues.filesystem import FilesystemIssueStore, IssueParseError
-from ralph.domain import Actor
+from ralph.harness import Actor
 from ralph.issues import Brief, Findings, SubIssueId, SubIssueState
 from ralph.runlog import EventKind, event
 

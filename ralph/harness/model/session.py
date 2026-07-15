@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
-from ralph.domain.model.impasse import ImpasseReport
+from ralph.harness.model.impasse import ImpasseReport
 
 
 class Actor(StrEnum):
@@ -22,7 +22,7 @@ session left the smart zone — it was still working, and its judgment was about
 trusting. `wall-clock` means it stopped getting anywhere: a session spinning on a failing suite has
 a *flat* context and would never trip a ceiling.
 
-Named here, in the domain, because `classify_implementer` turns it into an `Outcome` and the
+Named here, in the harness core, because `classify_implementer` turns it into an `Outcome` and the
 adapter that sets it must be spelling the same two words.
 """
 

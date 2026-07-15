@@ -20,7 +20,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ralph.domain import SuiteResult
+from ralph.harness import SuiteResult
 
 TEST_CMD_ENV = "RALPH_TEST_CMD"
 INSTALL_CMD_ENV = "RALPH_INSTALL_CMD"

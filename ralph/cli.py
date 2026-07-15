@@ -28,7 +28,7 @@ from ralph.adapters.suite import (
     detect_test_cmd,
     install_once,
 )
-from ralph.domain import (
+from ralph.harness import (
     CycleLedger,
     Refusal,
     RepoFacts,
