@@ -157,7 +157,7 @@ def test_the_harnesss_own_run_log_does_not_count_as_dirt(repo: TargetRepo) -> No
     """Untracked files are not dirt. The harness writes `.scratch/run.jsonl` into the repo *while
     the run is in flight*, and a pre-flight that refused its own run log would refuse every second
     run."""
-    (repo.path / ".scratch" / "run.jsonl").write_text('{"kind": "session-opened"}\n')
+    (repo.path / ".scratch" / "run.jsonl").write_text('{"kind": "session-started"}\n')
 
     assert validate(repo.path) == ()
 

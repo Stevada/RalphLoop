@@ -65,19 +65,19 @@ async def test_the_run_log_tells_the_true_story_in_order(
     await run(repo.path, None)
 
     lines = [json.loads(x) for x in (repo.path / ".scratch" / "run.jsonl").read_text().splitlines()]
-    story = [(e["sub_issue"], e["actor"], e["kind"], e["payload"]) for e in lines]
+    story = [(e["sub_issue"], e["actor"], e["kind"], e["details"]) for e in lines]
 
     # Every session says whose it was. With no Editor in this run they are all the Implementer's —
     # which is the baseline the Editor's own lines are added to in `test_editor_loop.py`.
     assert story == [
-        ("01", "implementer", "session-opened", "in-progress"),
-        ("01", "implementer", "session-closed", "success"),
-        ("01", "implementer", "terminal", "landed"),  # after the fast-forward, never before
-        ("02", "implementer", "session-opened", "in-progress"),
-        ("02", "implementer", "session-closed", "success"),
-        ("02", "implementer", "terminal", "landed"),
+        ("01", "implementer", "session-started", "in-progress"),
+        ("01", "implementer", "session-finished", "success"),
+        ("01", "implementer", "sub-issue-closed", "landed"),  # after the fast-forward
+        ("02", "implementer", "session-started", "in-progress"),
+        ("02", "implementer", "session-finished", "success"),
+        ("02", "implementer", "sub-issue-closed", "landed"),
     ]
-    assert all(set(e) == {"ts", "sub_issue", "actor", "kind", "payload"} for e in lines)
+    assert all(set(e) == {"ts", "sub_issue", "actor", "kind", "details"} for e in lines)
 
 
 async def test_a_red_base_aborts_the_run_before_a_single_agent_starts(
@@ -179,8 +179,8 @@ async def test_an_impasse_does_not_land_and_is_recorded(
     report = await run(repo.path, None)
 
     assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
-    assert ("01", "session-closed", "impasse") in [
-        (e["sub_issue"], e["kind"], e["payload"])
+    assert ("01", "session-finished", "impasse") in [
+        (e["sub_issue"], e["kind"], e["details"])
         for e in (
             json.loads(x)
             for x in (repo.path / ".scratch" / "run.jsonl").read_text().splitlines()
@@ -206,7 +206,7 @@ async def test_a_read_only_issue_store_does_not_crash_the_run(
     events = json.loads(
         "[" + ",".join((repo.path / ".scratch" / "run.jsonl").read_text().splitlines()) + "]"
     )
-    assert sum(e["payload"] == SubIssueState.LANDED.value for e in events) == 2
+    assert sum(e["details"] == SubIssueState.LANDED.value for e in events) == 2
 
 
 async def test_the_worktree_branch_carries_the_sub_issue_id(

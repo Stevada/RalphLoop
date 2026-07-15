@@ -8,25 +8,26 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from ralph.domain import Actor, Outcome, SubIssueId, SubIssueState, Verdict
+from ralph.domain import Actor, SubIssueId
 from ralph.runlog.jsonl import JsonlRunLog, RunLogError
-from ralph.runlog.model import Event, EventKind
+from ralph.runlog.model import Event, EventDetails, EventKind
 
 
 def event(
     sub_issue: SubIssueId,
     actor: Actor,
     kind: EventKind,
-    payload: Outcome | Verdict | SubIssueState,
+    details: EventDetails,
 ) -> Event:
     """UTC, because a run log gets read across a timezone boundary at 3am."""
     return Event(
-        ts=datetime.now(UTC), sub_issue=sub_issue, actor=actor, kind=kind, payload=payload
+        ts=datetime.now(UTC), sub_issue=sub_issue, actor=actor, kind=kind, details=details
     )
 
 
 __all__ = [
     "Event",
+    "EventDetails",
     "EventKind",
     "JsonlRunLog",
     "RunLogError",

@@ -141,7 +141,7 @@ async def test_a_rebase_conflict_does_not_stall_the_queue_for_its_siblings(
     # No retry: the loser opened exactly one session.
     opened = [
         line for line in (repo.path / ".scratch" / "run.jsonl").read_text().splitlines()
-        if f'"{losers[0]}"' in line and "session-opened" in line
+        if f'"{losers[0]}"' in line and "session-started" in line
     ]
     assert len(opened) == 1
 

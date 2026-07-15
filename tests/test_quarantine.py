@@ -31,7 +31,7 @@ def script_the_agent(
 
 def story(repo: TargetRepo) -> list[tuple[str, str, str]]:
     lines = (repo.path / ".scratch" / "run.jsonl").read_text().splitlines()
-    return [(e["sub_issue"], e["kind"], e["payload"]) for e in (json.loads(x) for x in lines)]
+    return [(e["sub_issue"], e["kind"], e["details"]) for e in (json.loads(x) for x in lines)]
 
 
 async def test_a_failure_quarantines_and_the_run_drains_around_it(
@@ -149,8 +149,8 @@ async def test_nothing_is_ever_retried(
     report = await run(repo.path, None, Budget(wall_clock_s=1.0), concurrency=2)
 
     assert report.failed == {SubIssueId("01"): Outcome.INFRA_FAILED}
-    opened = [(id, kind) for id, kind, _ in story(repo) if kind == "session-opened"]
-    assert opened.count((SubIssueId("01"), "session-opened")) == 1
+    opened = [(id, kind) for id, kind, _ in story(repo) if kind == "session-started"]
+    assert opened.count((SubIssueId("01"), "session-started")) == 1
     assert SubIssueId("02") in report.landed  # and the run drained around it
 
 

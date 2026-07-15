@@ -318,7 +318,7 @@ because it reads the clock, and the domain stays pure. `JsonlRunLog` is the conc
 storage implementation in [runlog/jsonl.py](../ralph/runlog/jsonl.py). `ports.py` may import the
 run-log value, but orchestration still depends on the `RunLog` Protocol rather than the JSONL
 implementation. `Event` carries `actor` because a cycle closes **two** sessions against one
-sub-issue — without it, `session-closed: infra-failed` could not say whether the Implementer or the
+sub-issue — without it, `session-finished: infra-failed` could not say whether the Implementer or the
 Editor crashed.
 
 The run log (**authoritative** — failing to write it fails the run) and `IssueStore.write_event`
@@ -326,14 +326,14 @@ The run log (**authoritative** — failing to write it fails the run) and `Issue
 different durability. A cycle's worth reads as a story with two characters:
 
 ```
-01  implementer  session-opened  in-progress
-01  implementer  session-closed  impasse
-01  editor       session-opened  in-progress
-01  editor       session-closed  success        ← the EDITOR's session succeeded…
-01  editor       verdict         revise         ← …and this is what it found
-01  implementer  session-opened  in-progress    ← cycle two, against a rewritten brief
-01  implementer  session-closed  success
-01  implementer  terminal        landed
+01  implementer  session-started    in-progress
+01  implementer  session-finished   impasse
+01  editor       session-started    in-progress
+01  editor       session-finished   success     ← the EDITOR's session succeeded…
+01  editor       verdict-recorded   revise      ← …and this is what it found
+01  implementer  session-started    in-progress ← cycle two, against a rewritten brief
+01  implementer  session-finished   success
+01  implementer  sub-issue-closed   landed
 ```
 
 ### The pre-flight — [preflight.py](../ralph/domain/rules/preflight.py), gathered in `cli.py`

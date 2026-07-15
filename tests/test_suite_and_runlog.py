@@ -22,7 +22,7 @@ from ralph.adapters.suite import (
     install_once,
 )
 from ralph.domain import Actor, Outcome, SubIssueId, SubIssueState
-from ralph.runlog import JsonlRunLog, RunLogError, event
+from ralph.runlog import EventKind, JsonlRunLog, RunLogError, event
 from tests.testbed import TargetRepo
 
 # --- detection ----------------------------------------------------------------------------------
@@ -124,9 +124,18 @@ async def test_a_successful_install_really_runs_the_command(
 async def test_the_run_log_is_append_only_jsonl(tmp_path: Path) -> None:
     log = JsonlRunLog(path=tmp_path / "run.jsonl")
 
-    await log.write(event(SubIssueId("01"), Actor.IMPLEMENTER, "session-opened", SubIssueState.IN_PROGRESS))
+    await log.write(
+        event(
+            SubIssueId("01"),
+            Actor.IMPLEMENTER,
+            EventKind.SESSION_STARTED,
+            SubIssueState.IN_PROGRESS,
+        )
+    )
     first = (tmp_path / "run.jsonl").read_text()
-    await log.write(event(SubIssueId("01"), Actor.IMPLEMENTER, "session-closed", Outcome.SUCCESS))
+    await log.write(
+        event(SubIssueId("01"), Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, Outcome.SUCCESS)
+    )
     second = (tmp_path / "run.jsonl").read_text()
 
     assert second.startswith(first)  # the second write did not rewrite the first line
@@ -135,15 +144,52 @@ async def test_the_run_log_is_append_only_jsonl(tmp_path: Path) -> None:
 
 async def test_the_run_log_reads_back_as_typed_events_in_order(tmp_path: Path) -> None:
     log = JsonlRunLog(path=tmp_path / "run.jsonl")
-    await log.write(event(SubIssueId("01"), Actor.IMPLEMENTER, "session-closed", Outcome.IMPASSE))
-    await log.write(event(SubIssueId("02"), Actor.IMPLEMENTER, "terminal", SubIssueState.LANDED))
+    await log.write(
+        event(SubIssueId("01"), Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, Outcome.IMPASSE)
+    )
+    await log.write(
+        event(SubIssueId("02"), Actor.IMPLEMENTER, EventKind.SUB_ISSUE_CLOSED, SubIssueState.LANDED)
+    )
 
     events = JsonlRunLog(path=tmp_path / "run.jsonl").events()
 
-    assert [e.kind for e in events] == ["session-closed", "terminal"]
-    assert events[0].payload is Outcome.IMPASSE
-    assert events[1].payload is SubIssueState.LANDED
+    assert [e.kind for e in events] == [
+        EventKind.SESSION_FINISHED,
+        EventKind.SUB_ISSUE_CLOSED,
+    ]
+    assert events[0].details is Outcome.IMPASSE
+    assert events[1].details is SubIssueState.LANDED
     assert events[0].ts <= events[1].ts
+
+
+def test_an_event_kind_rejects_the_wrong_details_type() -> None:
+    with pytest.raises(ValueError, match="session-finished details must be Outcome"):
+        event(
+            SubIssueId("01"),
+            Actor.IMPLEMENTER,
+            EventKind.SESSION_FINISHED,
+            SubIssueState.IN_PROGRESS,
+        )
+
+
+def test_the_run_log_reads_legacy_payload_events(tmp_path: Path) -> None:
+    (tmp_path / "run.jsonl").write_text(
+        json.dumps(
+            {
+                "ts": "2026-07-15T00:00:00+00:00",
+                "sub_issue": "01",
+                "actor": "implementer",
+                "kind": "session-closed",
+                "payload": "impasse",
+            }
+        )
+        + "\n"
+    )
+
+    e = JsonlRunLog(path=tmp_path / "run.jsonl").events()[0]
+
+    assert e.kind is EventKind.SESSION_FINISHED
+    assert e.details is Outcome.IMPASSE
 
 
 async def test_the_run_log_carries_no_token_spend_no_diffstat_and_no_test_output(
@@ -153,17 +199,19 @@ async def test_the_run_log_carries_no_token_spend_no_diffstat_and_no_test_output
     find the next event is not being told a story — those belong in the failure report, which has a
     different reader."""
     log = JsonlRunLog(path=tmp_path / "run.jsonl")
-    await log.write(event(SubIssueId("01"), Actor.IMPLEMENTER, "session-closed", Outcome.SUCCESS))
+    await log.write(
+        event(SubIssueId("01"), Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, Outcome.SUCCESS)
+    )
 
     line = (tmp_path / "run.jsonl").read_text()
 
-    assert set(json.loads(line)) == {"ts", "sub_issue", "actor", "kind", "payload"}
+    assert set(json.loads(line)) == {"ts", "sub_issue", "actor", "kind", "details"}
 
 
 def test_an_unparseable_line_is_loud_never_skipped(tmp_path: Path) -> None:
     """A log that quietly drops what it cannot parse lies by omission — and it lies about exactly
     the run that went wrong."""
-    (tmp_path / "run.jsonl").write_text('{"kind": "session-closed"}\n')
+    (tmp_path / "run.jsonl").write_text('{"kind": "session-finished"}\n')
 
     with pytest.raises(RunLogError, match="is not an event"):
         JsonlRunLog(path=tmp_path / "run.jsonl").events()

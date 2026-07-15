@@ -16,15 +16,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from ralph.domain import Actor, Outcome, SubIssueId, SubIssueState, Verdict
-from ralph.runlog.model import Event, EventKind
-
-_PAYLOAD_OF: dict[str, type[Outcome] | type[Verdict] | type[SubIssueState]] = {
-    "session-opened": SubIssueState,
-    "session-closed": Outcome,
-    "terminal": SubIssueState,
-    "verdict": Verdict,
-}
+from ralph.domain import Actor, SubIssueId
+from ralph.runlog.model import DETAILS_OF, Event, event_kind
 
 
 class RunLogError(ValueError):
@@ -42,8 +35,8 @@ class JsonlRunLog:
                 "ts": e.ts.isoformat(),
                 "sub_issue": str(e.sub_issue),
                 "actor": e.actor.value,
-                "kind": e.kind,
-                "payload": e.payload.value,
+                "kind": e.kind.value,
+                "details": e.details.value,
             }
         )
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -62,13 +55,13 @@ class JsonlRunLog:
     def _parse(self, line: str, n: int) -> Event:
         try:
             raw = json.loads(line)
-            kind: EventKind = raw["kind"]
+            kind = event_kind(raw["kind"])
             return Event(
                 ts=datetime.fromisoformat(raw["ts"]),
                 sub_issue=SubIssueId(raw["sub_issue"]),
                 actor=Actor(raw["actor"]),
                 kind=kind,
-                payload=_PAYLOAD_OF[kind](raw["payload"]),
+                details=DETAILS_OF[kind](raw["details"] if "details" in raw else raw["payload"]),
             )
         except (json.JSONDecodeError, KeyError, ValueError) as exc:
             raise RunLogError(f"{self.path}:{n} is not an event: {line!r}") from exc

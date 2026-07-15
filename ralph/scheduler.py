@@ -215,7 +215,9 @@ class Scheduler:
         Returns the terminal state, or `None` to mean *the Editor said `revise`; go round again*.
         """
         attempt = self._ledger.spent(sub.id) + 1
-        await self._record(sub.id, Actor.IMPLEMENTER, "session-opened", SubIssueState.IN_PROGRESS)
+        await self._record(
+            sub.id, Actor.IMPLEMENTER, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS
+        )
 
         wt = self._git.add_worktree(
             f"ralph/{sub.id}", self._repo / ACTIVE / str(sub.id), self._integration
@@ -234,10 +236,14 @@ class Scheduler:
         if route(Actor.IMPLEMENTER, outcome) is Destination.MERGE_QUEUE:
             land = await self._merge_queue.land(wt)
             if land.result is LandResult.LANDED:
-                await self._record(sub.id, Actor.IMPLEMENTER, "session-closed", Outcome.SUCCESS)
+                await self._record(
+                    sub.id, Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, Outcome.SUCCESS
+                )
                 # After the fast-forward, never before. Fail toward redundant work, never toward
                 # missing code.
-                await self._record(sub.id, Actor.IMPLEMENTER, "terminal", SubIssueState.LANDED)
+                await self._record(
+                    sub.id, Actor.IMPLEMENTER, EventKind.SUB_ISSUE_CLOSED, SubIssueState.LANDED
+                )
                 return _Closed(sub.id, None)
 
             # Green in isolation, and it will not integrate. The Implementer could not have observed
@@ -250,7 +256,7 @@ class Scheduler:
                 # SuiteResult would be handing it a contradiction we manufactured.
                 suite = land.suite
 
-        await self._record(sub.id, Actor.IMPLEMENTER, "session-closed", outcome)
+        await self._record(sub.id, Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, outcome)
         report = failure_report(outcome, telemetry, suite, detail, attempt)
 
         if route(Actor.IMPLEMENTER, outcome) is not Destination.EDITOR:
@@ -288,12 +294,14 @@ class Scheduler:
         self._ledger.spend(sub.id)
         must_be_terminal = self._ledger.must_be_terminal(sub.id)
 
-        await self._record(sub.id, Actor.EDITOR, "session-opened", SubIssueState.IN_PROGRESS)
+        await self._record(
+            sub.id, Actor.EDITOR, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS
+        )
         telemetry, verdict = await self._editor_of(sub).adjudicate(
             context, report, must_be_terminal
         )
         outcome = classify_editor(telemetry, verdict)
-        await self._record(sub.id, Actor.EDITOR, "session-closed", outcome)
+        await self._record(sub.id, Actor.EDITOR, EventKind.SESSION_FINISHED, outcome)
 
         if route(Actor.EDITOR, outcome) is Destination.HUMAN or verdict is None:
             # The Editor itself was killed, or came back with nothing. Escalate on the **Editor's**
@@ -307,7 +315,7 @@ class Scheduler:
             failed = failure_report(outcome, telemetry, report.suite, None, report.cycles)
             return await self._quarantine(sub.id, Actor.EDITOR, context.worktree, failed)
 
-        await self._record(sub.id, Actor.EDITOR, "verdict", verdict.verdict)
+        await self._record(sub.id, Actor.EDITOR, EventKind.VERDICT_RECORDED, verdict.verdict)
 
         if verdict.verdict.is_terminal:
             # `planning-defect` — the brief cannot be satisfied as written, and rewriting it is a
@@ -357,7 +365,7 @@ class Scheduler:
         anyway. That is worth stopping for; quietly clobbering it is not.
         """
         self._git.move_worktree(wt, self._repo / QUARANTINE / str(id))
-        await self._record(id, actor, "terminal", SubIssueState.NEEDS_HUMAN)
+        await self._record(id, actor, EventKind.SUB_ISSUE_CLOSED, SubIssueState.NEEDS_HUMAN)
         return _Closed(id, report)
 
     async def _record(
@@ -365,14 +373,14 @@ class Scheduler:
         id: SubIssueId,
         actor: Actor,
         kind: EventKind,
-        payload: Outcome | Verdict | SubIssueState,
+        details: Outcome | Verdict | SubIssueState,
     ) -> None:
         """Two sinks, different durability. The run log is **authoritative** — failing to write it
         fails the run. The issue store is **best-effort**: it mirrors the transition back into the
         tracker for a human's benefit, and a run must not die because the tracker was unreachable
         (a read-only file today; Linear being down tomorrow).
         """
-        e = event(id, actor, kind, payload)
+        e = event(id, actor, kind, details)
         await self._run_log.write(e)
         try:
             await self._store.write_event(e)

@@ -473,7 +473,7 @@ One append-only file per run — the local record the earlier phases rely on, si
 sync is the last piece to land. Each line is one event: a timestamp, the sub-issue it concerns, and
 what happened. It tracks only two kinds of thing:
 
-- **States.** A session opened; a session closed with its outcome (`success`, `impasse`,
+- **States.** A session started; a session finished with its outcome (`success`, `impasse`,
   `ceiling-exceeded`, `infra-failed`); a sub-issue reached a terminal state
   (`landed`, `needs-human`, or skipped).
 - **Decisions.** The verdict an Editor returned (`revise`, `planning-defect`,
@@ -611,4 +611,3 @@ And the risk lands on **decomposition**, the artifact with no automated feedback
 
 > **The grilling of the Planner is not a nice-to-have front-end. It is the primary quality
 > mechanism of this system.**
-

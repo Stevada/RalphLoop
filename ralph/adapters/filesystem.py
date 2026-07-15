@@ -21,7 +21,7 @@ from ralph.domain import (
     SubIssueId,
     SubIssueState,
 )
-from ralph.runlog import Event
+from ralph.runlog import Event, EventKind
 
 ISSUE_GLOB = "*.md"
 _ID = re.compile(r"^(\d+)")
@@ -230,8 +230,8 @@ class FilesystemIssueStore:
 
     async def write_event(self, e: Event) -> None:
         """Mirror a terminal state into the `Status:` line. Other events are the run log's job."""
-        if e.kind != "terminal" or not isinstance(e.payload, SubIssueState):
+        if e.kind is not EventKind.SUB_ISSUE_CLOSED or not isinstance(e.details, SubIssueState):
             return
         path = self._path_of(e.sub_issue)
         body = path.read_text()
-        path.write_text(_STATUS.sub(f"Status: {e.payload.value}", body, count=1))
+        path.write_text(_STATUS.sub(f"Status: {e.details.value}", body, count=1))

@@ -12,7 +12,7 @@ import pytest
 
 from ralph.adapters.filesystem import FilesystemIssueStore, IssueParseError
 from ralph.domain import Actor, Brief, Findings, SubIssueId, SubIssueState
-from ralph.runlog import event
+from ralph.runlog import EventKind, event
 
 READY = "Status: ready\n\n## Acceptance criteria\n\n- [ ] It works.\n"
 
@@ -122,7 +122,9 @@ async def test_a_terminal_event_is_mirrored_into_the_status_line(tmp_path: Path)
     path = issue(tmp_path, "01-first.md")
     store = FilesystemIssueStore(issues_dir=tmp_path)
 
-    await store.write_event(event(SubIssueId("01"), Actor.IMPLEMENTER, "terminal", SubIssueState.LANDED))
+    await store.write_event(
+        event(SubIssueId("01"), Actor.IMPLEMENTER, EventKind.SUB_ISSUE_CLOSED, SubIssueState.LANDED)
+    )
 
     assert "Status: landed" in path.read_text()
     _, states = store.read_graph()
@@ -135,7 +137,14 @@ async def test_a_session_event_does_not_touch_the_status_line(tmp_path: Path) ->
     path = issue(tmp_path, "01-first.md")
     store = FilesystemIssueStore(issues_dir=tmp_path)
 
-    await store.write_event(event(SubIssueId("01"), Actor.IMPLEMENTER, "session-opened", SubIssueState.IN_PROGRESS))
+    await store.write_event(
+        event(
+            SubIssueId("01"),
+            Actor.IMPLEMENTER,
+            EventKind.SESSION_STARTED,
+            SubIssueState.IN_PROGRESS,
+        )
+    )
 
     assert "Status: ready" in path.read_text()
 

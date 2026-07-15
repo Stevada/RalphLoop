@@ -44,7 +44,7 @@ def events(repo: TargetRepo) -> list[dict[str, str]]:
 
 
 def story(repo: TargetRepo) -> list[tuple[str, str, str]]:
-    return [(e["sub_issue"], e["kind"], e["payload"]) for e in events(repo)]
+    return [(e["sub_issue"], e["kind"], e["details"]) for e in events(repo)]
 
 
 async def test_every_sub_issue_lands_and_the_history_is_linear(
@@ -90,14 +90,26 @@ async def test_the_run_log_tells_the_true_story_in_order(
     at = lines.index
 
     for id in PHASE:
-        assert at((id, "session-opened", "in-progress")) < at((id, "session-closed", "success"))
+        assert at((id, "session-started", "in-progress")) < at(
+            (id, "session-finished", "success")
+        )
         # After the fast-forward, never before: `landed` is written once the work is on the branch.
-        assert at((id, "session-closed", "success")) < at((id, "terminal", "landed"))
+        assert at((id, "session-finished", "success")) < at(
+            (id, "sub-issue-closed", "landed")
+        )
 
-    assert at(("01", "terminal", "landed")) < at(("02", "session-opened", "in-progress"))
-    assert at(("01", "terminal", "landed")) < at(("03", "session-opened", "in-progress"))
-    assert at(("02", "terminal", "landed")) < at(("04", "session-opened", "in-progress"))
-    assert at(("03", "terminal", "landed")) < at(("04", "session-opened", "in-progress"))
+    assert at(("01", "sub-issue-closed", "landed")) < at(
+        ("02", "session-started", "in-progress")
+    )
+    assert at(("01", "sub-issue-closed", "landed")) < at(
+        ("03", "session-started", "in-progress")
+    )
+    assert at(("02", "sub-issue-closed", "landed")) < at(
+        ("04", "session-started", "in-progress")
+    )
+    assert at(("03", "sub-issue-closed", "landed")) < at(
+        ("04", "session-started", "in-progress")
+    )
 
 
 async def test_the_run_log_carries_no_spend_no_diffstat_and_no_test_output(
@@ -112,7 +124,7 @@ async def test_the_run_log_carries_no_spend_no_diffstat_and_no_test_output(
     await run(repo.path, None, concurrency=4)
 
     raw = (repo.path / ".scratch" / "run.jsonl").read_text()
-    assert all(set(e) == {"ts", "sub_issue", "actor", "kind", "payload"} for e in events(repo))
+    assert all(set(e) == {"ts", "sub_issue", "actor", "kind", "details"} for e in events(repo))
     for leak in ("token", "diffstat", "assert", "passed", "failed,"):
         assert leak not in raw
 

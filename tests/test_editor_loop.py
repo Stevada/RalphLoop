@@ -382,7 +382,7 @@ async def test_the_scheduler_writes_every_event_and_the_adapters_write_none() ->
     brief and a worktree and they return what they found. Everything that *happened* is the
     scheduler's to record, and the log below is the proof that it recorded all of it.
 
-    Every line names its actor. Without that, a cycle's two `session-closed` lines are ambiguous,
+    Every line names its actor. Without that, a cycle's two `session-finished` lines are ambiguous,
     and the authoritative record of the run cannot say whether the Implementer or the Editor was the
     thing that broke.
     """
@@ -393,15 +393,15 @@ async def test_the_scheduler_writes_every_event_and_the_adapters_write_none() ->
 
     await run_with(store, implementer, editor, log=log)
 
-    assert [(e.sub_issue, e.actor.value, e.kind, e.payload.value) for e in log.events()] == [
-        ("01", "implementer", "session-opened", "in-progress"),
-        ("01", "implementer", "session-closed", "impasse"),
-        ("01", "editor", "session-opened", "in-progress"),
-        ("01", "editor", "session-closed", "success"),  # the Editor's session, not the sub-issue's
-        ("01", "editor", "verdict", "revise"),
-        ("01", "implementer", "session-opened", "in-progress"),  # cycle two, against a new brief
-        ("01", "implementer", "session-closed", "success"),
-        ("01", "implementer", "terminal", "landed"),
+    assert [(e.sub_issue, e.actor.value, e.kind.value, e.details.value) for e in log.events()] == [
+        ("01", "implementer", "session-started", "in-progress"),
+        ("01", "implementer", "session-finished", "impasse"),
+        ("01", "editor", "session-started", "in-progress"),
+        ("01", "editor", "session-finished", "success"),  # the Editor's session
+        ("01", "editor", "verdict-recorded", "revise"),
+        ("01", "implementer", "session-started", "in-progress"),  # against a new brief
+        ("01", "implementer", "session-finished", "success"),
+        ("01", "implementer", "sub-issue-closed", "landed"),
     ]
 
 
