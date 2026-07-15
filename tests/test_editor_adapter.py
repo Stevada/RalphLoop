@@ -33,7 +33,7 @@ from ralph.domain import (
     classify_editor,
     failure_report,
 )
-from ralph.ports import Budget, Worktree
+from ralph.ports import Budget, SessionContext, Worktree
 from tests.builders import impasse, observation, suite, telemetry
 
 SUITE: Sequence[str] = ("python", "-m", "pytest", "-q")
@@ -41,6 +41,10 @@ BRIEF = Brief(body="# 01 — make it add\n\n## Acceptance criteria\n\n- [ ] `add
 FINDINGS = Findings(body="")
 WORKTREE = Worktree(path=Path("/w/01"), branch="ralph/01", base="integration")
 SMART_ZONE = Budget(max_context_tokens=120_000, wall_clock_s=10.0)
+
+
+def session_context(budget: Budget = SMART_ZONE) -> SessionContext:
+    return SessionContext(brief=BRIEF, findings=FINDINGS, worktree=WORKTREE, budget=budget)
 
 FAILURE = failure_report(
     Outcome.IMPASSE,
@@ -261,7 +265,7 @@ async def adjudicate(
     session: EditorSession, *, must_be_terminal: bool = False, budget: Budget = SMART_ZONE
 ) -> tuple[SessionTelemetry, EditorVerdict | None]:
     editor = ClaudeCodeEditor(open_session=lambda ask: session, suite=SUITE)
-    return await editor.adjudicate(BRIEF, FINDINGS, FAILURE, WORKTREE, budget, must_be_terminal)
+    return await editor.adjudicate(session_context(budget), FAILURE, must_be_terminal)
 
 
 async def test_a_garbled_verdict_is_no_verdict_and_is_never_quietly_repaired(
@@ -354,7 +358,7 @@ async def test_the_final_cycle_is_surfaced_in_the_prompt() -> None:
         return StubSession([verdict_json("inconclusive")])
 
     editor = ClaudeCodeEditor(open_session=capture, suite=SUITE)
-    await editor.adjudicate(BRIEF, FINDINGS, FAILURE, WORKTREE, SMART_ZONE, True)
+    await editor.adjudicate(session_context(), FAILURE, True)
 
     assert "final cycle" in asks[0].prompt.lower()
     assert "The harness will refuse it" in asks[0].prompt
@@ -381,7 +385,7 @@ async def test_the_editor_is_pointed_at_the_failed_worktree() -> None:
         return StubSession([verdict_json("inconclusive")])
 
     await ClaudeCodeEditor(open_session=capture, suite=SUITE).adjudicate(
-        BRIEF, FINDINGS, FAILURE, WORKTREE, SMART_ZONE, False
+        session_context(), FAILURE, False
     )
 
     assert asks[0].cwd == WORKTREE.path
@@ -396,7 +400,7 @@ async def test_the_prompt_hands_over_the_claim_and_the_facts_to_check_it_against
         return StubSession([verdict_json("inconclusive")])
 
     await ClaudeCodeEditor(open_session=capture, suite=SUITE).adjudicate(
-        BRIEF, FINDINGS, FAILURE, WORKTREE, SMART_ZONE, False
+        session_context(), FAILURE, False
     )
     prompt = asks[0].prompt
 

@@ -21,12 +21,10 @@ from pathlib import Path
 
 from ralph.domain import (
     Actor,
-    Brief,
     CycleLedger,
     Destination,
     EventKind,
     FailureReport,
-    Findings,
     Notification,
     Outcome,
     SubIssue,
@@ -49,6 +47,7 @@ from ralph.ports import (
     Implementer,
     IssueStore,
     RunLog,
+    SessionContext,
     TestRunner,
     Worktree,
 )
@@ -226,7 +225,8 @@ class Scheduler:
         # cycle two this is the **rewritten** brief — which is what makes this a cycle, not a retry.
         brief, findings = self._store.content(sub.id)
 
-        telemetry = await self._implementer.run(brief, findings, wt, self._budget)
+        context = SessionContext(brief=brief, findings=findings, worktree=wt, budget=self._budget)
+        telemetry = await self._implementer.run(context)
         # The suite result, not the exit code, is the outcome. The harness runs the tests.
         suite = await self._runner.run(wt.path)
         outcome = classify_implementer(telemetry, suite)
@@ -266,14 +266,12 @@ class Scheduler:
             # Implementer's own outcome. The harness does not invent a verdict it never got.
             return await self._quarantine(sub.id, Actor.IMPLEMENTER, wt, report)
 
-        return await self._adjudicate(sub, wt, brief, findings, report)
+        return await self._adjudicate(sub, context, report)
 
     async def _adjudicate(
         self,
         sub: SubIssue,
-        wt: Worktree,
-        brief: Brief,
-        findings: Findings,
+        context: SessionContext,
         report: FailureReport,
     ) -> _Closed | None:
         """The Editor half of the cycle: read the failure, return a verdict, and act on it.
@@ -293,7 +291,7 @@ class Scheduler:
 
         await self._record(sub.id, Actor.EDITOR, "session-opened", SubIssueState.IN_PROGRESS)
         telemetry, verdict = await self._editor_of(sub).adjudicate(
-            brief, findings, report, wt, self._budget, must_be_terminal
+            context, report, must_be_terminal
         )
         outcome = classify_editor(telemetry, verdict)
         await self._record(sub.id, Actor.EDITOR, "session-closed", outcome)
@@ -308,7 +306,7 @@ class Scheduler:
             # verdictless Editor `infra-failed`, which routes to the human. It is restated only
             # because the type-checker cannot read the taxonomy.)
             failed = failure_report(outcome, telemetry, report.suite, None, report.cycles)
-            return await self._quarantine(sub.id, Actor.EDITOR, wt, failed)
+            return await self._quarantine(sub.id, Actor.EDITOR, context.worktree, failed)
 
         await self._record(sub.id, Actor.EDITOR, "verdict", verdict.verdict)
 
@@ -316,7 +314,7 @@ class Scheduler:
             # `planning-defect` — the brief cannot be satisfied as written, and rewriting it is a
             # Planner's call, not an Editor's. `inconclusive` — the Editor could not tell. Both are
             # terminal: another Implementer session would be a coin flip we have already paid for.
-            return await self._quarantine(sub.id, Actor.EDITOR, wt, report)
+            return await self._quarantine(sub.id, Actor.EDITOR, context.worktree, report)
 
         if must_be_terminal:
             # **The scheduler rejects it, and only the scheduler.** The Editor was told this was the
@@ -329,7 +327,7 @@ class Scheduler:
                 "Implementer session. Escalating to a human.",
                 sub.id,
             )
-            return await self._quarantine(sub.id, Actor.EDITOR, wt, report)
+            return await self._quarantine(sub.id, Actor.EDITOR, context.worktree, report)
 
         revised_brief, revised_findings = verdict.revision
         # Knowledge survives **only** through the findings. Nothing else crosses: the diff is
@@ -339,9 +337,9 @@ class Scheduler:
         await self._store.record_revision(
             sub.id,
             revised_brief,
-            revised_findings if revised_findings is not None else findings,
+            revised_findings if revised_findings is not None else context.findings,
         )
-        self._git.discard_worktree(wt)
+        self._git.discard_worktree(context.worktree)
         return None
 
     def _editor_of(self, sub: SubIssue) -> Editor:

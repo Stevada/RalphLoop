@@ -123,9 +123,9 @@ async def test_an_implementer_failure_is_handed_to_the_editor(
     await run_with(store, FakeImplementer(scripted=[session]), editor)
 
     assert len(editor.calls) == 1
-    brief, findings, failure, must_be_terminal = editor.calls[0]
-    assert brief.body == "the original brief"
-    assert findings.body == "what we knew"
+    context, failure, must_be_terminal = editor.calls[0]
+    assert context.brief.body == "the original brief"
+    assert context.findings.body == "what we knew"
     assert failure.outcome is expected
     assert must_be_terminal is False  # first cycle of three
 
@@ -143,7 +143,7 @@ async def test_integration_failed_spends_a_cycle_exactly_like_an_impasse() -> No
 
     # Three Implementer sessions, three Editor sessions: the cap bit, and it bit on an outcome that
     # only the merge queue can raise.
-    assert [f.outcome for _, _, f, _ in editor.calls] == [Outcome.INTEGRATION_FAILED] * 3
+    assert [f.outcome for _, f, _ in editor.calls] == [Outcome.INTEGRATION_FAILED] * 3
     assert report.failed == {ONE: Outcome.INTEGRATION_FAILED}
 
 
@@ -183,7 +183,7 @@ async def test_a_revise_discards_the_work_and_restarts_clean_against_the_revised
 
     # The second session read the Editor's brief. This is the assertion that separates a cycle from
     # a retry: a retry would show "the original brief" twice.
-    assert [brief.body for brief, _, _ in implementer.calls] == [
+    assert [context.brief.body for context in implementer.calls] == [
         "the original brief",
         "build it with the API that exists",
     ]
@@ -216,9 +216,9 @@ async def test_knowledge_survives_only_through_the_findings() -> None:
 
     await run_with(store, implementer, editor)
 
-    second_brief, second_findings, _ = implementer.calls[1]
-    assert second_brief.body == "the bar"  # the bar did not move
-    assert second_findings.body == "the client's retry logic swallows the expected error"
+    second = implementer.calls[1]
+    assert second.brief.body == "the bar"  # the bar did not move
+    assert second.findings.body == "the client's retry logic swallows the expected error"
 
 
 async def test_a_revision_may_change_the_findings_without_the_brief() -> None:
@@ -296,7 +296,7 @@ async def test_the_scheduler_and_only_the_scheduler_rejects_a_third_cycle_revise
     report = await run_with(store, implementer, editor)
 
     # Told: false, false, then true on the cycle that has no successor.
-    assert [must_be_terminal for _, _, _, must_be_terminal in editor.calls] == [False, False, True]
+    assert [must_be_terminal for _, _, must_be_terminal in editor.calls] == [False, False, True]
 
     # Refused: the third `revise` was returned, and ignored. Two revisions were stored, not three —
     # the rejected one never became a brief, because nothing would ever have read it.
@@ -465,7 +465,7 @@ async def test_a_revise_really_discards_the_work_and_the_sub_issue_really_lands(
     assert "wip(01)" not in repo.git("log", "--oneline", "--all")
 
     # And the Editor really was handed the impasse the agent really emitted.
-    _, _, failure, _ = editor.calls[0]
+    _, failure, _ = editor.calls[0]
     assert failure.outcome is Outcome.IMPASSE
     assert failure.claim is not None
     assert failure.claim.unsatisfiable_criterion == "the second acceptance criterion of 01"

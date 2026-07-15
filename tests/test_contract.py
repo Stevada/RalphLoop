@@ -36,6 +36,7 @@ from ralph.ports import (
     Implementer,
     IssueStore,
     RunLog,
+    SessionContext,
     TestRunner,
     Worktree,
 )
@@ -145,6 +146,25 @@ def test_the_worktree_knows_where_it_came_from() -> None:
     wt = git.add_worktree("sub-01", Path("/tmp/wt"), "integration")
     assert isinstance(wt, Worktree)
     assert wt.base == "integration"
+
+
+def test_session_context_groups_the_shared_actor_inputs() -> None:
+    wt = Worktree(path=Path("/tmp/wt"), branch="ralph/01", base="integration")
+    context = SessionContext(
+        brief=Brief(body="build it"),
+        findings=Findings(body="facts"),
+        worktree=wt,
+        budget=Budget(wall_clock_s=1.0),
+    )
+
+    assert [f.name for f in dataclasses.fields(SessionContext)] == [
+        "brief",
+        "findings",
+        "worktree",
+        "budget",
+    ]
+    assert context.worktree is wt
+    assert context.budget.wall_clock_s == 1.0
 
 
 def test_an_impasse_report_is_the_models_story_not_the_harnesss_facts() -> None:

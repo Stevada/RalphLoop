@@ -36,7 +36,7 @@ from ralph.domain import (
     Verdict,
     failure_report,
 )
-from ralph.ports import Budget, Worktree
+from ralph.ports import Budget, SessionContext, Worktree
 from tests.builders import impasse, suite, telemetry
 
 FIXTURE = Path(__file__).parent / "fixtures" / "copilot-debug.log"
@@ -389,10 +389,12 @@ async def _adjudicate(
         return [sys.executable, "-c", script]
 
     return await CopilotEditor(argv=argv).adjudicate(
-        Brief(body="build it"),
-        Findings(body=""),
+        SessionContext(
+            brief=Brief(body="build it"),
+            findings=Findings(body=""),
+            worktree=_worktree(tmp_path),
+            budget=Budget(max_context_tokens=120_000, wall_clock_s=20.0),
+        ),
         FAILURE,
-        _worktree(tmp_path),
-        Budget(max_context_tokens=120_000, wall_clock_s=20.0),
         must_be_terminal=False,
     )

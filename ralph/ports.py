@@ -53,11 +53,22 @@ class Worktree:
     base: str  # the branch this was cut from
 
 
+@dataclass(frozen=True, slots=True)
+class SessionContext:
+    """The shared inputs for one bounded actor session.
+
+    This is the context an actor receives, not the token context measured by `Observation`.
+    """
+
+    brief: Brief
+    findings: Findings
+    worktree: Worktree
+    budget: Budget
+
+
 @runtime_checkable
 class Implementer(Protocol):
-    async def run(
-        self, brief: Brief, findings: Findings, worktree: Worktree, budget: Budget
-    ) -> SessionTelemetry: ...
+    async def run(self, context: SessionContext) -> SessionTelemetry: ...
 
 
 @runtime_checkable
@@ -67,11 +78,8 @@ class Editor(Protocol):
 
     async def adjudicate(
         self,
-        brief: Brief,
-        findings: Findings,
+        context: SessionContext,
         failure: FailureReport,
-        worktree: Worktree,
-        budget: Budget,
         must_be_terminal: bool,
     ) -> tuple[SessionTelemetry, EditorVerdict | None]: ...
 

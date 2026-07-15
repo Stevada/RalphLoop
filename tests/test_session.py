@@ -11,11 +11,15 @@ import pytest
 from ralph.adapters.git import GitCli
 from ralph.adapters.session import ImpasseParseError, SubprocessImplementer, parse_impasse
 from ralph.domain import Brief, Findings, Outcome, SuiteResult, classify_implementer
-from ralph.ports import Budget
+from ralph.ports import Budget, SessionContext, Worktree
 from tests.testbed import Behaviour, StandInAgent, TargetRepo
 
 BRIEF, FINDINGS = Brief(body="make it work"), Findings(body="")
 GENEROUS = Budget(wall_clock_s=60.0)
+
+
+def context(wt: Worktree, budget: Budget = GENEROUS) -> SessionContext:
+    return SessionContext(brief=BRIEF, findings=FINDINGS, worktree=wt, budget=budget)
 
 
 def implementer(agent: StandInAgent, behaviour: Behaviour) -> SubprocessImplementer:
@@ -32,7 +36,7 @@ async def test_a_successful_session_reports_the_harnesss_facts_not_the_models(
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
 
-    t = await implementer(agent, Behaviour.SUCCEED).run(BRIEF, FINDINGS, wt, GENEROUS)
+    t = await implementer(agent, Behaviour.SUCCEED).run(context(wt))
 
     assert t.exit_code == 0
     assert t.killed is None
@@ -49,7 +53,7 @@ async def test_a_session_that_committed_nothing_is_caught_by_the_commit_count(
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
 
-    t = await implementer(agent, Behaviour.COMMIT_NOTHING).run(BRIEF, FINDINGS, wt, GENEROUS)
+    t = await implementer(agent, Behaviour.COMMIT_NOTHING).run(context(wt))
 
     assert t.exit_code == 0
     assert t.commits == 0
@@ -64,7 +68,7 @@ async def test_a_hanging_session_is_killed_on_the_wall_clock(
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
 
-    t = await implementer(agent, Behaviour.HANG).run(BRIEF, FINDINGS, wt, Budget(wall_clock_s=1.0))
+    t = await implementer(agent, Behaviour.HANG).run(context(wt, Budget(wall_clock_s=1.0)))
 
     assert t.killed == "wall-clock"
     assert t.commits == 0
@@ -77,7 +81,7 @@ async def test_the_impasse_sentinel_is_parsed_out_of_the_session(
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
 
-    t = await implementer(agent, Behaviour.IMPASSE).run(BRIEF, FINDINGS, wt, GENEROUS)
+    t = await implementer(agent, Behaviour.IMPASSE).run(context(wt))
 
     assert t.impasse_report is not None
     assert t.impasse_report.what_would_satisfy == "an API that exists"

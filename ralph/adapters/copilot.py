@@ -50,7 +50,7 @@ from ralph.adapters.editor import READ_ONLY_COMMANDS, READ_ONLY_GIT, editor_tele
 from ralph.adapters.prompt import editor_prompt, implementer_prompt
 from ralph.adapters.session import SubprocessImplementer, Transcript, run_session
 from ralph.domain import Brief, EditorVerdict, FailureReport, Findings, SessionTelemetry
-from ralph.ports import Budget, Observation, Worktree
+from ralph.ports import Observation, SessionContext, Worktree
 
 log = logging.getLogger(__name__)
 
@@ -362,18 +362,18 @@ class CopilotEditor:
 
     async def adjudicate(
         self,
-        brief: Brief,
-        findings: Findings,
+        context: SessionContext,
         failure: FailureReport,
-        worktree: Worktree,
-        budget: Budget,
         must_be_terminal: bool,
     ) -> tuple[SessionTelemetry, EditorVerdict | None]:
+        worktree = context.worktree
         log_dir = fresh_log_dir(worktree)
         session = await run_session(
-            self.argv(editor_prompt(brief, findings, failure, must_be_terminal), log_dir),
+            self.argv(
+                editor_prompt(context.brief, context.findings, failure, must_be_terminal), log_dir
+            ),
             worktree.path,  # the failed worktree, exactly as the Implementer left it
-            budget,
+            context.budget,
             lambda transcript: CopilotContextSource(transcript=transcript, log_dir=log_dir),
         )
         telemetry = editor_telemetry(

@@ -31,12 +31,18 @@ from ralph.adapters.codex import (
 from ralph.adapters.git import GitCli
 from ralph.adapters.session import SubprocessImplementer, Transcript
 from ralph.domain import Brief, Findings, Outcome, SuiteResult, classify_implementer
-from ralph.ports import Budget, Worktree
+from ralph.ports import Budget, SessionContext, Worktree
 from tests.testbed import TargetRepo
 
 BRIEF = Brief(body="# 01 — make it add\n\n## Acceptance criteria\n\n- [ ] `add(1, 2) == 3`")
 FINDINGS = Findings(body="`add()` is already in calculator.py")
 GENEROUS = Budget(wall_clock_s=30.0)
+
+
+def session_context(
+    wt: Worktree, brief: Brief = BRIEF, findings: Findings = FINDINGS, budget: Budget = GENEROUS
+) -> SessionContext:
+    return SessionContext(brief=brief, findings=findings, worktree=wt, budget=budget)
 
 GREEN = SuiteResult(green=True, output="", duration_s=0.0)
 
@@ -306,7 +312,7 @@ async def test_a_session_that_stays_in_the_smart_zone_is_left_alone(
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
 
-    t = await stub_implementer("20000,60000,90000").run(BRIEF, FINDINGS, wt, GENEROUS)
+    t = await stub_implementer("20000,60000,90000").run(session_context(wt))
 
     assert t.killed is None
     assert t.exit_code == 0
@@ -323,7 +329,7 @@ async def test_a_session_that_leaves_it_is_killed_mid_flight(
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
 
-    t = await stub_implementer("20000,130000,140000").run(BRIEF, FINDINGS, wt, GENEROUS)
+    t = await stub_implementer("20000,130000,140000").run(session_context(wt))
 
     assert t.killed == "ceiling"
     assert t.peak_context_tokens >= 120_000
@@ -361,7 +367,9 @@ async def test_a_real_codex_session_lands_a_real_sub_issue(repo: TargetRepo) -> 
             """)
     )
 
-    t = await codex_implementer().run(brief, Findings(body=""), wt, Budget(wall_clock_s=600.0))
+    t = await codex_implementer().run(
+        session_context(wt, brief=brief, findings=Findings(body=""), budget=Budget(wall_clock_s=600.0))
+    )
 
     assert t.killed is None
     assert t.commits >= 1

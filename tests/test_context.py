@@ -20,7 +20,7 @@ from ralph.adapters.context import Bound, ContextMeter, run_bounded, tail
 from ralph.adapters.git import GitCli
 from ralph.adapters.session import SubprocessImplementer
 from ralph.domain import Brief, Findings, Outcome, SuiteResult, classify_implementer
-from ralph.ports import Budget, ContextSource, Observation
+from ralph.ports import Budget, ContextSource, Observation, SessionContext
 from tests.builders import observation, telemetry
 from tests.fakes import FakeContextSource
 from tests.testbed import TargetRepo
@@ -249,7 +249,14 @@ async def test_the_ceiling_reaches_the_telemetry_of_a_real_session(repo: TargetR
         ),
     )
 
-    t = await implementer.run(Brief(body="build it"), Findings(body=""), wt, SMART_ZONE)
+    t = await implementer.run(
+        SessionContext(
+            brief=Brief(body="build it"),
+            findings=Findings(body=""),
+            worktree=wt,
+            budget=SMART_ZONE,
+        )
+    )
 
     assert t.killed == "ceiling"
     assert t.peak_context_tokens == 200_000

@@ -27,8 +27,8 @@ from ralph.adapters.editor import (
     run_editor,
 )
 from ralph.adapters.prompt import editor_prompt
-from ralph.domain import Brief, EditorVerdict, FailureReport, Findings, SessionTelemetry
-from ralph.ports import Budget, Observation, Worktree
+from ralph.domain import EditorVerdict, FailureReport, SessionTelemetry
+from ralph.ports import Observation, SessionContext
 
 MODEL = "claude-opus-4-8"
 """The Editor is the expensive one on purpose. It runs at most three times per sub-issue and it is
@@ -67,21 +67,20 @@ class ClaudeCodeEditor:
 
     async def adjudicate(
         self,
-        brief: Brief,
-        findings: Findings,
+        context: SessionContext,
         failure: FailureReport,
-        worktree: Worktree,
-        budget: Budget,
         must_be_terminal: bool,
     ) -> tuple[SessionTelemetry, EditorVerdict | None]:
         session = self.open_session(
             Ask(
-                prompt=editor_prompt(brief, findings, failure, must_be_terminal),
-                cwd=worktree.path,  # the failed worktree, exactly as the Implementer left it
+                prompt=editor_prompt(
+                    context.brief, context.findings, failure, must_be_terminal
+                ),
+                cwd=context.worktree.path,
                 permit=lambda tool, input: read_only(tool, input, self.suite),
             )
         )
-        return await run_editor(session, budget)
+        return await run_editor(session, context.budget)
 
 
 # ── the far side of the seam ─────────────────────────────────────────────────────────────────

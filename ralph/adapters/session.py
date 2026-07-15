@@ -21,7 +21,7 @@ from pathlib import Path
 from ralph.adapters.context import Bound, run_bounded
 from ralph.adapters.git import run_git
 from ralph.domain import Approach, Brief, Findings, ImpasseReport, SessionTelemetry
-from ralph.ports import Budget, ContextSource, Worktree
+from ralph.ports import Budget, ContextSource, SessionContext, Worktree
 
 IMPASSE_OPEN, IMPASSE_CLOSE = "<impasse>", "</impasse>"
 
@@ -206,13 +206,15 @@ class SubprocessImplementer:
     build_argv: BuildArgv
     context: SourceFactory | None = None
 
-    async def run(
-        self, brief: Brief, findings: Findings, worktree: Worktree, budget: Budget
-    ) -> SessionTelemetry:
+    async def run(self, context: SessionContext) -> SessionTelemetry:
         factory = self.context
+        worktree = context.worktree
         bound: BoundSource | None = (
             None if factory is None else lambda transcript: factory(transcript, worktree)
         )
         return await run_agent(
-            self.build_argv(brief, findings, worktree), worktree, budget, bound
+            self.build_argv(context.brief, context.findings, worktree),
+            worktree,
+            context.budget,
+            bound,
         )

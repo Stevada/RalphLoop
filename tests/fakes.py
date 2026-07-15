@@ -30,7 +30,7 @@ from ralph.domain import (
     SubIssueState,
     SuiteResult,
 )
-from ralph.ports import Budget, Observation, Worktree
+from ralph.ports import Observation, SessionContext, Worktree
 from tests.builders import telemetry
 
 
@@ -39,12 +39,10 @@ class FakeImplementer:
     """Returns scripted telemetry, one per call, and records what it was asked to build."""
 
     scripted: Sequence[SessionTelemetry] = field(default_factory=list)
-    calls: list[tuple[Brief, Findings, Worktree]] = field(default_factory=list)
+    calls: list[SessionContext] = field(default_factory=list)
 
-    async def run(
-        self, brief: Brief, findings: Findings, worktree: Worktree, budget: Budget
-    ) -> SessionTelemetry:
-        self.calls.append((brief, findings, worktree))
+    async def run(self, context: SessionContext) -> SessionTelemetry:
+        self.calls.append(context)
         if not self.scripted:
             return telemetry()
         return self.scripted[min(len(self.calls) - 1, len(self.scripted) - 1)]
@@ -63,18 +61,15 @@ class FakeEditor:
     """
 
     scripted: Sequence[tuple[SessionTelemetry, EditorVerdict | None]] = field(default_factory=list)
-    calls: list[tuple[Brief, Findings, FailureReport, bool]] = field(default_factory=list)
+    calls: list[tuple[SessionContext, FailureReport, bool]] = field(default_factory=list)
 
     async def adjudicate(
         self,
-        brief: Brief,
-        findings: Findings,
+        context: SessionContext,
         failure: FailureReport,
-        worktree: Worktree,
-        budget: Budget,
         must_be_terminal: bool,
     ) -> tuple[SessionTelemetry, EditorVerdict | None]:
-        self.calls.append((brief, findings, failure, must_be_terminal))
+        self.calls.append((context, failure, must_be_terminal))
         if not self.scripted:
             return telemetry(commits=0), None
         return self.scripted[min(len(self.calls) - 1, len(self.scripted) - 1)]
