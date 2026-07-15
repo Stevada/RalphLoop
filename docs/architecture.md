@@ -42,14 +42,14 @@ ralph/
       cycles.py       CycleLedger                      (the cap of three)
       report.py       → FailureReport      (and the impasse it will NOT invent)
 
-  issues/          issue tracker values + seam + markdown storage.
+  issues/          issue tracker values + seam + storage adapters.
     __init__.py    ← THE INTERFACE for issue values.
     graph.py       SubIssueId, SubIssue, IssueGraph, GraphError
     content.py     Brief, Findings
     state.py       SubIssueState
     store.py       IssueStore Protocol
-    filesystem.py  FilesystemIssueStore, IssueParseError
-    linear.py      LinearIssueStore, LinearGraphQLClient
+    filesystem/    FilesystemIssueStore, IssueParseError
+    linear/        LinearIssueStore, LinearGraphQLClient
   notification/    Escalation, Notification, notify() — the one human-facing run artifact
   ports.py         Protocols — the seams. every one has a fake.
   runlog/          Event, EventKind, event(), JsonlRunLog — the authoritative run ledger
@@ -110,13 +110,14 @@ rather than a rule someone must remember.
 | `Brief`, `Findings` | [content.py](../ralph/issues/content.py) | The two mutable fields. `Brief` = *what "done" means* (revision 0 is the Planner's, never overwritten); `Findings` = *what the last session learned*, difficulty-neutral, kept out of the brief so the brief stays clean as spec. |
 | `SubIssueState` | [state.py](../ralph/issues/state.py) | `ready` → `in-progress` → `landed` \| `needs-human`. `landed` is a sub-issue's terminal state; `done` is the *parent's* and is banned here. |
 
-`IssueStore` ([store.py](../ralph/issues/store.py)) is the tracker seam: files today, Linear later.
+`IssueStore` ([store.py](../ralph/issues/store.py)) is the tracker seam: filesystem markdown or
+Linear.
 `content()` returns the **newest** revision. `write_event` is **best-effort** — a run must not die
 because Linear was unreachable.
 
-`FilesystemIssueStore` ([filesystem.py](../ralph/issues/filesystem.py)) reads
+`FilesystemIssueStore` ([filesystem/](../ralph/issues/filesystem/)) reads
 `.scratch/<phase>/issues/*.md` with numeric-prefix edges. `LinearIssueStore`
-([linear.py](../ralph/issues/linear.py)) reads a Linear parent issue and turns its native
+([linear/](../ralph/issues/linear/)) reads a Linear parent issue and turns its native
 sub-issues and `blocked by` relations into the same `IssueGraph`. The scheduler does not know which
 store it is using.
 
@@ -387,5 +388,5 @@ asks, never by a second topological sort that is free to disagree.
 | Context ceiling and timeout | `Budget`, [context.py](../ralph/adapters/context.py) + per-CLI `ContextSource` ([cli-metering.md](cli-metering.md)) |
 | Impasse report format | [impasse.py](../ralph/harness/model/impasse.py), [failure.py](../ralph/harness/model/failure.py) |
 | The Editor | [claude_editor.py](../ralph/adapters/claude_editor.py), [copilot.py](../ralph/adapters/copilot.py), `CycleLedger` |
-| Linear sync | `issues/linear.py` behind the existing `IssueStore` Protocol |
+| Linear sync | `issues/linear/` behind the existing `IssueStore` Protocol |
 | Pre-flight + notification | [preflight.py](../ralph/harness/rules/preflight.py), [notification/](../ralph/notification/), `RunReport`, `cli.render` |

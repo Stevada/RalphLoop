@@ -1,6 +1,4 @@
-"""The issue tracker as it exists today: markdown files under `.scratch/<phase>/issues/`.
-
-`LinearIssueStore` will implement the same Protocol and change nothing above it.
+"""The filesystem issue tracker adapter: markdown files under `.scratch/<phase>/issues/`.
 
 Every parse failure here is fatal and specific. A `Status:` line the harness does not recognise is
 the single most dangerous thing this module could shrug at: a silent default would either run a

@@ -1,8 +1,7 @@
 """The issue tracker seam.
 
 The scheduler reads the issue graph once, asks for the current brief/findings per sub-issue, and
-mirrors run-log events back for humans. Filesystem markdown is the adapter today; Linear can satisfy
-the same interface later.
+mirrors run-log events back for humans. Filesystem markdown and Linear both satisfy this interface.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from ralph.runlog import Event
 
 @runtime_checkable
 class IssueStore(Protocol):
-    """The issue tracker: the sub-issue files today, Linear later.
+    """The issue tracker: filesystem markdown or Linear.
 
     `write_event` mirrors a transition back into the tracker and is **best-effort** — the tracker
     is a convenience for humans, and a run must not die because it was unreachable. The harness's

@@ -136,7 +136,13 @@ def test_the_nouns_do_not_know_about_the_verbs(module: Path) -> None:
 
 
 CLI = PACKAGE / "cli.py"
-UPSTREAM = [m for m in SHIPPED if m != CLI and (PACKAGE / "adapters") not in m.parents]
+ISSUE_ADAPTERS = {"ralph.issues.filesystem", "ralph.issues.linear"}
+ISSUE_ADAPTER_DIRS = {PACKAGE / "issues" / "filesystem", PACKAGE / "issues" / "linear"}
+UPSTREAM = [
+    m
+    for m in SHIPPED
+    if m != CLI and (PACKAGE / "adapters") not in m.parents and not ISSUE_ADAPTER_DIRS & set(m.parents)
+]
 
 
 @pytest.mark.parametrize("module", UPSTREAM, ids=_rel)
@@ -150,7 +156,10 @@ def test_only_the_composition_root_names_a_concrete_adapter(module: Path) -> Non
     orchestration module somebody adds is exactly the one a list would have failed to cover.
     """
     for imported in _ralph_imports(module):
-        assert not imported.startswith("ralph.adapters") and imported != "ralph.issues.filesystem", (
+        names_issue_adapter = any(
+            imported == adapter or imported.startswith(f"{adapter}.") for adapter in ISSUE_ADAPTERS
+        )
+        assert not imported.startswith("ralph.adapters") and not names_issue_adapter, (
             f"{_rel(module)} imports {imported!r} — only cli.py may name an adapter"
         )
 
