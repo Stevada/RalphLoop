@@ -38,7 +38,7 @@ from ralph.issues import Brief, Findings
 from ralph.ports import Budget, SessionContext, Worktree
 from tests.builders import impasse, suite, telemetry
 
-FIXTURE = Path(__file__).parent / "fixtures" / "copilot-debug.log"
+FIXTURE = Path(__file__).parents[1] / "fixtures" / "copilot-debug.log"
 
 SUITE: Sequence[str] = ("python", "-m", "pytest")
 

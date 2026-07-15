@@ -190,9 +190,11 @@ def test_the_scheduler_asks_the_routing_table_rather_than_reimplementing_it() ->
     assert "route" in calls, "the scheduler decides where a session goes without asking `route`"
 
 
-TESTS = Path(__file__).parent
+TESTS = Path(__file__).parents[1]
 ZERO_MOCKS = sorted(
-    m for m in TESTS.glob("test_*.py") if "Zero mocks" in (ast.get_docstring(ast.parse(m.read_text())) or "")
+    m
+    for m in TESTS.rglob("test_*.py")
+    if "Zero mocks" in (ast.get_docstring(ast.parse(m.read_text())) or "")
 )
 
 

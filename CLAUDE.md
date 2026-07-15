@@ -24,7 +24,7 @@ even import `ralph.harness`. `uv run` resolves the interpreter from `requires-py
 uv sync                         # set up .venv from uv.lock
 uv sync --extra editor          # + Claude Agent SDK, for RALPH_EDITOR=claude
 uv run pytest -q                # the suite — green before every commit
-uv run pytest tests/test_scheduler.py::test_name   # a single test
+uv run pytest tests/harness/test_scheduler.py::test_name   # a single test
 uv run mypy                     # strict; covers ralph/ AND tests/
 uv run ruff check
 uv run ralph …                  # the CLI

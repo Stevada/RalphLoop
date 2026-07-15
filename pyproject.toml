@@ -40,7 +40,7 @@ python_classes = []
 [tool.mypy]
 strict = true
 # `tests` is in scope deliberately: the assertion that each fake structurally satisfies its
-# Protocol is an annotation in tests/test_contract.py, and only mypy can check it. Runtime
+# Protocol is an annotation in tests/harness/test_contract.py, and only mypy can check it. Runtime
 # isinstance on a Protocol compares method names, not signatures.
 files = ["ralph", "tests"]
 

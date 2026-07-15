@@ -34,7 +34,7 @@ from ralph.harness import (
 from ralph.issues import IssueGraph, SubIssue, SubIssueId, SubIssueState
 from tests.testbed import Behaviour, StandInAgent, TargetRepo
 
-BUILD_HARNESS = Path(__file__).parent.parent / ".scratch" / "build_harness" / "issues"
+BUILD_HARNESS = Path(__file__).parents[2] / ".scratch" / "build_harness" / "issues"
 
 CLEAN = RepoFacts(
     head_branch="feature/x",
