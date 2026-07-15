@@ -1,7 +1,19 @@
+# Run artifacts
 .worktrees/
 ralph-output.txt
 timings.txt
 .scratch/
+
+# Python
 *.pyc
+__pycache__/
 .venv/
 *.egg-info/
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Local editor settings (shared .claude/ config stays tracked)
+.claude/settings.local.json

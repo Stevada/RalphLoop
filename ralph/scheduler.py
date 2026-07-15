@@ -1,33 +1,14 @@
 """The run: read the graph, refuse a red base, dispatch on eligibility, quarantine, drain, notify.
 
-**Sub-issues run in parallel but land one at a time.** The parallelism is here; the landing is the
-merge queue's, and it is a separate lock for a reason — one sub-issue's integration failure must
-never stall the queue for its siblings.
+Sub-issues run in parallel (the semaphore here) but land one at a time (the merge queue's lock).
+There is no wave barrier: the dispatch loop re-derives eligibility on every completion, so a
+sub-issue starts the moment its blockers land. A failure is quarantined and drained around, never
+retried — the loop below is a *cycle* loop, not a retry loop, and that distinction, quarantine-and-
+drain, and the scheduler-only cycle cap are the design (`docs/prd.md` §4.5–§4.7 for the reasoning,
+`docs/architecture.md` §4 for the shape).
 
-**There is no wave barrier.** Waves are an artifact of dependencies, not of merging. A sub-issue is
-dispatched the moment its blockers land, not when its slowest sibling finishes, so the dispatch loop
-below wakes on *every* completion and re-derives eligibility rather than draining a generation at a
-time.
-
-**Quarantine-and-drain.** A failure does not stop the run. The sub-issue is marked `needs-human`,
-its worktree preserved as evidence, and *nothing is propagated through the graph*: its dependents
-are not marked skipped, blocked, or failed — they are simply never eligible, because their blocker
-never reaches LANDED. Eligibility is derived, never stored, and that is the whole mechanism. The
-damage those failures cost is looked up once, at the end, for the notification.
-
-**Nothing is ever retried.** The loop below is not a retry loop, and the difference is the whole
-design. A retry runs the same actor against the same brief and hopes for a better sample. A
-**cycle** is an Implementer session *plus the Editor session that follows it*: the failure is
-adjudicated by a different actor, which rewrites the brief, and only then does the Implementer run
-again — against something that has **changed**. Nothing is re-run; something else is run. There is
-no backoff anywhere.
-
-**The cycle cap is the scheduler's, and only the scheduler's.** At most three. The adapters *tell*
-the model it is the final cycle (`must_be_terminal`); the scheduler **rejects** a `revise` that
-comes back anyway. Enforcing it in each Editor adapter would give one rule two homes, and two homes
-drift.
-
-Still to come: the context ceiling (#08).
+The comments in this module explain only what the code cannot: the ordering the async scheduler
+depends on. The design arguments they once restated now live in prd.md.
 """
 
 from __future__ import annotations

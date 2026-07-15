@@ -1,17 +1,13 @@
-# Ralph Loop — Design
+# Ralph Loop — Design rationale
 
 Harnessed engineering for coding agents. Three actors, one medium, one repo, one PR.
 
-This document records the design and the reasoning behind it, including the risks
-accepted deliberately. It describes the target system.
+This is the **why**: the design and the reasoning behind it, including the risks accepted
+deliberately. The first implementation has been built against it — where the code and this document
+disagree, the code is the fact and this is the intent it was meant to serve.
 
-An earlier bash prototype has been deleted; §9 records the defects it had, as traps not to
-fall back into. `docs/architecture.md` is the contract — modules, types, and seams — and is
-what you implement against.
-
-Vocabulary is canonical in
-[`UBIQUITOUS_LANGUAGE.md`](../UBIQUITOUS_LANGUAGE.md). This document uses those terms; it
-does not define them.
+Vocabulary is canonical in [`UBIQUITOUS_LANGUAGE.md`](../UBIQUITOUS_LANGUAGE.md); this document uses
+those terms and does not define them.
 
 ---
 
@@ -474,7 +470,7 @@ bad outcome can later be diffed against.
 ### The run log
 
 One append-only file per run — the local record the earlier phases rely on, since Linear
-sync lands last (§10). Each line is one event: a timestamp, the sub-issue it concerns, and
+sync is the last piece to land. Each line is one event: a timestamp, the sub-issue it concerns, and
 what happened. It tracks only two kinds of thing:
 
 - **States.** A session opened; a session closed with its outcome (`success`, `impasse`,
@@ -616,55 +612,3 @@ And the risk lands on **decomposition**, the artifact with no automated feedback
 > **The grilling of the Planner is not a nice-to-have front-end. It is the primary quality
 > mechanism of this system.**
 
----
-
-## 9. What the bash prototype got wrong
-
-*Historical. `src/` has been deleted; this is not a migration checklist and there is nothing left
-to port. It is here because **every row is a defect the Python harness must not reintroduce**, and
-several are the kind of mistake that looks like a reasonable shortcut while you are writing it.
-Read the left column as a list of traps, not as a description of anything that exists.*
-
-| # | The prototype's behaviour — do not reproduce it | Required instead |
-|---|---|---|
-| 1 | No Linear integration at all | Read graph on run start; write-through during |
-| 2 | Success = `codex exec` exit code | Success = harness-run suite result |
-| 3 | `no commits - skipping` treated as benign | `silent-red` |
-| 4 | No failure taxonomy | `impasse` / `silent-red` / `ceiling-exceeded` / `infra-failed` |
-| 5 | `npm ci ... \|\| true` swallows install failure | Install once in base; fail loudly |
-| 6 | No base-green check | Suite must pass on integration head before dispatch |
-| 7 | Wave barrier + sequential bash merge | Merge queue with merge lock |
-| 8 | `git merge --no-edit` runs no hook, no suite | Rebase + suite in worktree, then fast-forward |
-| 9 | No concurrency cap; all eligible issues launch at once | Cap concurrent sessions |
-| 10 | No timeout, no context ceiling | `timeout` + 120k context ceiling (rollout-file tail) |
-| 11 | No Editor, no escalation, no notification | Editor session, quarantine-and-drain, one notification |
-| 12 | No PR; merges into current branch | Integration branch → PR → CI → human |
-| 13 | Dependencies by filename numeric prefix | Linear issue IDs (later phase; filenames until then) |
-| 14 | Pre-flight did not check for PR CI | `ralph validate` refuses repos without CI |
-
-Note that #7 and #8 **delete** code: the wave barrier, the `wait` on all sessions, and the
-sequential merge loop all go away.
-
----
-
-## 10. Build order
-
-**The merge queue first.** It is the piece that makes parallelism honest, it is the most
-conspicuous absence, and every other component can be a human standing in for an agent while
-it is being got right. Build it against the existing filesystem issue format, with you
-playing Planner and Editor by hand.
-
-Then, in order:
-
-1. **Failure taxonomy + base-green check.** Cheap, and they make every later signal
-   trustworthy. Without them the Editor reasons from an unverified baseline.
-2. **Context ceiling and timeout.** Keeps every session inside the smart zone, and bounds the
-   bill, before anything runs unattended.
-3. **Impasse report format.** The Editor's sensor. Specify it before building the Editor.
-4. **The Editor.** Its prompt deserves more iteration than the harness code does — four of
-   the five bets rest on it.
-5. **Linear sync.** Read-once in, write-through out. Last, because it is the piece that
-   changes least about whether the loop works.
-6. **PR + CI + notification.**
-
-Overnight autonomy is the reward for a loop you already trust. Get to trust locally first.

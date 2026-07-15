@@ -1,10 +1,15 @@
 # Ubiquitous Language
 
-The vocabulary of the Ralph Loop, kept in sync with `docs/prd.md`. Where the two ever
-disagree, this file is canonical.
+The vocabulary of the Ralph Loop. This file is canonical for every term used across the design,
+the code, and the other docs.
 
 Terms in **bold** are canonical. Anything in the "Aliases to avoid" column is banned from
 prose, prompts, state names, and code identifiers.
+
+**This file defines terms; it does not argue the design.** A definition here is a sentence or two,
+not a justification — the reasoning behind a term (why the ceiling is on context, why nothing is
+ever retried) is recorded in the design rationale, not here. This file points at nothing: it is
+where the vocabulary bottoms out.
 
 ## Actors
 
@@ -23,32 +28,16 @@ prose, prompts, state names, and code identifiers.
 | **Cycle** | One Implementer session and the Editor session that follows it. At most three per sub-issue. | round, iteration, attempt |
 | **Run** | One pass over the issue graph — read once at start, never re-read — from base-green check to the single closing notification. | job, execution |
 
-Two mechanisms, kept distinct:
+Two bounds and one guide, kept distinct. The terms name them:
 
-- **The harness hard-enforces two bounds.** The **session** — killed at the 120k ceiling
-  or the wall-clock timeout, from outside, by a monitor the model cannot honour or ignore.
-  And the **cycle count** — no fourth Implementer session is dispatched, whatever the Editor
-  says. These are the only things the harness enforces.
-- **The prompt guides one thing.** Behaviour *within* a session — "about three tries, use
-  your judgment about when you are stuck." Soft, advisory, uncounted.
-
-The 120k ceiling is on **context** — the tokens in the model's context on its most recent
-call. One number for both actors, regardless of which model runs, because it measures the
-model's **smart zone**, not the model's price. A model reasoning over 200k of context is a
-worse engineer than the same model reasoning over 100k; the ceiling keeps every session in
-the zone where its judgment is trusted. It is a *quality* bound, not a budget.
-
-**The ceiling is not a stuck-detector, and does not count what a session spent.** Consumption
-and context diverge sharply: a session re-running a failing suite twenty times may have
-consumed several hundred thousand tokens while its context sits at 60k. That session is stuck,
-and the thing that catches it is the **wall-clock backstop**. Consumption is recorded as
-telemetry — it is what the session cost — but nothing is gated on it.
-
-Enforcement is real time and from outside the model: Codex appends a `token_count` event to
-its session rollout file after every model call, and the harness kills the process the moment
-the context crosses 120k. The ceiling sits far below the model's window (272k), so it always
-fires before Codex would auto-compact — compaction never gets to drop the context back under
-the bound and hide the crossing.
+- **The session bound** is hard, enforced from outside the model: the session is killed at the
+  120k **context** ceiling or the wall-clock backstop. The ceiling reads **context**, never
+  **consumption**, and measures the **smart zone** rather than cost — one number for both
+  actors, whichever model runs. The wall-clock backstop is what catches a *stuck* session,
+  whose context stays flat while it spins.
+- **The cycle bound** is hard: no fourth Implementer session, whatever the Editor says.
+- **"About three tries"** is soft — advisory, uncounted guidance in the prompt about behaviour
+  *within* a session. It is not a bound.
 
 ## Work
 
@@ -59,27 +48,23 @@ the bound and hide the crossing.
 | **Brief** | A sub-issue's mutable spec — acceptance criteria in prose, including its tests as prose. | description, sub-issue document |
 | **Findings** | A sub-issue's mutable record of repo facts the Editor discovered in a failed worktree, carried into the next Implementer session. | guidance, advice, hints, notes |
 
-A **Sub-issue** is fixed for the life of a run. Two fields on it are mutable, and only the
-Editor writes them:
+A **Sub-issue** is fixed for the life of a **Run**. Two fields on it are mutable, and only the
+**Editor** writes them:
 
-- The **Brief** says *what "done" means*. It is the thing a human diffs against the
-  Planner's original intent, and the thing that softens under the spec-drift bet.
-- The **Findings** say *what the last session learned* — "the client's retry logic swallows
-  the expected error," "the API is really called X." Difficulty-neutral by intent: a channel
-  for adding information **without** lowering the bar. Keeping them out of the brief keeps the
-  brief clean as spec, and gives Editor-discovered knowledge the mandated home the
-  spec-drift-3 bet regrets it lacks.
+- The **Brief** says *what "done" means* — the thing a human diffs against the Planner's
+  original intent.
+- The **Findings** say *what the last session learned about the repo* — "the client's retry
+  logic swallows the expected error," "the API is really called X." Difficulty-neutral by
+  intent: a channel for adding information **without** lowering the bar, kept out of the brief
+  so the brief stays clean as spec.
 
-The graph's shape carries everything the runtime needs. The node blocked by nothing is
-dispatched first; the node blocked by everything is dispatched last. The **Planner** reasons
-about that shape in terms of contract, implementation, and integration roles when it *builds*
-the graph — but those roles live in the design, not here. Once the graph exists they are
-fully encoded in its `blocked by` edges, and no runtime actor reads a "kind."
+The graph's shape carries everything the runtime needs: the node blocked by nothing is
+dispatched first, the node blocked by everything last. The **Planner** reasons about contract,
+implementation, and integration roles when it *builds* the graph, but once the graph exists
+those roles are fully encoded in its `blocked by` edges — no runtime actor reads a "kind."
 
-A **Run** reads the graph once, at start, and never re-reads Linear during its life. The
-graph is stable for the run by construction: nothing writes to its structure, because a human
-intervention is what *ends* a run. Resumption is a new run against a freshly read — and
-possibly replanned — graph.
+A **Run** reads the graph once, at start, and never re-reads it during its life. Human
+intervention *ends* a run; resumption is a new run against a freshly read graph.
 
 ## Session outcomes
 
@@ -97,48 +82,14 @@ state; the harness's word for everything the model cannot observe about itself.
 
 `impasse` and `silent-red` can only come from an Implementer session — an Editor session
 cannot declare itself stuck. `ceiling-exceeded` and `infra-failed` can come from either.
-`integration-failed` is not a session outcome at all: the Implementer session succeeded,
-green in isolation, and the merge queue raises it when that tree will not integrate with a
-sibling that landed first. It routes to the Editor on the first failure, never back to the
-Implementer. The resulting Editor trip is a **cycle** like any other, counted against the
-three-cycle cap.
+`integration-failed` is not a session outcome at all: the Implementer session succeeded green
+in isolation, and the merge queue raises it when that tree will not integrate with a sibling
+that landed first. It routes to the Editor on the first failure and counts as a **cycle** like
+any other.
 
-**`ceiling-exceeded` is its own outcome, not `infra-failed`, because it says something
-different.** A session whose context grew past the **smart zone** is telling you the brief was
-too large to hold in a trustworthy context, or that the model wandered — a statement about the
-**cut**. An `infra-failed` session is telling you the environment is broken. Both page the
-human; they send that human to different places.
-
-**It routes to the human, from either actor.** It is the one outcome that never reaches the
-**Editor** — not an oversight, but the point. *"This sub-issue could not be completed inside a
-trustworthy context"* is a statement about how the work was **cut**, and re-cutting is the one
-thing the Editor is forbidden to do: it may rewrite a **brief**, never add, remove, or re-link
-a **sub-issue**. Handed a ceiling kill, the only move available to it is to soften the brief —
-which is the spec-drift failure mode, dressed up as a fix. So the sub-issue goes straight to
-**needs human**, its worktree preserved. It **spends no cycle**, because no cycle occurred.
-
-That also keeps the Editor off a bill it cannot earn back: paying Opus to explain that a
-context grew too large is the same waste as paying it to diagnose `npm ci`.
-
-**`infra-failed` pages the human too — immediately, from either actor. It is never retried,
-and it never reaches the Editor.**
-
-**There is no retry anywhere in this system.** A stale lockfile, a 429, an OOM, a wall-clock
-kill: none of these are fixed by running the same session again against the same broken
-environment. They are fixed by a human fixing the environment. Retrying would burn the budget,
-delay the notification, and — because the failure is invisible to the model — produce a second
-failure identical to the first. The honest move is to stop and say so.
-
-An `infra-failed` session **spends no cycle**, because no **cycle** occurred: a cycle is an
-Implementer session plus the Editor session that follows it, and no Editor is involved here.
-The sub-issue goes straight to **needs human** with its worktree preserved, and
-quarantine-and-drain does the rest — the **run** continues, and everything not downstream of it
-still **lands**.
-
-So `ceiling-exceeded` and `infra-failed` route identically: **human, no retry, no cycle, never
-the Editor.** They differ only in what they tell the human — one says *the sub-issue was cut too
-large*, the other says *your environment is broken.* That is a different morning, which is why
-they stay distinct outcomes even though they share a destination.
+`ceiling-exceeded` and `infra-failed` route identically — **human, no retry, no cycle, never
+the Editor** — and differ only in what they tell the human: *the sub-issue was cut too large*
+versus *your environment is broken*.
 
 ## Artifacts and decisions
 
@@ -196,14 +147,10 @@ are already distinguishable without inventing a state for the second one.
 | **Integration branch** | The branch sub-issues land on. Inside the blast radius. | trunk, main, base |
 | **Merge lock** | The mutex a worktree holds while it rebases, re-runs the suite, and fast-forwards. | integration lock, queue lock |
 
-The pre-commit hook and the merge queue's suite run **inside** the blast radius — not
-because their config is mutable (though it is), but because they execute against the tree the
-agent just modified, on the agent's machine, seeing its uncommitted files, hand-installed
-packages, and environment. A frozen hook run against a poisoned tree still returns a poisoned
-green. **CI on the PR is the only honest check**: a fresh install from the lockfile on a
-clean checkout, where the hand-installed package is gone, the uncommitted stub is gone, and a
-test-config edit shows up as a reviewable diff instead of silently taking effect. No malice is
-implied — every green result is produced inside the blast radius of the thing being tested.
+The pre-commit hook and the merge queue's suite run **inside** the blast radius: they execute
+against the tree the agent just modified, on the agent's machine. **CI on the PR is the only
+honest check** — a fresh install from the lockfile on a checkout no agent touched. No malice is
+implied; every green result is produced inside the blast radius of the thing being tested.
 
 ## Relationships
 
@@ -216,41 +163,3 @@ implied — every green result is produced inside the blast radius of the thing 
 - An Editor **Session** produces one **Revision** and one **Verdict**.
 - A **Sub-issue** becomes **Eligible** when every sub-issue it is blocked by has **Landed**.
 - A **Parent issue** is **Done** only after a check outside the blast radius has passed.
-
-## Example dialogue
-
-> **Dev:** "The Implementer hit the ceiling halfway through writing tests. Is that an `impasse`?"
-
-> **Domain expert:** "No. An **impasse** is something the Implementer *declares* through its **sentinel** — the model's word about its own state. A ceiling-killed **session** never got to say anything, so the harness classifies it `ceiling-exceeded`: the harness's word for what the model could not observe about itself. It is never retried and it never reaches the **Editor**. It goes straight to **needs human**, and it costs no **cycle**."
-
-> **Dev:** "Why not the Editor? It diagnoses every other failure."
-
-> **Domain expert:** "Because a context that left the **smart zone** is usually saying the sub-issue was **cut** too large — and re-cutting is the one thing the Editor may not do. It rewrites a **brief**; it never adds, removes, or re-links a **sub-issue**. Hand it a ceiling kill and the only move it has left is to soften the brief, which is the spec-drift failure wearing a fix's clothes. So a human looks at it. Paying Opus to explain that a context grew too large is the same waste as paying it to diagnose `npm ci`."
-
-> **Dev:** "But it only used 120k of a 272k window."
-
-> **Domain expert:** "The window is what the model *can* hold. The **smart zone** is what it can hold *well*. We would rather have a session that stopped inside the zone and told us the cut was wrong than one that ground on to 250k and produced confident nonsense."
-
-> **Dev:** "The worktree came up with no `node_modules` and every test failed. Surely we just retry that one?"
-
-> **Domain expert:** "No. There is **no retry anywhere in this system**. That's `infra-failed`, and it goes straight to **needs human**, same as a ceiling kill — no retry, no **cycle**, and the **Editor** never sees it. Running the session again against the same broken environment produces the same failure and spends the budget doing it. The lockfile is stale; a human fixes the lockfile."
-
-> **Dev:** "Then why is `infra-failed` a separate outcome from `ceiling-exceeded`, if they both just page me?"
-
-> **Domain expert:** "Because they tell you different things. One says *this sub-issue was cut too large to hold in a trustworthy context*; the other says *your environment is broken*. Same destination, completely different morning — one sends you to the graph, the other to the lockfile. The notification carries the diagnosis, and the diagnosis is the whole product."
-
-> **Dev:** "And a session that's just *spinning* — re-running a failing suite twenty times?"
-
-> **Domain expert:** "Flat context, so the ceiling never fires. That one is caught by the wall-clock backstop, and a wall-clock kill is `infra-failed`. The two bounds catch different failures; neither substitutes for the other."
-
-> **Dev:** "The Editor came back `inconclusive` on 105, so it goes to **needs human**. What did it do with what it learned about the retry bug?"
-
-> **Domain expert:** "It writes that into the sub-issue's **Findings**, not the **Brief**. The brief stays the spec — what 'done' means — so a human can still diff it against the Planner's intent. The findings carry the repo facts forward so the next session doesn't rediscover the trap. Different fields because they answer different questions."
-
-> **Dev:** "And 107, which is blocked by 105?"
-
-> **Domain expert:** "Nothing happens to it. It stays unstarted with its `blocked by` relation intact — it never became **eligible**, so it never got a turn. That's visibly different from 105, which tried and failed. Everything not downstream of 105 keeps going and **lands**."
-
-> **Dev:** "Once they've all landed, the parent is **done**?"
-
-> **Domain expert:** "Landed means it's on the **integration branch**, which every agent had write access to all run. It isn't **honest** until CI has rebuilt it from the lockfile on a checkout no agent ever touched. *Then* the parent is done."

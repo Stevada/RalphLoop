@@ -54,11 +54,17 @@ own sentence, and `ralph run` runs the same checks before it dispatches anything
 
 | Document | What it is |
 |---|---|
-| `docs/prd.md` | Why the system is shaped this way, and the bets taken deliberately |
-| `docs/architecture.md` | The contract — layers, types, Protocols, adapters |
+| `docs/design.md` | Why the system is shaped this way, and the bets taken deliberately |
+| `docs/architecture.md` | The map — layers, where each concept lives, seams, invariants |
+| `docs/cli-metering.md` | How each backend CLI exposes its context signal (the ceiling's input) |
 | `docs/harness-flow.mmd` | The control flow of one run, as a diagram |
 | `UBIQUITOUS_LANGUAGE.md` | Canonical for every domain term, **including code identifiers** |
-| `CLAUDE.md` | Coding rules |
+| `CLAUDE.md` | How to work in this repo (status, commands); coding rules auto-load from `.claude/rules/` |
+
+Documents reference each other in one direction only — from orientation toward detail — so there is
+always a valid reading order and no reference cycles. `README.md` and `CLAUDE.md` are the two entry
+points (human and agent); `UBIQUITOUS_LANGUAGE.md` (terms) and `docs/design.md` (why) are the shared
+leaves everything else points down to.
 
 ## Prerequisites
 
