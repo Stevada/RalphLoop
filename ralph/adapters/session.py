@@ -32,9 +32,9 @@ BuildArgv = Callable[[Brief, Findings, Worktree], Sequence[str]]
 class ImpasseParseError(ValueError):
     """The session emitted a sentinel the harness cannot read.
 
-    Loud, and deliberately so. An unreadable impasse would otherwise be classified `silent-red` —
-    routing a session that *told us it was stuck* to an Editor as though it had lied about
-    succeeding. The failure would look exactly like a correctly-handled one.
+    Loud, and deliberately so. An unreadable impasse would otherwise be classified as an undeclared
+    impasse — the model's claim silently dropped, the failure looking exactly like a correctly-handled
+    one.
     """
 
 

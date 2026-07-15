@@ -3,7 +3,7 @@
 Not fakes — a fake satisfies a Protocol at a seam; a builder constructs a value. These exist so a
 test can state the one field it is actually about and let the rest default to something plausible.
 `telemetry(commits=0)` says "a session that committed nothing" and nothing else, which is exactly
-what the silent-red test means.
+what the undeclared-impasse test means.
 """
 
 from __future__ import annotations

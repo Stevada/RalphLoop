@@ -38,7 +38,7 @@ def route(actor: Actor, outcome: Outcome) -> Destination:
                     return Destination.ACT_ON_VERDICT
                 case _:
                     assert_never(actor)
-        case Outcome.IMPASSE | Outcome.SILENT_RED | Outcome.INTEGRATION_FAILED:
+        case Outcome.IMPASSE | Outcome.INTEGRATION_FAILED:
             return Destination.EDITOR
         case Outcome.CEILING_EXCEEDED | Outcome.INFRA_FAILED:
             return Destination.HUMAN

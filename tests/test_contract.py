@@ -67,11 +67,10 @@ def test_the_state_types_are_str_enums(enum: type) -> None:
     assert issubclass(enum, StrEnum)
 
 
-def test_the_outcome_taxonomy_is_exactly_five_failures_and_one_success() -> None:
+def test_the_outcome_taxonomy_is_exactly_four_failures_and_one_success() -> None:
     assert {o.value for o in Outcome} == {
         "success",
         "impasse",
-        "silent-red",
         "integration-failed",
         "ceiling-exceeded",
         "infra-failed",

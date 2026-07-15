@@ -92,8 +92,8 @@ def test_the_sandbox_and_the_bypass_are_never_passed_together(
     monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Codex rejects them together, and the rejection is a non-zero exit with no commits — which
-    the harness would faithfully classify as `silent-red` and route to an Editor, to adjudicate a
-    failure that was entirely ours."""
+    the harness would faithfully classify as an (undeclared) impasse and route to an Editor, to
+    adjudicate a failure that was entirely ours."""
     monkeypatch.setenv("RALPH_CODEX_UNSANDBOXED", "1")
     argv = codex_argv(BRIEF, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"))
 

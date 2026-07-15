@@ -76,7 +76,7 @@ async def test_the_quarantined_worktree_is_moved_out_of_the_way() -> None:
     store = FakeIssueStore(
         graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
     )
-    implementer = FakeImplementer(scripted=[telemetry(commits=0)])  # silent-red
+    implementer = FakeImplementer(scripted=[telemetry(commits=0)])  # undeclared impasse
     git, log = FakeGit(head="integration"), FakeRunLog()
 
     await scheduler_over(store, implementer, git, log).run()

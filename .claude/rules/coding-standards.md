@@ -131,7 +131,7 @@ than code that has one.
 
 - **Fail fast, loudly.** Raise on missing required fields — no silent defaults. Never `|| true`,
   never a bare `except:`, never swallow a subprocess's exit code.
-- **Zero commits is never a benign skip.** It is `silent-red` or `infra-failed`.
+- **Zero commits is never a benign skip.** It is an `impasse` or `infra-failed`.
 - **The suite result, not the exit code, is the outcome.** The harness runs the tests. A model's exit
   code is its opinion; the suite is a fact.
 - **No string-keyed intermediates.** Typed records throughout; no `dict[str, Any]` layers between a

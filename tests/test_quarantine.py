@@ -117,13 +117,13 @@ async def test_a_report_carries_both_the_models_claim_and_the_harnesss_facts(
     report = await run(repo.path, None)
 
     escalation = report.notification.escalations[0]
-    assert escalation.outcome is Outcome.SILENT_RED
+    assert escalation.outcome is Outcome.IMPASSE
     assert "All tests pass" in escalation.report.telemetry.session_output  # the model's story
     assert not escalation.report.suite.green  # the harness's fact
     assert escalation.report.telemetry.commits == 1  # it really did commit; it was just wrong
 
 
-async def test_zero_commits_is_silent_red_never_a_benign_skip(
+async def test_zero_commits_is_an_impasse_never_a_benign_skip(
     repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """It exits 0 and says the code was already fine. The prototype called that a skip and moved on
@@ -133,7 +133,7 @@ async def test_zero_commits_is_silent_red_never_a_benign_skip(
 
     report = await run(repo.path, None)
 
-    assert report.failed == {SubIssueId("01"): Outcome.SILENT_RED}
+    assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
     assert report.notification.escalations[0].report.telemetry.commits == 0
 
 

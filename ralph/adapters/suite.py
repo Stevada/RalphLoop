@@ -5,7 +5,8 @@ the harness runs the tests itself, in the worktree, and does not ask the model h
 
 A repo with no detectable suite is a **loud, fatal error**. Returning a green `SuiteResult` for a
 repo whose tests we could not find would make every classification downstream a lie, and it would
-be the most expensive lie in the system: `silent-red` would become unreachable.
+be the most expensive lie in the system: an undeclared impasse would become unreachable, every red
+suite waved through as success.
 """
 
 from __future__ import annotations

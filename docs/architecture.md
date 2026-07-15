@@ -112,7 +112,7 @@ rather than a rule someone must remember.
 `classify_implementer` / `classify_editor` ([classify.py](../ralph/domain/rules/classify.py)) turn
 telemetry + suite into an `Outcome`. Two facts to know without reading the bodies: **precedence is
 load-bearing** (a ceiling kill and a crash both exit non-zero and are only separated by checking
-`killed` first), and **zero commits is never a benign skip** — it is `silent-red`. `INTEGRATION_FAILED`
+`killed` first), and **zero commits is never a benign skip** — it is an `impasse`. `INTEGRATION_FAILED`
 is unreachable from either classifier; only the merge queue raises it.
 
 ### Routing — the taxonomy, executable
@@ -342,7 +342,7 @@ damage or misjudge:
 |---|---|
 | `protected-branch` | Fast-forward `main`. Ralph lands onto the branch it is run from. |
 | `dirty-tree` | Fight the merge queue's fast-forwards over uncommitted work, and lose. |
-| `no-suite` | Call every session green — `silent-red` becomes **unreachable**, the most expensive of the five. |
+| `no-suite` | Call every session green — an undeclared `impasse` becomes **unreachable**, the most expensive miss of the five. |
 | `hooks-not-installed` | Land commits that skipped the checks the repo believes it enforces. |
 | `graph` | Read a graph it cannot read. |
 

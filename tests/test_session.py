@@ -53,7 +53,7 @@ async def test_a_session_that_committed_nothing_is_caught_by_the_commit_count(
 
     assert t.exit_code == 0
     assert t.commits == 0
-    assert classify_implementer(t, SuiteResult(True, "", 0.0)) is Outcome.SILENT_RED
+    assert classify_implementer(t, SuiteResult(True, "", 0.0)) is Outcome.IMPASSE
 
 
 async def test_a_hanging_session_is_killed_on_the_wall_clock(
@@ -91,9 +91,9 @@ def test_no_sentinel_is_no_report() -> None:
 
 
 def test_an_unreadable_impasse_is_loud() -> None:
-    """Silently ignoring it would classify a session that *told us it was stuck* as `silent-red` —
-    routing it to the Editor as though it had lied about succeeding. The failure would look exactly
-    like a correctly-handled one."""
+    """Silently ignoring it would classify a session that *told us it was stuck* as an undeclared
+    impasse — dropping the model's claim and handing the Editor a story it never told. The failure
+    would look exactly like a correctly-handled one."""
     with pytest.raises(ImpasseParseError):
         parse_impasse("<impasse>\n{not json at all}\n</impasse>")
 

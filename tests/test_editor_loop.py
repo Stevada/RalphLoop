@@ -53,7 +53,7 @@ REPO = Path("/repo")
 ONE = SubIssueId("01")
 
 IMPASSE = telemetry(commits=0, impasse_report=impasse())
-SILENT_RED = telemetry(commits=0)
+UNDECLARED_IMPASSE = telemetry(commits=0)
 SUCCESS = telemetry(commits=1)
 
 
@@ -91,10 +91,10 @@ async def run_with(
 # --- what reaches the Editor at all ---------------------------------------------------------------
 
 
-def test_exactly_three_outcomes_reach_the_editor() -> None:
+def test_exactly_two_outcomes_reach_the_editor() -> None:
     """Asserted over the **full** `Outcome` enum, via `route` — not over a list of examples.
 
-    A test that checked three outcomes go to the Editor would still pass if a fourth were quietly
+    A test that checked two outcomes go to the Editor would still pass if a third were quietly
     added to the routing table. The interesting half of this claim is the half about what does *not*
     reach it: `ceiling-exceeded` and `infra-failed` are unhelpable by an Editor, and a harness that
     sent them there would burn a cycle and a model on a question with no answer.
@@ -104,12 +104,12 @@ def test_exactly_three_outcomes_reach_the_editor() -> None:
         for outcome in Outcome
         if route(Actor.IMPLEMENTER, outcome) is Destination.EDITOR
     }
-    assert to_the_editor == {Outcome.IMPASSE, Outcome.SILENT_RED, Outcome.INTEGRATION_FAILED}
+    assert to_the_editor == {Outcome.IMPASSE, Outcome.INTEGRATION_FAILED}
 
 
 @pytest.mark.parametrize(
     ("session", "expected"),
-    [(IMPASSE, Outcome.IMPASSE), (SILENT_RED, Outcome.SILENT_RED)],
+    [(IMPASSE, Outcome.IMPASSE), (UNDECLARED_IMPASSE, Outcome.IMPASSE)],
 )
 async def test_an_implementer_failure_is_handed_to_the_editor(
     session: SessionTelemetry, expected: Outcome

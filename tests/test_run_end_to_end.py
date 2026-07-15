@@ -127,7 +127,7 @@ async def test_the_install_runs_once_in_the_base_checkout_never_per_worktree(
     assert ledger.read_text() == "x"
 
 
-async def test_a_silent_red_session_does_not_land(
+async def test_an_undeclared_impasse_session_does_not_land(
     repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """It exits 0 and commits nothing. The prototype called that a skip and moved on."""
@@ -136,7 +136,7 @@ async def test_a_silent_red_session_does_not_land(
     report = await run(repo.path, None)
 
     assert report.landed == ()
-    assert report.failed == {SubIssueId("01"): Outcome.SILENT_RED}
+    assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
     assert repo.commit_count("integration") == 1
     assert "Status: needs-human" in (repo.issues_dir / "01-first.md").read_text()
 
@@ -155,7 +155,7 @@ async def test_a_session_that_commits_a_red_suite_does_not_land(
 
     report = await run(repo.path, None)
 
-    assert report.failed == {SubIssueId("01"): Outcome.SILENT_RED}
+    assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
     assert repo.commit_count("integration") == 1
     assert repo.run_suite() is True  # integration was never touched, so it is still green
 

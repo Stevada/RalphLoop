@@ -289,10 +289,10 @@ async def test_a_garbled_verdict_is_no_verdict_and_is_never_quietly_repaired(
 
 
 async def test_one_garbled_verdict_does_not_take_the_run_down_with_it() -> None:
-    """It is logged, not raised. An unreadable *impasse* is fatal — it would be misclassified as
-    `silent-red` and routed to an Editor to adjudicate a failure that never happened. An unreadable
-    *verdict* already lands where a garbled verdict belongs: a human, with the worktree preserved.
-    Killing twenty healthy sub-issues to make the point would be a worse trade."""
+    """It is logged, not raised. An unreadable *impasse* is fatal — it would be misclassified as an
+    undeclared impasse, dropping the model's claim and handing the Editor a story it never told. An
+    unreadable *verdict* already lands where a garbled verdict belongs: a human, with the worktree
+    preserved. Killing twenty healthy sub-issues to make the point would be a worse trade."""
     _, v = await adjudicate(StubSession([f"{VERDICT_OPEN}nonsense{VERDICT_CLOSE}"]))
 
     assert v is None  # no exception escaped

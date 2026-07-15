@@ -74,14 +74,13 @@ state; the harness's word for everything the model cannot observe about itself.
 | Outcome | Detection | Routes to |
 | ------- | --------- | --------- |
 | `success` | Implementer: green commit, suite verified by the harness. Editor: a verdict returned. | Merge queue / act on verdict |
-| `impasse` | `<impasse>` sentinel present (Implementer only) | Editor |
-| `silent-red` | Session ran to completion, suite red, no sentinel (Implementer only) | Editor |
+| `impasse` | The Implementer did not deliver: the `<impasse>` sentinel, no commits, or a red suite (Implementer only) | Editor |
 | `integration-failed` | Prospective merge conflicts or goes red after rebase onto the integration head (merge queue, not a session) | Editor |
 | `ceiling-exceeded` | Context crossed the 120k **smart zone**; session killed | Human — from either actor |
 | `infra-failed` | Setup failure, wall-clock timeout, rate limit, OOM (either actor) | Human — from either actor. Never the Editor. |
 
-`impasse` and `silent-red` can only come from an Implementer session — an Editor session
-cannot declare itself stuck. `ceiling-exceeded` and `infra-failed` can come from either.
+`impasse` can only come from an Implementer session — an Editor cannot fail to deliver a brief
+it was never given. `ceiling-exceeded` and `infra-failed` can come from either actor.
 `integration-failed` is not a session outcome at all: the Implementer session succeeded green
 in isolation, and the merge queue raises it when that tree will not integrate with a sibling
 that landed first. It routes to the Editor on the first failure and counts as a **cycle** like
@@ -96,7 +95,7 @@ versus *your environment is broken*.
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
 | **Sentinel** | A fixed marker string the model prints for the harness to grep, e.g. `<impasse>`. The channel for a model's word about its own state. | flag, marker, token |
-| **Impasse** | The Implementer's declaration, via the `<impasse>` sentinel, that it cannot satisfy its brief. | blocked, stuck, giving up |
+| **Impasse** | The outcome of an Implementer session that could not satisfy its brief — whether the model **declared** it via the `<impasse>` sentinel, or the suite **caught** it undeclared (no commits, or a red suite). | blocked, stuck, giving up, silent-red |
 | **Impasse report** | The Implementer's structured exit artifact, corroborated by harness-supplied facts. | blocker report, failure report |
 | **Revision** | The Editor's rewrite of a brief (and its findings), recorded alongside the Planner's original rather than over it. | edit, fix, update |
 | **Verdict** | The Editor's decision when its session succeeds: `revise`, `planning-defect`, or `inconclusive`. | outcome, ruling, judgment |
@@ -158,8 +157,8 @@ implied; every green result is produced inside the blast radius of the thing bei
 - A **Sub-issue** has one **Brief** and one **Findings**.
 - A **Cycle** is one Implementer **Session** plus one Editor **Session**; at most three.
 - Every **Session** is bounded at 120k tokens; the harness also bounds cycles at three.
-- An Implementer **Session** ends in a commit or an **Impasse**.
-- An **Impasse** produces an **Impasse report**, which is the Editor's only sensor.
+- An Implementer **Session** ends in a green delivery or an **Impasse**.
+- An **Impasse** produces the report that is the Editor's only sensor.
 - An Editor **Session** produces one **Revision** and one **Verdict**.
 - A **Sub-issue** becomes **Eligible** when every sub-issue it is blocked by has **Landed**.
 - A **Parent issue** is **Done** only after a check outside the blast radius has passed.

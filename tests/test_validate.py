@@ -187,7 +187,7 @@ def test_a_repo_with_no_detectable_suite_is_refused(
     repo: TargetRepo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The most dangerous of the five to let through: a repo whose tests the harness cannot find is
-    a repo where every session is `success` and `silent-red` is unreachable."""
+    a repo where every session is `success` and an undeclared impasse is unreachable."""
     (repo.path / "test_calculator.py").unlink()
     (repo.path / "calculator.py").unlink()
     (repo.path / "shared.py").unlink()

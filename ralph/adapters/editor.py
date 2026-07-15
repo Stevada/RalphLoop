@@ -273,9 +273,9 @@ def _killable(session: EditorSession) -> Killable:
 def verdict_of(output: str) -> EditorVerdict | None:
     """A verdict the harness cannot read is not worth killing the run over.
 
-    An unreadable *impasse* is fatal, because it would be misclassified as `silent-red` and routed
-    to an Editor to adjudicate a failure that never happened. An unreadable *verdict* has no such
-    problem: `None` classifies `infra-failed`, which pages a human and preserves the worktree —
+    An unreadable *impasse* is fatal, because it would be misclassified as an undeclared impasse,
+    silently dropping the model's claim. An unreadable *verdict* has no such problem: `None`
+    classifies `infra-failed`, which pages a human and preserves the worktree —
     which is exactly where a garbled verdict belongs. So it is logged loudly and the run goes on,
     rather than taking twenty healthy sub-issues down with it.
     """

@@ -41,16 +41,18 @@ def test_the_impasse_sentinel_is_an_impasse() -> None:
     assert classify_implementer(t, suite(green=False)) is Outcome.IMPASSE
 
 
-def test_zero_commits_is_silent_red_never_success() -> None:
+def test_zero_commits_is_an_impasse_never_success() -> None:
     """`no commits - skipping` was the prototype's worst lie. A session that produced nothing
-    did not succeed, whatever the suite says about the tree it never touched."""
-    assert classify_implementer(telemetry(commits=0), suite(green=True)) is Outcome.SILENT_RED
+    did not succeed, whatever the suite says about the tree it never touched — it is an impasse
+    the model never declared."""
+    assert classify_implementer(telemetry(commits=0), suite(green=True)) is Outcome.IMPASSE
 
 
-def test_a_session_that_committed_but_left_the_suite_red_is_silent_red() -> None:
-    """The suite result, not the exit code. The model exited 0 and is wrong about it."""
+def test_a_session_that_committed_but_left_the_suite_red_is_an_impasse() -> None:
+    """The suite result, not the exit code. The model exited 0 and is wrong about it — an
+    undeclared impasse, caught by the suite rather than confessed."""
     t = telemetry(exit_code=0, commits=3)
-    assert classify_implementer(t, suite(green=False)) is Outcome.SILENT_RED
+    assert classify_implementer(t, suite(green=False)) is Outcome.IMPASSE
 
 
 def test_a_ceiling_kill_is_ceiling_exceeded_not_infra_failed() -> None:
@@ -78,17 +80,20 @@ def test_the_ceiling_outranks_the_impasse_sentinel() -> None:
     assert classify_implementer(t, suite(green=False)) is Outcome.CEILING_EXCEEDED
 
 
-def test_the_impasse_sentinel_outranks_zero_commits() -> None:
-    """Declaring an impasse and committing nothing is the *expected* shape of an impasse — it is
-    not a silent red."""
+def test_a_declared_impasse_that_committed_nothing_is_an_impasse() -> None:
+    """Declaring an impasse and committing nothing is the *expected* shape of a declared impasse.
+    The sentinel and the empty tree agree; the model stood behind a claim, which the report keeps."""
     t = telemetry(commits=0, impasse_report=impasse())
     assert classify_implementer(t, suite(green=False)) is Outcome.IMPASSE
+    assert failure_report(Outcome.IMPASSE, t, suite(green=False)).claim is not None
 
 
-def test_a_non_zero_exit_without_a_sentinel_is_not_an_impasse() -> None:
-    """The process died. Do not assume the model gave up."""
+def test_a_non_zero_exit_without_a_sentinel_is_an_undeclared_impasse() -> None:
+    """The process died without declaring anything. It is still an impasse — it did not deliver —
+    but an undeclared one: the harness must not manufacture a claim the model never made."""
     t = telemetry(exit_code=1, commits=0, impasse_report=None)
-    assert classify_implementer(t, suite(green=False)) is not Outcome.IMPASSE
+    assert classify_implementer(t, suite(green=False)) is Outcome.IMPASSE
+    assert failure_report(Outcome.IMPASSE, t, suite(green=False)).claim is None
 
 
 def test_the_implementer_never_classifies_integration_failed() -> None:
@@ -125,10 +130,10 @@ def test_a_wall_clocked_editor_is_infra_failed() -> None:
     )
 
 
-def test_classify_editor_cannot_return_impasse_or_silent_red_for_any_input() -> None:
-    """Structural, not incidental: an Editor cannot declare itself stuck, and it commits nothing
-    that could go silently red. Assert over the input space, not one example."""
-    forbidden = {Outcome.IMPASSE, Outcome.SILENT_RED, Outcome.INTEGRATION_FAILED}
+def test_classify_editor_cannot_return_impasse_for_any_input() -> None:
+    """Structural, not incidental: an Editor has no brief of its own to fail to deliver, declared
+    or not. Assert over the input space, not one example."""
+    forbidden = {Outcome.IMPASSE, Outcome.INTEGRATION_FAILED}
     telemetries = [
         telemetry(),
         telemetry(exit_code=1, commits=0),
@@ -154,10 +159,8 @@ def test_an_editors_success_is_a_verdict_to_act_on() -> None:
     assert route(Actor.EDITOR, Outcome.SUCCESS) is Destination.ACT_ON_VERDICT
 
 
-@pytest.mark.parametrize(
-    "outcome", [Outcome.IMPASSE, Outcome.SILENT_RED, Outcome.INTEGRATION_FAILED]
-)
-def test_the_three_diagnosable_failures_go_to_the_editor(outcome: Outcome) -> None:
+@pytest.mark.parametrize("outcome", [Outcome.IMPASSE, Outcome.INTEGRATION_FAILED])
+def test_the_diagnosable_failures_go_to_the_editor(outcome: Outcome) -> None:
     assert route(Actor.IMPLEMENTER, outcome) is Destination.EDITOR
 
 
@@ -310,7 +313,7 @@ def test_the_report_carries_the_claim_and_the_contradicting_facts_together() -> 
     two disagreeing is the signal, and a report that dropped either half would hide it."""
     claimed_green = telemetry(session_output="All tests pass!", impasse_report=impasse())
 
-    report = failure_report(Outcome.SILENT_RED, claimed_green, suite(green=False, output="1 failed"))
+    report = failure_report(Outcome.IMPASSE, claimed_green, suite(green=False, output="1 failed"))
 
     assert report.claim is not None  # the model's story
     assert "All tests pass" in report.telemetry.session_output
@@ -349,15 +352,46 @@ def test_the_outcome_decides_what_kind_of_ten_minutes_you_are_about_to_spend() -
     assert ATTENTION_ORDER[Outcome.INFRA_FAILED] < ATTENTION_ORDER[Outcome.CEILING_EXCEEDED]
     assert ATTENTION_ORDER[Outcome.CEILING_EXCEEDED] < ATTENTION_ORDER[Outcome.IMPASSE]
     assert ATTENTION_ORDER[Outcome.IMPASSE] < ATTENTION_ORDER[Outcome.INTEGRATION_FAILED]
-    assert ATTENTION_ORDER[Outcome.INTEGRATION_FAILED] < ATTENTION_ORDER[Outcome.SILENT_RED]
     assert Outcome.SUCCESS not in ATTENTION_ORDER  # a success does not escalate
+
+
+def test_a_declared_impasse_opens_before_an_undeclared_one() -> None:
+    """Same outcome, different morning. A declared impasse — the model explained a criterion it
+    could not meet — is read before an integration failure; an undeclared one, the suite catching a
+    session that thought it was done, is read after. The split is taken from the report's `claim`,
+    not from a second outcome."""
+    declared = failure_report(
+        Outcome.IMPASSE, telemetry(impasse_report=impasse()), suite(green=False)
+    )
+    undeclared = failure_report(Outcome.IMPASSE, telemetry(commits=0), suite(green=False))
+    integration = failure_report(Outcome.INTEGRATION_FAILED, telemetry(), suite(green=False))
+
+    graph = graph_of({"01": [], "02": [], "03": []})
+    states = {i: SubIssueState.NEEDS_HUMAN for i in map(SubIssueId, ("01", "02", "03"))}
+
+    n = notify(
+        graph,
+        states,
+        [],
+        {
+            SubIssueId("01"): undeclared,
+            SubIssueId("02"): declared,
+            SubIssueId("03"): integration,
+        },
+    )
+
+    assert [e.sub_issue for e in n.escalations] == [
+        SubIssueId("02"),  # declared impasse, opened first
+        SubIssueId("03"),  # integration-failed, between them
+        SubIssueId("01"),  # undeclared impasse, opened last
+    ]
 
 
 def test_the_ranking_puts_the_worse_kind_first_even_when_it_strands_less() -> None:
     graph = graph_of({"01": [], "02": [], "03": ["02"]})
     states = {
         SubIssueId("01"): SubIssueState.NEEDS_HUMAN,  # infra-failed, stranding nobody
-        SubIssueId("02"): SubIssueState.NEEDS_HUMAN,  # silent-red, stranding 03
+        SubIssueId("02"): SubIssueState.NEEDS_HUMAN,  # undeclared impasse, stranding 03
         SubIssueId("03"): SubIssueState.READY,
     }
 
@@ -366,7 +400,7 @@ def test_the_ranking_puts_the_worse_kind_first_even_when_it_strands_less() -> No
         states,
         [],
         {
-            SubIssueId("02"): escalate(Outcome.SILENT_RED),
+            SubIssueId("02"): escalate(Outcome.IMPASSE),
             SubIssueId("01"): escalate(Outcome.INFRA_FAILED),
         },
     )
@@ -390,8 +424,8 @@ def test_blast_radius_breaks_the_tie_between_two_failures_of_the_same_kind() -> 
         states,
         [],
         {
-            SubIssueId("01"): escalate(Outcome.SILENT_RED),
-            SubIssueId("02"): escalate(Outcome.SILENT_RED),
+            SubIssueId("01"): escalate(Outcome.IMPASSE),
+            SubIssueId("02"): escalate(Outcome.IMPASSE),
         },
     )
 

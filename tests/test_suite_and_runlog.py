@@ -59,7 +59,8 @@ def test_the_override_beats_every_detector(tmp_path: Path, monkeypatch: pytest.M
 
 def test_a_repo_with_no_suite_and_no_override_is_a_loud_fatal_error(tmp_path: Path) -> None:
     """Never a green `SuiteResult`. A repo whose tests the harness cannot run would make every
-    classification downstream a lie — and `silent-red` would become unreachable."""
+    classification downstream a lie — and an undeclared impasse (a red suite believed green) would
+    become unreachable."""
     with pytest.raises(NoSuiteFound, match="no test suite detected"):
         detect_test_cmd(tmp_path)
 
@@ -135,13 +136,13 @@ async def test_the_run_log_is_append_only_jsonl(tmp_path: Path) -> None:
 
 async def test_the_run_log_reads_back_as_typed_events_in_order(tmp_path: Path) -> None:
     log = JsonlRunLog(path=tmp_path / "run.jsonl")
-    await log.write(event(SubIssueId("01"), Actor.IMPLEMENTER, "session-closed", Outcome.SILENT_RED))
+    await log.write(event(SubIssueId("01"), Actor.IMPLEMENTER, "session-closed", Outcome.IMPASSE))
     await log.write(event(SubIssueId("02"), Actor.IMPLEMENTER, "terminal", SubIssueState.LANDED))
 
     events = JsonlRunLog(path=tmp_path / "run.jsonl").events()
 
     assert [e.kind for e in events] == ["session-closed", "terminal"]
-    assert events[0].payload is Outcome.SILENT_RED
+    assert events[0].payload is Outcome.IMPASSE
     assert events[1].payload is SubIssueState.LANDED
     assert events[0].ts <= events[1].ts
 

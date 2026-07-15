@@ -114,12 +114,11 @@ session as design context.
 
 ## Failure taxonomy
 
-Five outcomes, and each one routes somewhere specific:
+Four outcomes, and each one routes somewhere specific:
 
 | Outcome | Meaning | Goes to |
 |---|---|---|
-| `impasse` | The Implementer stopped and said why | Editor |
-| `silent-red` | It claimed success; the suite disagrees | Editor |
+| `impasse` | The Implementer did not deliver — it said why, committed nothing, or left the suite red | Editor |
 | `integration-failed` | Green alone, red or conflicting on the merge | Editor |
 | `ceiling-exceeded` | The session left the model's smart zone | Human |
 | `infra-failed` | The environment is broken, not the code | Human |

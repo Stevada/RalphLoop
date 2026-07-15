@@ -30,7 +30,6 @@ adapter that sets it must be spelling the same two words.
 class Outcome(StrEnum):
     SUCCESS = "success"
     IMPASSE = "impasse"
-    SILENT_RED = "silent-red"
     INTEGRATION_FAILED = "integration-failed"
     CEILING_EXCEEDED = "ceiling-exceeded"
     INFRA_FAILED = "infra-failed"

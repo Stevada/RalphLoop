@@ -40,8 +40,8 @@ def test_head_is_not_on_a_protected_branch(repo: TargetRepo) -> None:
 
 
 def test_the_suite_really_goes_red_when_the_code_is_wrong(repo: TargetRepo) -> None:
-    """Otherwise `silent-red` could never be observed, and the harness's central claim — the
-    suite result, not the exit code, is the outcome — would rest on a suite that always passes."""
+    """Otherwise an undeclared impasse could never be observed, and the harness's central claim —
+    the suite result, not the exit code, is the outcome — would rest on a suite that always passes."""
     (repo.path / "calculator.py").write_text("def add(a: int, b: int) -> int:\n    return a * b\n")
     assert repo.run_suite() is False
 
@@ -102,7 +102,7 @@ def test_succeed_leaves_the_suite_green(repo: TargetRepo, agent: StandInAgent) -
 
 def test_commit_nothing_commits_nothing(repo: TargetRepo, agent: StandInAgent) -> None:
     """Exit 0, a cheerful message, and not one commit. The prototype called this a skip; the
-    harness calls it `silent-red`."""
+    harness calls it an (undeclared) impasse."""
     wt = repo.add_worktree("01")
 
     proc = _run(agent, Behaviour.COMMIT_NOTHING, "01", cwd=wt)
@@ -202,8 +202,8 @@ def test_the_stand_in_agents_source_is_valid_python() -> None:
 
     `_AGENT_SOURCE` is a plain triple-quoted string, so a `\\n` written where `\\\\n` was meant lands
     in the generated script as a *real* newline and breaks a string literal. The agent then dies of a
-    `SyntaxError` on every session — and the harness, working perfectly, classifies that as
-    `silent-red` and carries on.
+    `SyntaxError` on every session — and the harness, working perfectly, classifies that as an
+    undeclared impasse and carries on.
 
     Which means nothing fails. Every test still runs, every one of them still passes or fails for
     plausible-looking reasons, and all of them are now testing a crash instead of the behaviour they

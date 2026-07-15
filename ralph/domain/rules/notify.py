@@ -29,15 +29,16 @@ ATTENTION_ORDER: Mapping[Outcome, int] = {
     # The sub-issue was too big to reason about inside the smart zone. Re-cut it — a Planner's job,
     # and no amount of reading the diff will tell you that.
     Outcome.CEILING_EXCEEDED: 1,
-    # The model says an acceptance criterion cannot be satisfied, and explained itself. If it is
-    # right, you are rewriting a brief, not a function.
+    # The model declared an impasse and explained itself: an acceptance criterion it believes cannot
+    # be satisfied. If it is right, you are rewriting a brief, not a function.
     Outcome.IMPASSE: 2,
     # Green alone, red together. The defect is in how the work was cut across sub-issues, so the
     # diff to read is the *pair* of them.
     Outcome.INTEGRATION_FAILED: 3,
-    # It committed nothing, or it committed a red suite and said nothing. Read the diff.
-    Outcome.SILENT_RED: 4,
 }
+
+# An undeclared impasse: no brief to reconsider, just a diff to read, so it is opened last.
+_UNDECLARED_IMPASSE = 4
 
 
 def notify(
@@ -69,8 +70,18 @@ def notify(
 
 
 def _open_this_one_first(e: Escalation) -> tuple[int, int, str]:
-    if e.outcome not in ATTENTION_ORDER:
+    return (_attention(e.report), -len(e.stranded), e.sub_issue)
+
+
+def _attention(report: FailureReport) -> int:
+    """How urgent this failure is to open, lower first. An undeclared impasse (no `claim`) is read
+    after everything else; every other failure ranks by its outcome alone."""
+    if report.outcome is Outcome.IMPASSE and report.claim is None:
+        return _UNDECLARED_IMPASSE
+    if report.outcome not in ATTENTION_ORDER:
         # SUCCESS is the only other member, and a success does not escalate. Reaching here means
         # the scheduler quarantined something it had classified as fine.
-        raise ValueError(f"{e.sub_issue} escalated with outcome {e.outcome!r}, which is not a failure")
-    return (ATTENTION_ORDER[e.outcome], -len(e.stranded), e.sub_issue)
+        raise ValueError(
+            f"escalated with outcome {report.outcome!r}, which is not a failure"
+        )
+    return ATTENTION_ORDER[report.outcome]

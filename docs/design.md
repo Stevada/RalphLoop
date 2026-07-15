@@ -284,7 +284,7 @@ Decomposition quality has no other automated check in this system. This is it.
 
 ### 4.6 The Editor's session
 
-Triggered by `impasse`, `silent-red`, or an `integration-failed` merge. Never by
+Triggered by an `impasse` — declared or not — or an `integration-failed` merge. Never by
 `infra-failed`, and never by `ceiling-exceeded` — those two are the outcomes the Editor
 cannot help with, one because it is transient and one because its remedy is a re-cut the
 Editor is forbidden to make.
@@ -375,13 +375,12 @@ amount of replanning fixes a bad PRD.
 
 ## 5. The failure taxonomy
 
-The harness owns **five** failure outcomes, not one. This is the single highest-value piece
+The harness owns **four** failure outcomes, not one. This is the single highest-value piece
 of harness logic.
 
 | Outcome | Detection | Routes to |
 |---|---|---|
-| `impasse` | `<impasse>` sentinel present | **Editor** |
-| `silent-red` | Session ran, suite red, no sentinel | **Editor** |
+| `impasse` | Session did not deliver: the `<impasse>` sentinel, or no commits, or a red suite | **Editor** |
 | `integration-failed` | Prospective merge conflicts, or the suite is red after rebase onto the integration head | **Editor** |
 | `ceiling-exceeded` | Context crossed the 120k smart zone; session killed | **Human — from either actor. Never the Editor.** |
 | `infra-failed` | Setup failure, wall-clock timeout (exit 124), rate limit, OOM | **Human — from either actor. Never the Editor.** |
@@ -442,8 +441,9 @@ protects the budget.** They are orthogonal.
 
 ### Rules
 
-- **Zero commits is never a benign skip.** A session that produced nothing is `silent-red`
-  or `infra-failed`. Today's `no commits - skipping` silently treats it as success.
+- **Zero commits is never a benign skip.** A session that produced nothing is an `impasse` (the
+  model gave up, whether or not it said so) or `infra-failed`. Today's `no commits - skipping`
+  silently treats it as success.
 - **The suite result, not the exit code, is the outcome.** The harness runs the tests. The
   prompt *asks* the agent not to commit on red; nothing verifies that.
 - Wrap `codex exec` in `timeout`; treat exit 124 as `infra-failed`.
@@ -474,7 +474,7 @@ sync is the last piece to land. Each line is one event: a timestamp, the sub-iss
 what happened. It tracks only two kinds of thing:
 
 - **States.** A session opened; a session closed with its outcome (`success`, `impasse`,
-  `silent-red`, `ceiling-exceeded`, `infra-failed`); a sub-issue reached a terminal state
+  `ceiling-exceeded`, `infra-failed`); a sub-issue reached a terminal state
   (`landed`, `needs-human`, or skipped).
 - **Decisions.** The verdict an Editor returned (`revise`, `planning-defect`,
   `inconclusive`).
