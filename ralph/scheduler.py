@@ -23,7 +23,6 @@ from ralph.domain import (
     Actor,
     CycleLedger,
     Destination,
-    EventKind,
     FailureReport,
     Notification,
     Outcome,
@@ -38,7 +37,6 @@ from ralph.domain import (
     notify,
     route,
 )
-from ralph.events import event
 from ralph.mergequeue import LandResult, MergeQueue
 from ralph.ports import (
     Budget,
@@ -51,6 +49,7 @@ from ralph.ports import (
     TestRunner,
     Worktree,
 )
+from ralph.runlog import EventKind, event
 
 ACTIVE = Path(".worktrees") / "active"
 QUARANTINE = Path(".worktrees") / "failed"

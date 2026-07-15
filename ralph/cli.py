@@ -22,7 +22,6 @@ from ralph.adapters.codex import codex_implementer
 from ralph.adapters.copilot import copilot_editor, copilot_implementer
 from ralph.adapters.filesystem import FilesystemIssueStore, IssueParseError
 from ralph.adapters.git import GitCli, run_git
-from ralph.adapters.runlog import JsonlRunLog
 from ralph.adapters.session import SubprocessImplementer
 from ralph.adapters.suite import (
     NoSuiteFound,
@@ -44,6 +43,7 @@ from ralph.domain import (
 )
 from ralph.mergequeue import MergeQueue
 from ralph.ports import Budget, Editor, Implementer, Worktree
+from ralph.runlog import JsonlRunLog
 from ralph.scheduler import DEFAULT_CONCURRENCY, RunReport, Scheduler
 
 AGENT_CMD_ENV = "RALPH_AGENT_CMD"

@@ -16,7 +16,6 @@ from typing import Protocol, runtime_checkable
 from ralph.domain import (
     Brief,
     EditorVerdict,
-    Event,
     FailureReport,
     Findings,
     IssueGraph,
@@ -25,6 +24,7 @@ from ralph.domain import (
     SubIssueState,
     SuiteResult,
 )
+from ralph.runlog import Event
 
 
 @dataclass(frozen=True, slots=True)

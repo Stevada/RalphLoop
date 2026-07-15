@@ -1,11 +1,7 @@
 """The run log's record type.
 
-Lives in `domain/` rather than `runlog.py` because `IssueStore.write_event` takes one, and
-`ports.py` may not import orchestration — the dependency arrow points inward. `runlog.py` imports
-it from here.
-
 What is recorded: state transitions and outcomes. Deliberately *not* token spend, diffstats, or
-failing-test output — those belong in the failure report, which is a different artifact with a
+failing-test output -- those belong in the failure report, which is a different artifact with a
 different reader.
 """
 
@@ -15,10 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from ralph.domain.model.graph import SubIssueId
-from ralph.domain.model.state import SubIssueState
-from ralph.domain.model.session import Actor, Outcome
-from ralph.domain.model.verdict import Verdict
+from ralph.domain import Actor, Outcome, SubIssueId, SubIssueState, Verdict
 
 EventKind = Literal["session-opened", "session-closed", "terminal", "verdict"]
 
@@ -33,8 +26,8 @@ class Event:
     Load-bearing once the Editor exists: a cycle closes *two* sessions against the same sub-issue,
     and `session-closed: infra-failed` means something entirely different depending on whether the
     Implementer crashed or the Editor did. Without this field the authoritative record of the run
-    cannot tell them apart, and a reader has to infer the actor from position — which is exactly the
-    kind of thing that is right until the day it matters.
+    cannot tell them apart, and a reader has to infer the actor from position -- which is exactly
+    the kind of thing that is right until the day it matters.
     """
 
     kind: EventKind

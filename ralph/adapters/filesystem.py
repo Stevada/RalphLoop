@@ -15,13 +15,13 @@ from pathlib import Path
 
 from ralph.domain import (
     Brief,
-    Event,
     Findings,
     IssueGraph,
     SubIssue,
     SubIssueId,
     SubIssueState,
 )
+from ralph.runlog import Event
 
 ISSUE_GLOB = "*.md"
 _ID = re.compile(r"^(\d+)")

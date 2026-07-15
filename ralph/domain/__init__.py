@@ -15,7 +15,6 @@ Inside, two halves, and the dependency arrow between them points one way only:
 """
 
 from ralph.domain.model.content import Brief, Findings
-from ralph.domain.model.event import Event, EventKind
 from ralph.domain.model.failure import FailureReport
 from ralph.domain.model.graph import GraphError, IssueGraph, SubIssue, SubIssueId
 from ralph.domain.model.impasse import Approach, ImpasseReport
@@ -40,8 +39,6 @@ __all__ = [
     "Check",
     "EditorVerdict",
     "Escalation",
-    "Event",
-    "EventKind",
     "FailureReport",
     "Findings",
     "GraphError",

@@ -21,7 +21,6 @@ from pathlib import Path
 from ralph.domain import (
     Brief,
     EditorVerdict,
-    Event,
     FailureReport,
     Findings,
     IssueGraph,
@@ -31,6 +30,7 @@ from ralph.domain import (
     SuiteResult,
 )
 from ralph.ports import Observation, SessionContext, Worktree
+from ralph.runlog import Event
 from tests.builders import telemetry
 
 

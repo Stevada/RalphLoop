@@ -1,6 +1,6 @@
 """The run log: append-only JSONL, one event per line.
 
-Two kinds of thing and nothing else — session states and Editor verdicts. **No token spend, no
+Two kinds of thing and nothing else -- session states and Editor verdicts. **No token spend, no
 diffstats, no failing-test output.** Those belong in the failure report, which has a different
 reader: the run log answers *what happened, in what order*, and a reader who has to skim past a
 40-line pytest dump to find the next event is not being told a story.
@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from ralph.domain import Actor, Event, EventKind, Outcome, SubIssueId, SubIssueState, Verdict
+from ralph.domain import Actor, Outcome, SubIssueId, SubIssueState, Verdict
+from ralph.runlog.model import Event, EventKind
 
 _PAYLOAD_OF: dict[str, type[Outcome] | type[Verdict] | type[SubIssueState]] = {
     "session-opened": SubIssueState,
@@ -27,7 +28,7 @@ _PAYLOAD_OF: dict[str, type[Outcome] | type[Verdict] | type[SubIssueState]] = {
 
 
 class RunLogError(ValueError):
-    """A line in the run log is not an event. Never skipped — a log that quietly drops what it
+    """A line in the run log is not an event. Never skipped -- a log that quietly drops what it
     cannot parse is a log that lies by omission."""
 
 

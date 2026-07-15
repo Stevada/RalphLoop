@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-from ralph.adapters.runlog import JsonlRunLog, RunLogError
 from ralph.adapters.suite import (
     InstallFailed,
     NoSuiteFound,
@@ -23,7 +22,7 @@ from ralph.adapters.suite import (
     install_once,
 )
 from ralph.domain import Actor, Outcome, SubIssueId, SubIssueState
-from ralph.events import event
+from ralph.runlog import JsonlRunLog, RunLogError, event
 from tests.testbed import TargetRepo
 
 # --- detection ----------------------------------------------------------------------------------

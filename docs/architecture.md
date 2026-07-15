@@ -38,7 +38,6 @@ ralph/
       failure.py   FailureReport                  ← the claim + the harness's facts
       verdict.py   Verdict, EditorVerdict
       state.py     SubIssueState
-      event.py     Event, EventKind
       notification.py  Escalation, Notification   ← the one thing a human reads afterwards
     rules/         the VERBS — pure functions. what the system DECIDES.
       classify.py     session → Outcome            (the failure taxonomy)
@@ -49,9 +48,9 @@ ralph/
       notify.py       → Notification       (what each failure cost, and what to open first)
 
   ports.py         Protocols — the seams. every one has a fake.
+  runlog/          Event, EventKind, event(), JsonlRunLog — the authoritative run ledger
   adapters/        codex, copilot, claude_editor, context, prompt, session,
-                   git, filesystem, runlog, suite
-  events.py        the Event factory — needs a clock, so not domain/; needed by both
+                   git, filesystem, suite
   mergequeue.py    \  the merge queue and the scheduler, so not an adapter either
   scheduler.py      } orchestration — depends on ports only, never on a concrete adapter
   cli.py           composition root — the only place a concrete adapter is named
@@ -308,15 +307,19 @@ When a sub-issue escalates the run does **not** stop: everything transitively bl
 becomes eligible, every unaffected sub-issue lands, and the run ends with **one** notification
 (`docs/design.md` §4.7 for why quarantine-and-drain rather than fail-fast).
 
-### `RunLog` and the two sinks — [runlog.py](../ralph/adapters/runlog.py)
+### `RunLog` and the two sinks — [runlog/](../ralph/runlog/)
 
 Append-only, one line per event, two kinds of thing only: session states and Editor verdicts. Token
 spend, diffstats, and failing-test output belong in the impasse report, not here.
 
-`Event` ([event.py](../ralph/domain/model/event.py)) lives in `domain/model/`, not `runlog.py`,
-because both `IssueStore.write_event` and `RunLog.write` take one and `ports.py` may not import
-orchestration. It carries `actor` because a cycle closes **two** sessions against one sub-issue —
-without it, `session-closed: infra-failed` could not say whether the Implementer or the Editor crashed.
+`Event` and `EventKind` live in [runlog/model.py](../ralph/runlog/model.py), outside `domain/`,
+because they are the ledger vocabulary rather than a domain decision. `event()` lives beside them
+because it reads the clock, and the domain stays pure. `JsonlRunLog` is the concrete append-only
+storage implementation in [runlog/jsonl.py](../ralph/runlog/jsonl.py). `ports.py` may import the
+run-log value, but orchestration still depends on the `RunLog` Protocol rather than the JSONL
+implementation. `Event` carries `actor` because a cycle closes **two** sessions against one
+sub-issue — without it, `session-closed: infra-failed` could not say whether the Implementer or the
+Editor crashed.
 
 The run log (**authoritative** — failing to write it fails the run) and `IssueStore.write_event`
 (**best-effort** — mirrors the transition into the tracker) are the same `Event` to two sinks of
@@ -361,7 +364,7 @@ asks, never by a second topological sort that is free to disagree.
 | Component | Module |
 |---|---|
 | Merge queue | [mergequeue.py](../ralph/mergequeue.py) |
-| Failure taxonomy + base-green | [classify.py](../ralph/domain/rules/classify.py), [routing.py](../ralph/domain/rules/routing.py), [runlog.py](../ralph/adapters/runlog.py), `Scheduler._refuse_a_red_base` |
+| Failure taxonomy + base-green | [classify.py](../ralph/domain/rules/classify.py), [routing.py](../ralph/domain/rules/routing.py), [runlog/](../ralph/runlog/), `Scheduler._refuse_a_red_base` |
 | Context ceiling and timeout | `Budget`, [context.py](../ralph/adapters/context.py) + per-CLI `ContextSource` ([cli-metering.md](cli-metering.md)) |
 | Impasse report format | [impasse.py](../ralph/domain/model/impasse.py), [failure.py](../ralph/domain/model/failure.py) |
 | The Editor | [claude_editor.py](../ralph/adapters/claude_editor.py), [copilot.py](../ralph/adapters/copilot.py), `CycleLedger` |

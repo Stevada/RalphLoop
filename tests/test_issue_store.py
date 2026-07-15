@@ -12,7 +12,7 @@ import pytest
 
 from ralph.adapters.filesystem import FilesystemIssueStore, IssueParseError
 from ralph.domain import Actor, Brief, Findings, SubIssueId, SubIssueState
-from ralph.events import event
+from ralph.runlog import event
 
 READY = "Status: ready\n\n## Acceptance criteria\n\n- [ ] It works.\n"
 
