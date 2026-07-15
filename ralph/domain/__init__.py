@@ -16,14 +16,12 @@ Inside, two halves, and the dependency arrow between them points one way only:
 
 from ralph.domain.model.failure import FailureReport
 from ralph.domain.model.impasse import Approach, ImpasseReport
-from ralph.domain.model.notification import Escalation, Notification
 from ralph.domain.model.preflight import Check, Refusal, RepoFacts
 from ralph.domain.model.session import Actor, Killed, Outcome, SessionTelemetry, SuiteResult
 from ralph.domain.model.verdict import EditorVerdict, Verdict
 from ralph.domain.rules.classify import classify_editor, classify_implementer
 from ralph.domain.rules.cycles import CycleLedger
 from ralph.domain.rules.eligibility import build_order, eligible, never_eligible
-from ralph.domain.rules.notify import ATTENTION_ORDER, notify
 from ralph.domain.rules.preflight import refusals
 from ralph.domain.rules.report import failure_report
 from ralph.domain.rules.routing import Destination, route
@@ -34,11 +32,9 @@ __all__ = [
     "Approach",
     "Check",
     "EditorVerdict",
-    "Escalation",
     "FailureReport",
     "ImpasseReport",
     "Killed",
-    "Notification",
     "Outcome",
     "Refusal",
     "RepoFacts",
@@ -46,7 +42,6 @@ __all__ = [
     "SuiteResult",
     "Verdict",
     # rules — the verbs
-    "ATTENTION_ORDER",
     "CycleLedger",
     "Destination",
     "build_order",
@@ -55,7 +50,6 @@ __all__ = [
     "eligible",
     "failure_report",
     "never_eligible",
-    "notify",
     "refusals",
     "route",
 ]

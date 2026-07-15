@@ -23,16 +23,25 @@ import pytest
 
 import ralph
 import ralph.domain
+import ralph.notification
 
 PACKAGE = Path(ralph.__file__).parent
 DOMAIN = Path(ralph.domain.__file__).parent
+NOTIFICATION = Path(ralph.notification.__file__).parent
 DOMAIN_MODULES = sorted(DOMAIN.rglob("*.py"))
+NOTIFICATION_MODULES = sorted(NOTIFICATION.rglob("*.py"))
 MODEL_MODULES = sorted((DOMAIN / "model").rglob("*.py"))
 SHIPPED = sorted(PACKAGE.rglob("*.py"))
 
 # Stdlib modules that nonetheless touch the world. Importing one in `domain/` is how purity rots.
 BANNED = {"subprocess", "os", "io", "socket", "shutil", "asyncio", "pathlib", "tempfile"}
 ISSUE_VALUES = {"ralph.issues", "ralph.issues.content", "ralph.issues.graph", "ralph.issues.state"}
+NOTIFICATION_INPUTS = ISSUE_VALUES | {
+    "ralph.domain",
+    "ralph.notification",
+    "ralph.notification.assemble",
+    "ralph.notification.model",
+}
 
 
 def _rel(p: Path) -> str:
@@ -52,16 +61,25 @@ def _imported_roots(module: Path) -> set[str]:
 
 def _ralph_imports(module: Path) -> set[str]:
     tree = ast.parse(module.read_text(), filename=str(module))
-    return {
+    imports = {
         node.module
         for node in ast.walk(tree)
         if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("ralph")
     }
+    imports.update(
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if alias.name.startswith("ralph")
+    )
+    return imports
 
 
 def test_the_globs_found_something() -> None:
     """Guard against every test below passing vacuously."""
     assert len(DOMAIN_MODULES) > 5
+    assert len(NOTIFICATION_MODULES) > 2
     assert len(MODEL_MODULES) > 5
     assert len(SHIPPED) > 5
 
@@ -81,6 +99,25 @@ def test_domain_never_imports_outward(module: Path) -> None:
     for imported in _ralph_imports(module):
         assert imported.startswith("ralph.domain") or imported in ISSUE_VALUES, (
             f"{_rel(module)} imports {imported!r} — that arrow points outward"
+        )
+
+
+@pytest.mark.parametrize("module", NOTIFICATION_MODULES, ids=_rel)
+def test_notification_is_pure(module: Path) -> None:
+    """Notification assembly is a pure feature over domain failures and issue graph cost."""
+    for root in _imported_roots(module):
+        if root == "ralph":
+            continue
+        assert root in sys.stdlib_module_names, f"{_rel(module)} imports third-party {root!r}"
+        assert root not in BANNED, f"{_rel(module)} imports {root!r}, which touches the world"
+
+
+@pytest.mark.parametrize("module", NOTIFICATION_MODULES, ids=_rel)
+def test_notification_only_depends_on_its_inputs(module: Path) -> None:
+    """The notification feature may read the classification report and issue graph, not adapters."""
+    for imported in _ralph_imports(module):
+        assert imported in NOTIFICATION_INPUTS, (
+            f"{_rel(module)} imports {imported!r} — notification should stay pure"
         )
 
 

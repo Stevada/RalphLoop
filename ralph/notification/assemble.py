@@ -1,26 +1,13 @@
-"""Quarantine-and-drain, assembled into the single thing a human reads afterwards.
-
-Two decisions live here, and both are judgment rather than bookkeeping:
-
-**What each failure cost.** Nothing propagates through the graph when a sub-issue escalates — there
-is no `skipped` state and no marking. Its dependents simply never satisfy `eligible`, because their
-blocker never reaches LANDED. That is what keeps the graph honest, but it also means the damage is
-*invisible* unless someone goes looking. So we look, here, at the end: `stranded` is that lookup.
-
-**Which one to open first.** The outcome says what kind of ten minutes you are about to spend; the
-blast radius breaks ties between two failures of the same kind.
-"""
+"""Assemble the end-of-run notification from failures and issue state."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from ralph.domain.model.failure import FailureReport
+from ralph.domain import FailureReport, Outcome, never_eligible
 from ralph.issues.graph import IssueGraph, SubIssueId
-from ralph.domain.model.notification import Escalation, Notification
-from ralph.domain.model.session import Outcome
 from ralph.issues.state import SubIssueState
-from ralph.domain.rules.eligibility import never_eligible
+from ralph.notification.model import Escalation, Notification
 
 ATTENTION_ORDER: Mapping[Outcome, int] = {
     # The harness or the environment broke. Nothing else this run says is trustworthy until you

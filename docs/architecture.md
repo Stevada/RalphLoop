@@ -35,14 +35,12 @@ ralph/
       impasse.py   Approach, ImpasseReport        ← the model's claim
       failure.py   FailureReport                  ← the claim + the harness's facts
       verdict.py   Verdict, EditorVerdict
-      notification.py  Escalation, Notification   ← the one thing a human reads afterwards
     rules/         the VERBS — pure functions. what the system DECIDES.
       classify.py     session → Outcome            (the failure taxonomy)
       routing.py      (actor, outcome) → Destination   (and never a retry)
       eligibility.py  graph + states → what may run    (quarantine-and-drain)
       cycles.py       CycleLedger                      (the cap of three)
       report.py       → FailureReport      (and the impasse it will NOT invent)
-      notify.py       → Notification       (what each failure cost, and what to open first)
 
   issues/          issue tracker values + seam + markdown storage.
     __init__.py    ← THE INTERFACE for issue values.
@@ -51,6 +49,7 @@ ralph/
     state.py       SubIssueState
     store.py       IssueStore Protocol
     filesystem.py  FilesystemIssueStore, IssueParseError
+  notification/    Escalation, Notification, notify() — the one human-facing run artifact
   ports.py         Protocols — the seams. every one has a fake.
   runlog/          Event, EventKind, event(), JsonlRunLog — the authoritative run ledger
   adapters/        codex, copilot, claude_editor, context, prompt, session,
@@ -67,13 +66,14 @@ tests/
 
 The rules that hold this shape together:
 
-- **`rules/` is the harness.** Six files hold the entire design — the failure taxonomy, that nothing
-  is retried, how quarantine drains, the cycle cap, the report the harness will not fabricate, and
-  which failure to open first. Everything else exists to feed them. To know what the system
-  *decides*, read one folder.
+- **`rules/` is the harness.** Five files hold the core decisions — the failure taxonomy, that
+  nothing is retried, how quarantine drains, the cycle cap, and the report the harness will not
+  fabricate. Everything else exists to feed them. To know how the system *decides*, read one folder.
 - **Issue tracker values live in `issues/`; eligibility stays in `domain/rules/`.** The graph,
   content, and state are what the tracker stores. The question "who may run?" is still a harness
   decision over those values.
+- **Human notification lives in `notification/`.** It is pure, but it is no longer part of the
+  domain interface: it assembles the end-of-run artifact from domain failures and issue graph cost.
 - **`rules/` may import `model/`; `model/` may not import `rules/`** — a test enforces it. A value
   that knows how it will be classified has stopped being a value.
 - **`domain/__init__.py` is the interface.** Import `from ralph.domain import Outcome`; the internal
@@ -382,4 +382,4 @@ asks, never by a second topological sort that is free to disagree.
 | Impasse report format | [impasse.py](../ralph/domain/model/impasse.py), [failure.py](../ralph/domain/model/failure.py) |
 | The Editor | [claude_editor.py](../ralph/adapters/claude_editor.py), [copilot.py](../ralph/adapters/copilot.py), `CycleLedger` |
 | Linear sync | `issues/linear.py` behind the existing `IssueStore` Protocol |
-| Pre-flight + notification | [preflight.py](../ralph/domain/rules/preflight.py), `RunReport`, `cli.render` |
+| Pre-flight + notification | [preflight.py](../ralph/domain/rules/preflight.py), [notification/](../ralph/notification/), `RunReport`, `cli.render` |

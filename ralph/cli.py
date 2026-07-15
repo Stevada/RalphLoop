@@ -30,7 +30,6 @@ from ralph.adapters.suite import (
 )
 from ralph.domain import (
     CycleLedger,
-    Notification,
     Refusal,
     RepoFacts,
     build_order,
@@ -39,6 +38,7 @@ from ralph.domain import (
 from ralph.issues import GraphError, IssueGraph, SubIssueId, SubIssueState
 from ralph.issues.filesystem import FilesystemIssueStore, IssueParseError
 from ralph.mergequeue import MergeQueue
+from ralph.notification import Notification
 from ralph.ports import Budget, Editor, Implementer, Worktree
 from ralph.runlog import JsonlRunLog
 from ralph.scheduler import DEFAULT_CONCURRENCY, RunReport, Scheduler

@@ -9,12 +9,11 @@ from __future__ import annotations
 import pytest
 
 from ralph.domain import (
-    ATTENTION_ORDER,
     Actor,
     CycleLedger,
     Destination,
-    FailureReport,
     EditorVerdict,
+    FailureReport,
     Outcome,
     Verdict,
     classify_editor,
@@ -22,10 +21,10 @@ from ralph.domain import (
     eligible,
     failure_report,
     never_eligible,
-    notify,
     route,
 )
 from ralph.issues import SubIssueId, SubIssueState
+from ralph.notification import ATTENTION_ORDER, notify
 from tests.builders import graph_of, impasse, suite, telemetry, verdict
 
 # --- classify_implementer: one test per row of the taxonomy -------------------------------------

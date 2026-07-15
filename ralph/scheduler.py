@@ -24,19 +24,18 @@ from ralph.domain import (
     CycleLedger,
     Destination,
     FailureReport,
-    Notification,
     Outcome,
     Verdict,
     classify_editor,
     classify_implementer,
     eligible,
     failure_report,
-    notify,
     route,
 )
 from ralph.issues import SubIssue, SubIssueId, SubIssueState
 from ralph.issues.store import IssueStore
 from ralph.mergequeue import LandResult, MergeQueue
+from ralph.notification import Notification, notify
 from ralph.ports import (
     Budget,
     Editor,
