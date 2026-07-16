@@ -41,6 +41,7 @@ CLEAN = RepoFacts(
     protected=frozenset({"main", "master"}),
     dirty=(),
     suite_error=None,
+    source_error=None,
     graph_error=None,
     pre_commit_config=None,
     pre_commit_installed=False,
@@ -61,7 +62,7 @@ def test_a_clean_repo_is_not_refused() -> None:
 
 
 def test_each_refusal_says_which_morning_it_is() -> None:
-    """The one property the whole pre-flight exists for. Five different repositories, five different
+    """The one property the whole pre-flight exists for. Six different repositories, six different
     sentences — and none of them is "validation failed"."""
     said = {
         r.check: r.reason
@@ -71,6 +72,7 @@ def test_each_refusal_says_which_morning_it_is() -> None:
                 protected=frozenset({"main", "master"}),
                 dirty=("src/app.py",),
                 suite_error="no test suite detected in /repo",
+                source_error="Linear issue 'ENG-1' was not found",
                 graph_error="03-sub.md has no `## Acceptance criteria`",
                 pre_commit_config=".pre-commit-config.yaml",
                 pre_commit_installed=False,
@@ -78,14 +80,15 @@ def test_each_refusal_says_which_morning_it_is() -> None:
         )
     }
 
-    assert set(said) == set(Check)  # all five fire, and all five are reported
-    assert len(set(said.values())) == 5  # and no two of them say the same thing
+    assert set(said) == set(Check)  # all six fire, and all six are reported
+    assert len(set(said.values())) == 6  # and no two of them say the same thing
 
-    assert "main" in said[Check.BRANCH]
-    assert "src/app.py" in said[Check.DIRTY]
-    assert "no test suite detected" in said[Check.SUITE]
-    assert "pre-commit install" in said[Check.HOOKS]
-    assert "no `## Acceptance criteria`" in said[Check.GRAPH]
+    assert "main" in said[Check.PROTECTED_BRANCH]
+    assert "src/app.py" in said[Check.UNCOMMITTED_CHANGES]
+    assert "no test suite detected" in said[Check.NO_TEST_RUNNER]
+    assert "pre-commit install" in said[Check.UNINSTALLED_PRE_COMMIT_HOOKS]
+    assert "ENG-1" in said[Check.INVALID_ISSUE_SOURCE]
+    assert "no `## Acceptance criteria`" in said[Check.INVALID_ISSUE_GRAPH]
 
 
 def test_the_graph_refusal_quotes_the_parser_rather_than_summarising_it() -> None:
@@ -95,8 +98,22 @@ def test_the_graph_refusal_quotes_the_parser_rather_than_summarising_it() -> Non
     cycle = "01-sub.md, 02-sub.md: the graph has a cycle"
     (refused,) = refusals(replace(CLEAN, graph_error=cycle))
 
-    assert refused.check is Check.GRAPH
+    assert refused.check is Check.INVALID_ISSUE_GRAPH
     assert refused.reason == cycle
+
+
+def test_an_unreadable_source_and_a_malformed_graph_are_different_mornings() -> None:
+    """The two ways reading the work can fail must not collapse into one check. An unreachable
+    Linear is the human's infra to fix; a cyclic graph is the Planner's cut to fix — a refusal that
+    called them both `graph` would send the human to the wrong file."""
+    unreachable = replace(CLEAN, source_error="Linear issue 'ENG-1' was not found")
+    (refused,) = refusals(unreachable)
+    assert refused.check is Check.INVALID_ISSUE_SOURCE
+    assert refused.reason == "Linear issue 'ENG-1' was not found"
+
+    malformed = replace(CLEAN, graph_error="01-sub.md, 02-sub.md: the graph has a cycle")
+    (refused,) = refusals(malformed)
+    assert refused.check is Check.INVALID_ISSUE_GRAPH
 
 
 def test_a_repo_without_pre_commit_is_not_refused_for_not_having_it() -> None:
@@ -106,7 +123,7 @@ def test_a_repo_without_pre_commit_is_not_refused_for_not_having_it() -> None:
     assert refusals(replace(CLEAN, pre_commit_config=None, pre_commit_installed=False)) == ()
 
     (refused,) = refusals(replace(CLEAN, pre_commit_config=".pre-commit-config.yaml"))
-    assert refused.check is Check.HOOKS
+    assert refused.check is Check.UNINSTALLED_PRE_COMMIT_HOOKS
 
 
 def test_the_dirty_list_is_elided_rather_than_unrolled() -> None:
@@ -127,7 +144,7 @@ def test_a_protected_branch_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
 
     (refused,) = validate(repo.path)
 
-    assert refused.check is Check.BRANCH
+    assert refused.check is Check.PROTECTED_BRANCH
     assert "'main'" in refused.reason
 
 
@@ -138,7 +155,7 @@ def test_the_protected_list_is_the_humans_to_set(
 
     (refused,) = validate(repo.path)
 
-    assert refused.check is Check.BRANCH  # `integration` is the fixture's HEAD, and now protected
+    assert refused.check is Check.PROTECTED_BRANCH  # `integration` is the fixture's HEAD, and now protected
 
 
 def test_a_dirty_tree_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
@@ -146,7 +163,7 @@ def test_a_dirty_tree_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
 
     (refused,) = validate(repo.path)
 
-    assert refused.check is Check.DIRTY
+    assert refused.check is Check.UNCOMMITTED_CHANGES
     assert "calculator.py" in refused.reason
 
 
@@ -164,8 +181,18 @@ def test_a_cyclic_graph_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
 
     (refused,) = validate(repo.path)
 
-    assert refused.check is Check.GRAPH
+    assert refused.check is Check.INVALID_ISSUE_GRAPH
     assert "cycle" in refused.reason
+
+
+def test_an_incoherent_issue_source_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
+    """`invalid-issue-source`, not `invalid-issue-graph`: the harness never got as far as reading a
+    graph. Asking for both an issues directory and a Linear parent is a contradiction the run cannot
+    resolve, and it is the invocation to fix, not the graph."""
+    (refused,) = validate(repo.path, issues=repo.issues_dir, linear="ENG-1")
+
+    assert refused.check is Check.INVALID_ISSUE_SOURCE
+    assert "not both" in refused.reason
 
 
 def test_a_sub_issue_with_no_acceptance_criteria_is_refused(repo: TargetRepo) -> None:
@@ -176,7 +203,7 @@ def test_a_sub_issue_with_no_acceptance_criteria_is_refused(repo: TargetRepo) ->
 
     (refused,) = validate(repo.path)
 
-    assert refused.check is Check.GRAPH
+    assert refused.check is Check.INVALID_ISSUE_GRAPH
     assert "Acceptance criteria" in refused.reason
 
 
@@ -192,7 +219,7 @@ def test_a_repo_with_no_detectable_suite_is_refused(
 
     (refused,) = validate(repo.path)
 
-    assert refused.check is Check.SUITE
+    assert refused.check is Check.NO_TEST_RUNNER
     assert "will not run a repo whose tests it cannot run" in refused.reason
 
 

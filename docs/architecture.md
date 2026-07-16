@@ -358,16 +358,17 @@ different durability. A cycle's worth reads as a story with two characters:
 
 ### The pre-flight — [preflight.py](../ralph/harness/rules/preflight.py), gathered in `cli.py`
 
-**It refuses; it does not warn.** Five checks, each describing a repo the harness would otherwise
+**It refuses; it does not warn.** Six checks, each describing a repo the harness would otherwise
 damage or misjudge:
 
 | Check | What it would otherwise do |
 |---|---|
 | `protected-branch` | Fast-forward `main`. Ralph lands onto the branch it is run from. |
-| `dirty-tree` | Fight the merge queue's fast-forwards over uncommitted work, and lose. |
-| `no-suite` | Call every session green — an undeclared `impasse` becomes **unreachable**, the most expensive miss of the five. |
-| `hooks-not-installed` | Land commits that skipped the checks the repo believes it enforces. |
-| `graph` | Read a graph it cannot read. |
+| `uncommitted-changes` | Fight the merge queue's fast-forwards over uncommitted work, and lose. |
+| `no-test-runner` | Call every session green — an undeclared `impasse` becomes **unreachable**, the most expensive miss of the six. |
+| `uninstalled-pre-commit-hooks` | Land commits that skipped the checks the repo believes it enforces. |
+| `invalid-issue-source` | Start against an issue source it cannot reach or was misconfigured to find. |
+| `graph` | Read a source that read fine but holds a graph it cannot use. |
 
 The **rule is pure** (`RepoFacts` in, `Refusal`s out), so each refusal's sentence is tested without a
 repo to be wrong about; only the gathering is `cli.py`'s. It does not stop at the first refusal, and

@@ -224,24 +224,21 @@ def facts_about(repo: Path, issues: Path | None, linear: str | None = None) -> R
     except NoSuiteFound as exc:
         suite_error = str(exc)
 
+    source_error: str | None = None
     graph_error: str | None = None
     try:
         _read_graph(repo, issues, linear)
-    except (
-        IssueParseError,
-        GraphError,
-        FileNotFoundError,
-        IssueSourceError,
-        LinearIssueStoreError,
-        LinearApiError,
-    ) as exc:
+    except (IssueParseError, GraphError, LinearIssueStoreError) as exc:
         graph_error = str(exc)
+    except (FileNotFoundError, IssueSourceError, LinearApiError) as exc:
+        source_error = str(exc)
 
     return RepoFacts(
         head_branch=git.head_branch(),
         protected=protected_branches(),
         dirty=git.dirty_files(),
         suite_error=suite_error,
+        source_error=source_error,
         graph_error=graph_error,
         pre_commit_config=config,
         pre_commit_installed=installed,

@@ -32,7 +32,7 @@ def refusals(facts: RepoFacts) -> tuple[Refusal, ...]:
     if facts.head_branch in facts.protected:
         found.append(
             Refusal(
-                Check.BRANCH,
+                Check.PROTECTED_BRANCH,
                 f"HEAD is on {facts.head_branch!r}, which is protected "
                 f"({', '.join(sorted(facts.protected))}). Ralph fast-forwards the branch it is run "
                 "from, so a run here would push a model's commits straight onto it. Cut a working "
@@ -43,7 +43,7 @@ def refusals(facts: RepoFacts) -> tuple[Refusal, ...]:
     if facts.dirty:
         found.append(
             Refusal(
-                Check.DIRTY,
+                Check.UNCOMMITTED_CHANGES,
                 f"the working tree has uncommitted changes: {_dirty_summary(facts.dirty)}. The "
                 "merge queue fast-forwards this checkout while the run is in flight; anything "
                 "uncommitted in it is in the way of that, and may be lost. Commit or stash first.",
@@ -51,19 +51,22 @@ def refusals(facts: RepoFacts) -> tuple[Refusal, ...]:
         )
 
     if facts.suite_error is not None:
-        found.append(Refusal(Check.SUITE, facts.suite_error))
+        found.append(Refusal(Check.NO_TEST_RUNNER, facts.suite_error))
 
     if facts.pre_commit_config is not None and not facts.pre_commit_installed:
         found.append(
             Refusal(
-                Check.HOOKS,
+                Check.UNINSTALLED_PRE_COMMIT_HOOKS,
                 f"{facts.pre_commit_config} configures pre-commit, but no hook is installed. Every "
                 "commit an Implementer makes would skip the checks this repo believes it enforces, "
                 "and the harness would land the result. Run `pre-commit install`.",
             )
         )
 
+    if facts.source_error is not None:
+        found.append(Refusal(Check.INVALID_ISSUE_SOURCE, facts.source_error))
+
     if facts.graph_error is not None:
-        found.append(Refusal(Check.GRAPH, facts.graph_error))
+        found.append(Refusal(Check.INVALID_ISSUE_GRAPH, facts.graph_error))
 
     return tuple(found)

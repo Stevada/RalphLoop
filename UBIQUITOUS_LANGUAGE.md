@@ -66,6 +66,21 @@ those roles are fully encoded in its `blocked by` edges — no runtime actor rea
 A **Run** reads the graph once, at start, and never re-reads it during its life. Human
 intervention *ends* a run; resumption is a new run against a freshly read graph.
 
+## Pre-flight
+
+The **pre-flight** is the gate a **Run** passes before it opens any session: it **refuses**, it does
+not warn, and it returns every **refusal**, not the first. Each refusal names one of six checks — the
+condition it found, never merely that the run cannot start.
+
+| Check | What it names |
+| ----- | ------------- |
+| `protected-branch` | HEAD is on a branch the run would fast-forward, e.g. `main`. |
+| `uncommitted-changes` | Tracked changes in the working tree the merge queue would fight. |
+| `no-test-runner` | No command the harness can run the suite with. |
+| `uninstalled-pre-commit-hooks` | The repo configures pre-commit, but no hook is installed. |
+| `invalid-issue-source` | The issue source could not be read — unreachable or misconfigured. |
+| `invalid-issue-graph` | The source read, but its graph is malformed — a cycle, or a brief with no acceptance criteria. |
+
 ## Session outcomes
 
 The harness's classification of how *any* session ended. The model's word for its own
