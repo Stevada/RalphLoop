@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import shlex
 from collections.abc import Sequence
 from pathlib import Path
@@ -28,6 +27,15 @@ from ralph.adapters.suite import (
     SubprocessTestRunner,
     detect_test_cmd,
     install_once,
+)
+from ralph.config import (
+    AGENT_CMD_ENV,
+    EDITOR_ENV,
+    IMPLEMENTER_ENV,
+    LINEAR_API_KEY_ENV,
+    PRE_COMMIT_CONFIGS,
+    Config,
+    LinearStateOverrides,
 )
 from ralph.harness import (
     CycleLedger,
@@ -54,21 +62,8 @@ from ralph.scheduler import DEFAULT_CONCURRENCY, RunReport, Scheduler
 
 log = logging.getLogger("ralph")
 
-AGENT_CMD_ENV = "RALPH_AGENT_CMD"
-IMPLEMENTER_ENV = "RALPH_IMPLEMENTER"
-EDITOR_ENV = "RALPH_EDITOR"
-PROTECTED_ENV = "RALPH_PROTECTED_BRANCHES"
-LINEAR_API_KEY_ENV = "LINEAR_API_KEY"
-LINEAR_PARENT_ENV = "RALPH_LINEAR_PARENT"
-LINEAR_READY_ENV = "RALPH_LINEAR_STATE_READY"
-LINEAR_IN_PROGRESS_ENV = "RALPH_LINEAR_STATE_IN_PROGRESS"
-LINEAR_LANDED_ENV = "RALPH_LINEAR_STATE_LANDED"
-LINEAR_NEEDS_HUMAN_ENV = "RALPH_LINEAR_STATE_NEEDS_HUMAN"
 SUB_ISSUE_PLACEHOLDER = "{sub_issue}"
 BRANCH_PREFIX = "ralph/"
-
-DEFAULT_PROTECTED = ("main", "master")
-PRE_COMMIT_CONFIGS = (".pre-commit-config.yaml", ".pre-commit-config.yml")
 
 CODEX = "codex"
 CLAUDE = "claude"
@@ -89,17 +84,14 @@ class IssueSourceError(ValueError):
     """The CLI was not given a coherent issue source."""
 
 
-def _agent_argv(worktree: Worktree) -> Sequence[str]:
+def _agent_argv(template: str, worktree: Worktree) -> Sequence[str]:
     """The sub-issue's id is on its branch — the harness put it there. The agent needs no other
     channel to know which sub-issue it is working on."""
-    template = os.environ.get(AGENT_CMD_ENV)
-    if not template:
-        raise NoAgent(f"set {AGENT_CMD_ENV} to the agent's command line")
     sub_issue = worktree.branch.removeprefix(BRANCH_PREFIX)
     return [arg.replace(SUB_ISSUE_PLACEHOLDER, sub_issue) for arg in shlex.split(template)]
 
 
-def editor_of(repo: Path) -> Editor | None:
+def editor_of(repo: Path, config: Config) -> Editor | None:
     """Which model adjudicates — or **whether one does at all**.
 
     `None` is not a null Editor. It means *there is no Editor in this run*: failures quarantine on
@@ -110,30 +102,37 @@ def editor_of(repo: Path) -> Editor | None:
     adjudicating an impasse declared by *itself* is the least independent sensor the system could
     have. Nothing here enforces that; it is why two CLIs back each role.
     """
-    named = os.environ.get(EDITOR_ENV)
+    named = config.editor
     if named is None:
         return None
     if named == CLAUDE:
-        return ClaudeCodeEditor(open_session=claude_sdk_session, suite=detect_test_cmd(repo))
+        return ClaudeCodeEditor(
+            open_session=claude_sdk_session, suite=detect_test_cmd(repo, config.test_cmd)
+        )
     if named == COPILOT:
         # Read-only, but guaranteed by Copilot's own permission engine rather than by a function
         # this harness owns and tests. Weaker on purpose, and worth knowing here at the point of
         # choosing: see `CopilotEditor`. It buys independence — an Editor that is not the model
         # that just failed.
-        return copilot_editor(suite=detect_test_cmd(repo))
+        return copilot_editor(suite=detect_test_cmd(repo, config.test_cmd))
     raise NoAgent(f"{EDITOR_ENV}={named!r} names no Editor. Known: {CLAUDE}, {COPILOT}.")
 
 
-def implementer() -> Implementer:
+def implementer(config: Config) -> Implementer:
     """Which model implements — the one decision only this module is allowed to make.
 
     Unset means *the argv in `RALPH_AGENT_CMD`*: the stand-in agent, or any other command-line
     agent. It is bounded on the clock alone, because it publishes no context signal to meter.
     `codex` is the first Implementer that does. Copilot joins it in #10.
     """
-    named = os.environ.get(IMPLEMENTER_ENV)
+    named = config.implementer
     if named is None:
-        return SubprocessImplementer(build_argv=lambda brief, findings, wt: _agent_argv(wt))
+        if not config.agent_cmd:
+            raise NoAgent(f"set {AGENT_CMD_ENV} to the agent's command line")
+        template = config.agent_cmd
+        return SubprocessImplementer(
+            build_argv=lambda brief, findings, wt: _agent_argv(template, wt)
+        )
     if named == CODEX:
         return codex_implementer()
     if named == COPILOT:
@@ -155,38 +154,34 @@ def find_issues_dir(repo: Path, given: Path | None) -> Path:
     return candidates[0]
 
 
-def linear_parent(given: str | None) -> str | None:
-    return given or os.environ.get(LINEAR_PARENT_ENV)
+def linear_parent(given: str | None, config: Config) -> str | None:
+    return given or config.linear_parent
 
 
-def linear_states() -> LinearStateMap:
+def _linear_states(overrides: LinearStateOverrides) -> LinearStateMap:
+    """The map the Linear adapter runs on: the run's overrides, with the adapter's own defaults for
+    every name the run left unset. `cli.py` owns this because only it may name the adapter."""
     defaults = LinearStateMap()
     return LinearStateMap(
-        ready=os.environ.get(LINEAR_READY_ENV, defaults.ready),
-        in_progress=os.environ.get(LINEAR_IN_PROGRESS_ENV, defaults.in_progress),
-        landed=os.environ.get(LINEAR_LANDED_ENV, defaults.landed),
-        needs_human=os.environ.get(LINEAR_NEEDS_HUMAN_ENV, defaults.needs_human),
+        ready=overrides.ready or defaults.ready,
+        in_progress=overrides.in_progress or defaults.in_progress,
+        landed=overrides.landed or defaults.landed,
+        needs_human=overrides.needs_human or defaults.needs_human,
     )
 
 
-def issue_store(repo: Path, issues: Path | None, linear: str | None) -> IssueStore:
+def issue_store(repo: Path, issues: Path | None, linear: str | None, config: Config) -> IssueStore:
     if linear is None:
         return FilesystemIssueStore(issues_dir=find_issues_dir(repo, issues))
     if issues is not None:
         raise IssueSourceError("pass either an issues directory or --linear-parent, not both")
-    api_key = os.environ.get(LINEAR_API_KEY_ENV)
-    if not api_key:
+    if not config.linear_api_key:
         raise IssueSourceError(f"set {LINEAR_API_KEY_ENV} to use --linear-parent")
     return LinearIssueStore(
         parent_identifier=linear,
-        client=LinearGraphQLClient(api_key=api_key),
-        states=linear_states(),
+        client=LinearGraphQLClient(api_key=config.linear_api_key),
+        states=_linear_states(config.linear_states),
     )
-
-
-def protected_branches() -> frozenset[str]:
-    named = os.environ.get(PROTECTED_ENV)
-    return frozenset(shlex.split(named) if named else DEFAULT_PROTECTED)
 
 
 def _pre_commit(repo: Path) -> tuple[str | None, bool]:
@@ -203,12 +198,12 @@ def _pre_commit(repo: Path) -> tuple[str | None, bool]:
 
 
 def _read_graph(
-    repo: Path, issues: Path | None, linear: str | None
+    repo: Path, issues: Path | None, linear: str | None, config: Config
 ) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]:
-    return issue_store(repo, issues, linear).read_graph()
+    return issue_store(repo, issues, linear, config).read_graph()
 
 
-def facts_about(repo: Path, issues: Path | None, linear: str | None = None) -> RepoFacts:
+def facts_about(repo: Path, issues: Path | None, linear: str | None, config: Config) -> RepoFacts:
     """Ask the world the five questions, and hand the answers to a rule that cannot ask anything.
 
     Each `except` is narrow and each keeps the raiser's own message: `IssueParseError` already says
@@ -216,18 +211,18 @@ def facts_about(repo: Path, issues: Path | None, linear: str | None = None) -> R
     pre-flight that rephrased them would be a second, worse copy of a sentence that is already right.
     """
     git = GitCli(repo=repo)
-    config, installed = _pre_commit(repo)
+    pre_commit_config, installed = _pre_commit(repo)
 
     suite_error: str | None = None
     try:
-        detect_test_cmd(repo)
+        detect_test_cmd(repo, config.test_cmd)
     except NoSuiteFound as exc:
         suite_error = str(exc)
 
     source_error: str | None = None
     graph_error: str | None = None
     try:
-        _read_graph(repo, issues, linear)
+        _read_graph(repo, issues, linear, config)
     except (IssueParseError, GraphError, LinearIssueStoreError) as exc:
         graph_error = str(exc)
     except (FileNotFoundError, IssueSourceError, LinearApiError) as exc:
@@ -235,20 +230,24 @@ def facts_about(repo: Path, issues: Path | None, linear: str | None = None) -> R
 
     return RepoFacts(
         head_branch=git.head_branch(),
-        protected=protected_branches(),
+        protected=config.protected,
         dirty=git.dirty_files(),
         suite_error=suite_error,
         source_error=source_error,
         graph_error=graph_error,
-        pre_commit_config=config,
+        pre_commit_config=pre_commit_config,
         pre_commit_installed=installed,
     )
 
 
 def validate(
-    repo: Path, issues: Path | None = None, linear: str | None = None
+    repo: Path,
+    issues: Path | None = None,
+    linear: str | None = None,
+    config: Config | None = None,
 ) -> tuple[Refusal, ...]:
-    return refusals(facts_about(repo.resolve(), issues, linear_parent(linear)))
+    config = config or Config.from_env()
+    return refusals(facts_about(repo.resolve(), issues, linear_parent(linear, config), config))
 
 
 def render_refusals(found: tuple[Refusal, ...]) -> str:
@@ -259,13 +258,19 @@ def render_refusals(found: tuple[Refusal, ...]) -> str:
     return "\n".join(lines)
 
 
-def render_plan(repo: Path, issues: Path | None, linear: str | None = None) -> str:
+def render_plan(
+    repo: Path,
+    issues: Path | None,
+    linear: str | None = None,
+    config: Config | None = None,
+) -> str:
     """What `--dry-run` prints: the graph as the harness reads it, and the order it would work in.
 
     The cheapest possible dogfood — it parses every sub-issue, resolves every edge, and proves the
     graph is acyclic, and it costs nothing to run because no session is ever opened.
     """
-    graph, states = _read_graph(repo.resolve(), issues, linear_parent(linear))
+    config = config or Config.from_env()
+    graph, states = _read_graph(repo.resolve(), issues, linear_parent(linear, config), config)
     edges = sum(len(sub.blocked_by) for sub in graph.sub_issues.values())
     lines = [f"{len(graph.sub_issues)} sub-issues, {edges} edges, no cycle."]
 
@@ -289,15 +294,17 @@ async def run(
     concurrency: int = DEFAULT_CONCURRENCY,
     editor: Editor | None = None,
     linear: str | None = None,
+    config: Config | None = None,
 ) -> RunReport:
     """An explicit `editor` overrides `RALPH_EDITOR` — that is the seam the tests inject a stub
     through, and the reason no test in the suite calls Opus."""
     repo = repo.resolve()
+    config = config or Config.from_env()
 
     # The same checks `ralph validate` runs, and they are not advisory. A run that starts on `main`
     # has already done the damage by the time anybody reads the warning it printed.
-    linear = linear_parent(linear)
-    found = validate(repo, issues, linear)
+    linear = linear_parent(linear, config)
+    found = validate(repo, issues, linear, config)
     if found:
         raise Refused(render_refusals(found))
 
@@ -306,18 +313,18 @@ async def run(
 
     # Detected once, in the base checkout, before anything is dispatched. A repo whose suite the
     # harness cannot find is a fatal error here, not a green SuiteResult later.
-    runner = SubprocessTestRunner(cmd=detect_test_cmd(repo))
-    await install_once(repo)
+    runner = SubprocessTestRunner(cmd=detect_test_cmd(repo, config.test_cmd))
+    await install_once(repo, config.install_cmd)
 
-    store = issue_store(repo, issues, linear)
+    store = issue_store(repo, issues, linear, config)
     scheduler = Scheduler(
         repo=repo,
         git=git,
         store=store,
         run_log=JsonlRunLog(path=repo / ".scratch" / "run.jsonl"),
         runner=runner,
-        implementer=implementer(),
-        editor=editor if editor is not None else editor_of(repo),
+        implementer=implementer(config),
+        editor=editor if editor is not None else editor_of(repo, config),
         merge_queue=MergeQueue(git=git, runner=runner, integration=integration),
         integration=integration,
         budget=budget or Budget(),
@@ -406,18 +413,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+    config = Config.from_env()
 
     if args.command == "validate":
-        found = validate(args.repo, args.issues, args.linear_parent)
+        found = validate(args.repo, args.issues, args.linear_parent, config)
         print(render_refusals(found))
         return 1 if found else 0
 
     if args.dry_run:
-        print(render_plan(args.repo, args.issues, args.linear_parent))
+        print(render_plan(args.repo, args.issues, args.linear_parent, config))
         return 0
 
+    print(f"configuration: {config.loggable()}")
     report = asyncio.run(
-        run(args.repo, args.issues, concurrency=args.parallel, linear=args.linear_parent)
+        run(
+            args.repo,
+            args.issues,
+            concurrency=args.parallel,
+            linear=args.linear_parent,
+            config=config,
+        )
     )
     print(render(report.notification))
     return 0 if report.clean else 1

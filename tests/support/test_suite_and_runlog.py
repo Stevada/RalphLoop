@@ -50,11 +50,10 @@ def test_a_makefile_with_no_test_target_is_not_a_suite(tmp_path: Path) -> None:
         detect_test_cmd(tmp_path)
 
 
-def test_the_override_beats_every_detector(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_override_beats_every_detector(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text("{}")
-    monkeypatch.setenv("RALPH_TEST_CMD", "cargo test --all")
 
-    assert detect_test_cmd(tmp_path) == ("cargo", "test", "--all")
+    assert detect_test_cmd(tmp_path, ("cargo", "test", "--all")) == ("cargo", "test", "--all")
 
 
 def test_a_repo_with_no_suite_and_no_override_is_a_loud_fatal_error(tmp_path: Path) -> None:
@@ -94,27 +93,20 @@ def test_nothing_to_install_is_a_fact_not_a_failure(tmp_path: Path) -> None:
     assert detect_install_cmd(tmp_path) is None
 
 
-async def test_a_failed_install_aborts_the_run_loudly(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_failed_install_aborts_the_run_loudly(tmp_path: Path) -> None:
     """Never `|| true`. This is the failure that, unclassified, has an Opus Editor diagnosing
     `npm ci` three times before anyone is paged."""
-    monkeypatch.setenv("RALPH_INSTALL_CMD", "false")
-
     with pytest.raises(InstallFailed, match="exited 1"):
-        await install_once(tmp_path)
+        await install_once(tmp_path, ("false",))
 
 
-async def test_a_successful_install_really_runs_the_command(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_successful_install_really_runs_the_command(tmp_path: Path) -> None:
     """That it runs *once per run*, in the base checkout and never per worktree, is a property of
     the scheduler — asserted end to end in `test_run_end_to_end.py`."""
     ledger = tmp_path / "installs"
     script = f"open({str(ledger)!r}, 'a').write('x')"
-    monkeypatch.setenv("RALPH_INSTALL_CMD", f"{sys.executable} -c {script!r}")
 
-    await install_once(tmp_path)
+    await install_once(tmp_path, (sys.executable, "-c", script))
 
     assert ledger.read_text() == "x"
 

@@ -12,18 +12,14 @@ suite waved through as success.
 from __future__ import annotations
 
 import asyncio
-import os
-import shlex
 import sys
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from ralph.config import TEST_CMD_ENV
 from ralph.harness import SuiteResult
-
-TEST_CMD_ENV = "RALPH_TEST_CMD"
-INSTALL_CMD_ENV = "RALPH_INSTALL_CMD"
 
 
 class NoSuiteFound(RuntimeError):
@@ -39,11 +35,14 @@ class InstallFailed(RuntimeError):
     """
 
 
-def detect_test_cmd(repo: Path) -> tuple[str, ...]:
-    """`RALPH_TEST_CMD` wins; then npm, pytest, make. No detection means no run."""
-    override = os.environ.get(TEST_CMD_ENV)
+def detect_test_cmd(repo: Path, override: tuple[str, ...] | None = None) -> tuple[str, ...]:
+    """`RALPH_TEST_CMD` wins; then npm, pytest, make. No detection means no run.
+
+    The override is resolved from the environment upstream, in `Config`; this function only decides
+    what to detect when there is none.
+    """
     if override:
-        return tuple(shlex.split(override))
+        return override
     if (repo / "package.json").exists():
         return ("npm", "test")
     if (
@@ -62,11 +61,12 @@ def detect_test_cmd(repo: Path) -> tuple[str, ...]:
     )
 
 
-def detect_install_cmd(repo: Path) -> tuple[str, ...] | None:
+def detect_install_cmd(
+    repo: Path, override: tuple[str, ...] | None = None
+) -> tuple[str, ...] | None:
     """`None` means nothing to install — which is a fact, not a failure."""
-    override = os.environ.get(INSTALL_CMD_ENV)
     if override:
-        return tuple(shlex.split(override))
+        return override
     if (repo / "package.json").exists():
         return ("npm", "ci")
     return None
@@ -80,10 +80,10 @@ async def _run(cmd: Sequence[str], cwd: Path) -> tuple[int, str]:
     return proc.returncode or 0, out.decode(errors="replace")
 
 
-async def install_once(repo: Path) -> None:
+async def install_once(repo: Path, override: tuple[str, ...] | None = None) -> None:
     """In the base checkout, once per run. Never per worktree — N worktrees would mean N installs
     of the same tree, and the first failure would be discovered N times."""
-    cmd = detect_install_cmd(repo)
+    cmd = detect_install_cmd(repo, override)
     if cmd is None:
         return
     code, output = await _run(cmd, repo)
