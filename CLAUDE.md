@@ -74,6 +74,10 @@ load-bearing facts:
 
 - **Coding rules auto-load** from [`.claude/rules/`](.claude/rules/) (`coding-standards.md`,
   `canonical-vocabulary.md`) — every session, no import needed. Do not duplicate them here.
+  `coding-standards.md` is deliberately repo-agnostic; the **one Ralph adaptation** lives here: its
+  *"if something is unclear, ask"* assumes a human in the session, and an unattended Implementer has
+  none — its way of asking is **`<impasse>`**, with a structured report. Guessing, or softening an
+  acceptance criterion until it passes, is the failure mode the whole harness exists to catch.
 - [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md) is canonical for every domain term, **including
   code identifiers**. An "aliases to avoid" word as a class/function/field/state name is a defect.
 - **Why** the system is shaped this way: [`docs/design.md`](docs/design.md). **Per-CLI context

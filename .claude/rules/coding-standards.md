@@ -1,13 +1,7 @@
 # Coding rules
 
-*How to work, and what to build,* in this repo. Loaded every session — no `paths` scope — because
-the behavioural half applies to all work, docs included. The design rationale behind these
-conventions is in [`docs/design.md`](../../docs/design.md).
-
-**One Ralph adaptation, and it matters:** *"if something is unclear, ask"* below assumes a human in
-the session. An unattended Implementer has none — its way of asking is **`<impasse>`**, with a
-structured report. Guessing, or softening an acceptance criterion until it passes, is the failure
-mode the whole harness exists to catch.
+*How to work, and what to build.* Loaded every session — no `paths` scope — because the behavioural
+half applies to all work, docs included.
 
 ---
 
@@ -85,54 +79,53 @@ overcomplication, and clarifying questions come before implementation rather tha
 
 ### 3. Single source of truth
 
-- Each concept (schema, config shape, harness type, business rule) is owned by exactly one module.
+- Each concept (a schema, a config shape, a type, a business rule) is owned by exactly one module.
 - Other modules import from the owner — they never redefine or shadow it.
 - When a third-party type needs adaptation, create one wrapper/protocol in one place; consumers
   depend on that wrapper.
 - If two modules need the same data shape, move it to a shared location rather than defining it twice.
 
-### 4. Architecture conventions
+### 4. KISS — Keep It Simple, Stupid
 
-[`docs/architecture.md`](../../docs/architecture.md) is the map. Layers, and the dependency arrow
-points inward: `harness/` → `ports.py` → `adapters/` → orchestration → `cli.py`.
+- The simplest design that meets the acceptance criteria wins. Clever beats simple only when simple
+  cannot do the job — and it rarely can't.
+- Prefer a plain function to a class, a class to a hierarchy, a stdlib call to a dependency.
+- Reach for the smallest construct that works. If a reader needs a diagram to follow control flow,
+  it's too clever.
+- This is the *how-to-build* twin of **How to work → Simplicity first** — that section is the habit,
+  this is the standard it enforces.
 
-- **`harness/` is pure.** Stdlib imports only. No I/O, no subprocess, no git, no model. If a harness
-  function needs a fact from the world, it takes it as an argument.
-- **`ralph/harness/__init__.py` is the harness interface.** Import `from ralph.harness import Outcome`,
-  never `from ralph.harness.model.session import Outcome`. The layout inside is an implementation
-  detail; callers should not have to learn it.
-- **`harness/model/` is the nouns; `harness/rules/` is the verbs.** `model/` holds frozen values with
-  zero logic. `rules/` holds the pure functions that *are* the design — the failure taxonomy, the
-  routing table, eligibility, the cycle cap. **`rules/` may import `model/`; `model/` may not import
-  `rules/`** — a test enforces it. A value that knows how it will be classified has stopped being a
-  value. New decision logic goes in `rules/`, never beside the type it decides about.
-- **The harness core is not split by actor, and `adapters/` is not split by port.** `Outcome` and
-  `SessionTelemetry` belong to both actors; `copilot.py` is both an Implementer and an Editor.
-  Grouping either way forces a `shared/` folder that swallows everything.
-- **The fakes live in `tests/fakes.py`, never in `ralph/`.** Nothing in the shipped package may
-  import from `tests/` — a test asserts it. An adapter that reaches for a fake has stopped being an
-  adapter. `tests/builders.py` is a separate thing: builders make *values*, fakes satisfy *Protocols*.
-- **Structure is a frozen value; content is state.** `@dataclass(frozen=True, slots=True)` for harness
-  types. `IssueGraph` and `SubIssue` are immutable for a run's whole life — the invariant "the Editor
-  may never re-link a sub-issue" is enforced by the type, not by a rule someone must remember.
-- **Enums, not strings.** `Outcome`, `Verdict`, `SubIssueState`, `Destination` are `StrEnum`. A raw
-  outcome string anywhere outside a parser is a defect.
-- **Every Protocol in `ports.py` has a fake**, and the fakes are what the test suite runs against. A
-  test that needs a real model, a real network, or a real `codex` binary is in the wrong layer.
-- **One process, asyncio.** The merge lock is an `asyncio.Lock`. No `flock`, no PID files, no polling
-  for result files.
-- **Concrete adapters are named in `cli.py` and nowhere else.** Nothing downstream knows whether the
-  Implementer is Codex or Copilot, or the Editor is Claude Code or Copilot.
+### 5. YAGNI — You Aren't Gonna Need It
 
-### 5. Failure discipline
+- Build for the requirement in front of you, not the one you imagine. No hooks, flags, or seams for a
+  future that hasn't been asked for.
+- Delete speculative generality on sight: an interface with one implementer, a parameter no caller
+  passes, a branch no input reaches.
+- The moment a second use actually arrives, generalize then — with the second case in hand, not
+  guessed at. See **How to work → Surgical changes**.
 
-The harness's whole value is that it classifies failure honestly. Code that blurs a failure is worse
-than code that has one.
+### 6. SOLID
+
+Object-level design, for classes and their collaborators.
+
+- **Single responsibility.** Each module, class, and function has one reason to change. A function
+  that both makes a decision *and* performs I/O has two.
+- **Open/closed.** Extend behaviour by adding a new implementation or case, not by editing a stable
+  core. A new variant arrives as a new type, never as another branch in a growing `if`/`switch` on a
+  kind field.
+- **Liskov substitution.** Every implementation is fully substitutable for the interface it
+  satisfies — a caller holding the abstraction must never need to know which concrete type it has.
+- **Interface segregation.** Keep interfaces narrow. A caller depends only on the methods it uses;
+  split an interface before you widen it past one job.
+- **Dependency inversion.** High-level policy depends on abstractions, not on concrete
+  implementations; the concrete types are wired together at a single composition root. The dependency
+  arrow points toward the abstraction.
+
+### 7. Failure discipline
+
+Code that blurs a failure is worse than code that has one.
 
 - **Fail fast, loudly.** Raise on missing required fields — no silent defaults. Never `|| true`,
   never a bare `except:`, never swallow a subprocess's exit code.
-- **Zero commits is never a benign skip.** It is an `impasse` or `infra-failed`.
-- **The suite result, not the exit code, is the outcome.** The harness runs the tests. A model's exit
-  code is its opinion; the suite is a fact.
-- **No string-keyed intermediates.** Typed records throughout; no `dict[str, Any]` layers between a
-  CLI's JSON and a harness type — parse at the boundary, into a dataclass.
+- **No string-keyed intermediates.** Typed records throughout; no `dict[str, Any]` layers — parse at
+  the boundary, into a dataclass.
