@@ -18,10 +18,10 @@ from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 
 from ralph.adapters.editor import (
-    Ask,
+    TurnStreamAsk,
     OpenSession,
     READ_ONLY_TOOLS,
-    EditorSession,
+    TurnStreamSession,
     TokenUsage,
     Turn,
     read_only,
@@ -58,7 +58,7 @@ class ClaudeCodeEditor:
         must_be_terminal: bool,
     ) -> tuple[SessionTelemetry, EditorVerdict | None]:
         session = self.open_session(
-            Ask(
+            TurnStreamAsk(
                 prompt=editor_prompt(
                     context.brief, context.findings, failure, must_be_terminal
                 ),
@@ -77,7 +77,7 @@ class _SdkSession:
     said, and what each call cost.
     """
 
-    def __init__(self, ask: Ask) -> None:
+    def __init__(self, ask: TurnStreamAsk) -> None:
         self._ask = ask
         self._turns: asyncio.Queue[Turn | None] = asyncio.Queue()
         self._code: int | None = None
@@ -168,5 +168,5 @@ def _observed(usage: object) -> TokenUsage:
     return TokenUsage(consumed_tokens=prompt + count("output_tokens"))
 
 
-def claude_sdk_session(ask: Ask) -> EditorSession:
+def claude_sdk_session(ask: TurnStreamAsk) -> TurnStreamSession:
     return _SdkSession(ask=ask)

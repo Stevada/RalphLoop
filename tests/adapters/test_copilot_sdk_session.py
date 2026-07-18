@@ -30,7 +30,7 @@ from ralph.adapters.copilot_sdk_session import (
     SdkPermissionHandler,
     copilot_sdk_session,
 )
-from ralph.adapters.editor import Ask, TokenUsage, Turn, read_only
+from ralph.adapters.editor import TurnStreamAsk, TokenUsage, Turn, read_only
 
 if TYPE_CHECKING:
     from copilot.generated.session_events import PermissionRequest
@@ -157,10 +157,10 @@ class StubCopilotSession:
 def open_session(
     stub: StubCopilotSession,
     *,
-    ask: Ask = Ask(prompt="build it", cwd=Path("/w/01")),
+    ask: TurnStreamAsk = TurnStreamAsk(prompt="build it", cwd=Path("/w/01")),
 ) -> CopilotSdkSession:
     async def create(
-        _ask: Ask,
+        _ask: TurnStreamAsk,
         observe: Callable[[SdkEvent], None],
         on_permission_request: SdkPermissionHandler | None,
     ) -> RunningCopilotSession:
@@ -284,7 +284,7 @@ async def test_permission_handler_denies_mutating_requests_pre_execution(
     )
     session = open_session(
         stub,
-        ask=Ask(
+        ask=TurnStreamAsk(
             prompt="adjudicate",
             cwd=Path("/w/01"),
             permit=lambda tool, input: read_only(tool, input, SUITE),
@@ -336,7 +336,7 @@ REAL = pytest.mark.skipif(
 @REAL
 async def test_a_real_copilot_sdk_session_can_be_killed(tmp_path: Path) -> None:
     session = copilot_sdk_session(
-        Ask(
+        TurnStreamAsk(
             prompt="Count upward one number per line until you are stopped.",
             cwd=tmp_path,
         )

@@ -11,7 +11,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
-from ralph.adapters.editor import Ask, EditorSession, Permit, TokenUsage, Turn
+from ralph.adapters.editor import TurnStreamAsk, TurnStreamSession, Permit, TokenUsage, Turn
 
 if TYPE_CHECKING:
     from copilot.generated.session_events import PermissionRequest as SdkPermissionRequest
@@ -81,13 +81,13 @@ class RunningCopilotSession(Protocol):
 
 SdkPermissionHandler = Callable[[SdkPermissionRequest, dict[str, str]], SdkPermissionResult]
 CreateSession = Callable[
-    [Ask, Callable[[SdkEvent], None], SdkPermissionHandler | None],
+    [TurnStreamAsk, Callable[[SdkEvent], None], SdkPermissionHandler | None],
     Awaitable[RunningCopilotSession],
 ]
 
 
-class CopilotSdkSession(EditorSession):
-    def __init__(self, ask: Ask, *, create_session: CreateSession) -> None:
+class CopilotSdkSession(TurnStreamSession):
+    def __init__(self, ask: TurnStreamAsk, *, create_session: CreateSession) -> None:
         self._ask = ask
         self._create_session = create_session
         self._turns: asyncio.Queue[Turn | None] = asyncio.Queue()
@@ -226,7 +226,7 @@ class _RuntimeSession:
 
 
 async def _open_real_session(
-    ask: Ask,
+    ask: TurnStreamAsk,
     observe: Callable[[SdkEvent], None],
     on_permission_request: SdkPermissionHandler | None,
 ) -> RunningCopilotSession:
@@ -250,7 +250,7 @@ async def _open_real_session(
     )
 
 
-def copilot_sdk_session(ask: Ask) -> CopilotSdkSession:
+def copilot_sdk_session(ask: TurnStreamAsk) -> CopilotSdkSession:
     return CopilotSdkSession(ask, create_session=_open_real_session)
 
 

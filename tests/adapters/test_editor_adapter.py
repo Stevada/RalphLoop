@@ -16,10 +16,10 @@ import pytest
 
 from ralph.adapters.claude_editor import ClaudeCodeEditor
 from ralph.adapters.editor import (
-    Ask,
+    TurnStreamAsk,
     VERDICT_CLOSE,
     VERDICT_OPEN,
-    EditorSession,
+    TurnStreamSession,
     TokenUsage,
     Turn,
     parse_verdict,
@@ -263,7 +263,7 @@ class StubSession:
 
 
 async def adjudicate(
-    session: EditorSession, *, must_be_terminal: bool = False, budget: Budget = GENEROUS
+    session: TurnStreamSession, *, must_be_terminal: bool = False, budget: Budget = GENEROUS
 ) -> tuple[SessionTelemetry, EditorVerdict | None]:
     editor = ClaudeCodeEditor(open_session=lambda ask: session, suite=SUITE)
     return await editor.adjudicate(session_context(budget), FAILURE, must_be_terminal)
@@ -349,9 +349,9 @@ async def test_the_final_cycle_is_surfaced_in_the_prompt() -> None:
     """Told, not trusted. The adapter *tells* the model it is out of road; the **scheduler** refuses
     a `revise` that comes back anyway. One rule, one home — an adapter that also rejected it would
     be a second home for the cycle cap, and one day the two would disagree."""
-    asks: list[Ask] = []
+    asks: list[TurnStreamAsk] = []
 
-    def capture(ask: Ask) -> EditorSession:
+    def capture(ask: TurnStreamAsk) -> TurnStreamSession:
         asks.append(ask)
         return StubSession([verdict_json("inconclusive")])
 
@@ -376,9 +376,9 @@ async def test_the_adapter_does_not_itself_reject_a_final_cycle_revise() -> None
 async def test_the_editor_is_pointed_at_the_failed_worktree() -> None:
     """Its working directory is the wreckage, exactly as the Implementer left it. That is what makes
     reproduction possible at all."""
-    asks: list[Ask] = []
+    asks: list[TurnStreamAsk] = []
 
-    def capture(ask: Ask) -> EditorSession:
+    def capture(ask: TurnStreamAsk) -> TurnStreamSession:
         asks.append(ask)
         return StubSession([verdict_json("inconclusive")])
 
@@ -392,9 +392,9 @@ async def test_the_editor_is_pointed_at_the_failed_worktree() -> None:
 
 
 async def test_the_prompt_hands_over_the_claim_and_the_facts_to_check_it_against() -> None:
-    asks: list[Ask] = []
+    asks: list[TurnStreamAsk] = []
 
-    def capture(ask: Ask) -> EditorSession:
+    def capture(ask: TurnStreamAsk) -> TurnStreamSession:
         asks.append(ask)
         return StubSession([verdict_json("inconclusive")])
 

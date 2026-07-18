@@ -1,9 +1,9 @@
 """Running an Implementer in a worktree, and collecting the facts it cannot report about itself.
 
-**This is the whole of an Implementer that is not model-specific.** Codex and Copilot are this
-plus an argv and final usage; the stand-in Implementer is this plus an argv. Everything that makes a
-session a session — bounding on the clock, counting the commits, reading the diffstat, finding the
-`<impasse>` sentinel — happens here, once.
+**This is the whole of a subprocess Implementer that is not model-specific.** Codex is this plus an
+argv and final usage; the stand-in Implementer is this plus an argv. Everything that makes a
+subprocess session a session — bounding on the clock, counting the commits, reading the diffstat,
+finding the `<impasse>` sentinel — happens here, once.
 
 The model's exit code is its opinion. Everything in the `SessionTelemetry` this returns is the
 harness's own observation, and the two are allowed to disagree. That disagreement is the signal.
@@ -133,6 +133,27 @@ async def run_session(argv: Sequence[str], cwd: Path, budget: Budget) -> Session
     )
 
 
+def implementer_telemetry(
+    *,
+    bound: Bound,
+    exit_code: int,
+    output: str,
+    wall_clock_s: float,
+    worktree: Worktree,
+) -> SessionTelemetry:
+    """The harness facts every Implementer session reports, regardless of transport."""
+    return SessionTelemetry(
+        exit_code=exit_code,
+        killed=bound.killed,
+        consumed_tokens=bound.consumed_tokens,
+        wall_clock_s=wall_clock_s,
+        commits=int(run_git(worktree.path, "rev-list", "--count", f"{worktree.base}..HEAD")),
+        diffstat=run_git(worktree.path, "diff", "--stat", f"{worktree.base}..HEAD"),
+        session_output=output,
+        impasse_report=parse_impasse(output),
+    )
+
+
 async def run_agent(
     argv: Sequence[str],
     wt: Worktree,
@@ -147,15 +168,12 @@ async def run_agent(
         final = await final_consumed_tokens(session, wt)
         if final is not None:
             consumed_tokens = final
-    return SessionTelemetry(
+    return implementer_telemetry(
+        bound=Bound(killed=session.bound.killed, consumed_tokens=consumed_tokens),
         exit_code=session.exit_code,
-        killed=session.bound.killed,
-        consumed_tokens=consumed_tokens,
+        output=session.output,
         wall_clock_s=session.wall_clock_s,
-        commits=int(run_git(wt.path, "rev-list", "--count", f"{wt.base}..HEAD")),
-        diffstat=run_git(wt.path, "diff", "--stat", f"{wt.base}..HEAD"),
-        session_output=session.output,
-        impasse_report=parse_impasse(session.output),
+        worktree=wt,
     )
 
 
@@ -163,9 +181,9 @@ async def run_agent(
 class SubprocessImplementer:
     """An Implementer is an argv, a worktree, and the telemetry its CLI publishes.
 
-    That is the whole of it. Codex is this with `codex exec` and end-of-turn usage; Copilot is this
-    with `copilot -p` and final log usage; the stand-in Implementer is this with neither. Nothing above
-    this line knows the difference.
+    That is the whole of it for subprocess-backed actors. Codex is this with `codex exec` and
+    end-of-turn usage; the stand-in Implementer is this with neither. Nothing above this line knows
+    the difference.
     """
 
     build_argv: BuildArgv

@@ -87,15 +87,15 @@ Permit = Callable[[str, dict[str, object]], Permission]
 
 
 @dataclass(frozen=True, slots=True)
-class Ask:
-    """Everything an SDK-backed Editor session needs to start."""
+class TurnStreamAsk:
+    """Everything an SDK-backed actor session needs to start."""
 
     prompt: str
     cwd: Path
     permit: Permit | None = None
 
 
-OpenSession = Callable[[Ask], "EditorSession"]
+OpenSession = Callable[[TurnStreamAsk], "TurnStreamSession"]
 
 
 def _permitted_command(argv: Sequence[str], suite: Sequence[str]) -> Permission:
@@ -196,8 +196,8 @@ Turn = str | TokenUsage
 
 
 @runtime_checkable
-class EditorSession(Protocol):
-    """A running Editor conversation. The SDK, or a CLI, or a stub — the bounding does not care.
+class TurnStreamSession(Protocol):
+    """A running SDK-backed actor conversation. The bounding does not care which actor owns it.
 
     `kill()` must make `turns()` **end**, not raise: it is how the wall clock stops a session, and
     a kill that surfaced as a `CancelledError` three layers up would be reported as `infra-failed`
@@ -213,14 +213,19 @@ class EditorSession(Protocol):
 
     async def wait(self) -> int: ...
 
-async def run_editor(
-    session: EditorSession, budget: Budget
-) -> tuple[SessionTelemetry, EditorVerdict | None]:
-    """One Editor session, under the same wall-clock bound as an Implementer's.
 
-    `commits` is zero and `diffstat` empty *by construction*, not by observation: the Editor was
-    denied every tool that could have made them otherwise.
-    """
+@dataclass(frozen=True, slots=True)
+class TurnStreamRun:
+    """A bounded SDK turn stream, before an actor-specific adapter interprets its output."""
+
+    bound: Bound
+    exit_code: int
+    output: str
+    wall_clock_s: float
+
+
+async def run_turn_stream(session: TurnStreamSession, budget: Budget) -> TurnStreamRun:
+    """Run an SDK turn stream under the wall-clock bound and collect what it emitted."""
     started = time.monotonic()
     said: list[str] = []
     consumed_tokens = 0
@@ -236,16 +241,31 @@ async def run_editor(
     reading = asyncio.create_task(pump())
     bound = await run_bounded(_TurnStreamKillable(session, reading), budget)
     await reading
-    bound = Bound(killed=bound.killed, consumed_tokens=consumed_tokens)
 
-    output = "".join(said)
-    telemetry = editor_telemetry(
-        bound=bound,
+    return TurnStreamRun(
+        bound=Bound(killed=bound.killed, consumed_tokens=consumed_tokens),
         exit_code=session.returncode if session.returncode is not None else -1,
-        output=output,
+        output="".join(said),
         wall_clock_s=time.monotonic() - started,
     )
-    return telemetry, verdict_of(output)
+
+
+async def run_editor(
+    session: TurnStreamSession, budget: Budget
+) -> tuple[SessionTelemetry, EditorVerdict | None]:
+    """One Editor session, under the same wall-clock bound as an Implementer's.
+
+    `commits` is zero and `diffstat` empty *by construction*, not by observation: the Editor was
+    denied every tool that could have made them otherwise.
+    """
+    completed = await run_turn_stream(session, budget)
+    telemetry = editor_telemetry(
+        bound=completed.bound,
+        exit_code=completed.exit_code,
+        output=completed.output,
+        wall_clock_s=completed.wall_clock_s,
+    )
+    return telemetry, verdict_of(completed.output)
 
 
 def editor_telemetry(bound: Bound, exit_code: int, output: str, wall_clock_s: float) -> SessionTelemetry:
@@ -273,7 +293,7 @@ class _TurnStreamKillable:
     """Clock-bound the turn stream, because an in-process Editor may not have subprocess wait
     semantics. The session is finished when its turns are drained."""
 
-    session: EditorSession
+    session: TurnStreamSession
     reading: asyncio.Task[None]
 
     @property
