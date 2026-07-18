@@ -26,7 +26,7 @@ from ralph.adapters.suite import SubprocessTestRunner, install_once
 from ralph.config import (
     CONFIG_FILE,
     ENV_FILE,
-    LINEAR_API_KEY_ENV,
+    LINEAR_API_KEY,
     PRE_COMMIT_CONFIGS,
     Config,
     ConfigError,
@@ -59,10 +59,16 @@ log = logging.getLogger("ralph")
 CODEX = "codex"
 CLAUDE = "claude"
 COPILOT = "copilot"
-NONE = "none"
 
 FILESYSTEM = "filesystem"
 LINEAR = "linear"
+
+
+class _NoEditorOverride:
+    pass
+
+
+_NO_EDITOR_OVERRIDE = _NoEditorOverride()
 
 # Operational verbosity is a command-line flag, not configuration — the harness's own diagnostic
 # log, separate from the run log. `WARNING` keeps a clean run quiet.
@@ -84,20 +90,28 @@ class IssueSourceError(ValueError):
     """The CLI was not given a coherent issue source."""
 
 
-def editor_of(config: Config) -> Editor | None:
-    """Which model adjudicates a failed session — or **whether one does at all**.
+def validate_agents(config: Config) -> None:
+    """`ralph.yaml` must name actors this harness knows, without constructing their adapters."""
+    if config.implementer not in {CODEX, COPILOT}:
+        raise NoAgent(
+            f"implementer: {config.implementer!r} in {CONFIG_FILE} names no Implementer. "
+            f"Known: {CODEX}, {COPILOT}."
+        )
+    if config.editor not in {CLAUDE, COPILOT}:
+        raise NoAgent(
+            f"editor: {config.editor!r} in {CONFIG_FILE} names no Editor. "
+            f"Known: {CLAUDE}, {COPILOT}."
+        )
 
-    `editor: none` is a required, explicit choice, not an omission: there is no Editor in this run,
-    and failures quarantine on the Implementer's own outcome while the run drains around them. It
-    returns `None` for exactly that, which the scheduler reads as "no adjudication."
+
+def editor_of(config: Config) -> Editor:
+    """Which model adjudicates a failed session.
 
     The Editor and the Implementer should not be the same model on the same failure — an Editor
     adjudicating an impasse declared by *itself* is the least independent sensor the system could
     have. Nothing here enforces that; it is why two CLIs back each role.
     """
     named = config.editor
-    if named == NONE:
-        return None
     if named == CLAUDE:
         return ClaudeCodeEditor(open_session=claude_sdk_session, suite=config.test_cmd)
     if named == COPILOT:
@@ -106,9 +120,8 @@ def editor_of(config: Config) -> Editor | None:
         # choosing: see `CopilotEditor`. It buys independence — an Editor that is not the model
         # that just failed.
         return copilot_editor(suite=config.test_cmd)
-    raise NoAgent(
-        f"editor: {named!r} in {CONFIG_FILE} names no Editor. Known: {CLAUDE}, {COPILOT}, {NONE}."
-    )
+    validate_agents(config)
+    raise AssertionError("validate_agents accepted an unknown Editor")
 
 
 def implementer_of(config: Config) -> Implementer:
@@ -118,9 +131,8 @@ def implementer_of(config: Config) -> Implementer:
         return codex_implementer()
     if named == COPILOT:
         return copilot_implementer()
-    raise NoAgent(
-        f"implementer: {named!r} in {CONFIG_FILE} names no Implementer. Known: {CODEX}, {COPILOT}."
-    )
+    validate_agents(config)
+    raise AssertionError("validate_agents accepted an unknown Implementer")
 
 
 def find_issues_dir(repo: Path, given: Path | None) -> Path:
@@ -148,7 +160,7 @@ def issue_store(repo: Path, issues: Path | None, linear: str | None, config: Con
         if issues is not None:
             raise IssueSourceError("pass either an issues directory or --linear-parent, not both")
         if not config.linear_api_key:
-            raise IssueSourceError(f"set {LINEAR_API_KEY_ENV} to use source: {LINEAR}")
+            raise IssueSourceError(f"set {LINEAR_API_KEY} to use source: {LINEAR}")
         return LinearIssueStore(
             parent_identifier=linear,
             client=LinearGraphQLClient(api_key=config.linear_api_key),
@@ -215,6 +227,7 @@ def validate(
     config: Config | None = None,
 ) -> tuple[Refusal, ...]:
     config = config or Config.resolve(repo)
+    validate_agents(config)
     return refusals(facts_about(repo.resolve(), issues, linear, config))
 
 
@@ -238,6 +251,7 @@ def render_plan(
     graph is acyclic, and it costs nothing to run because no session is ever opened.
     """
     config = config or Config.resolve(repo)
+    validate_agents(config)
     graph, states = _read_graph(repo.resolve(), issues, linear, config)
     edges = sum(len(sub.blocked_by) for sub in graph.sub_issues.values())
     lines = [f"{len(graph.sub_issues)} sub-issues, {edges} edges, no cycle."]
@@ -261,7 +275,7 @@ async def run(
     budget: Budget | None = None,
     concurrency: int = DEFAULT_CONCURRENCY,
     implementer: Implementer | None = None,
-    editor: Editor | None = None,
+    editor: Editor | _NoEditorOverride = _NO_EDITOR_OVERRIDE,
     linear: str | None = None,
     config: Config | None = None,
 ) -> RunReport:
@@ -270,6 +284,7 @@ async def run(
     suite calls a model."""
     repo = repo.resolve()
     config = config or Config.resolve(repo)
+    validate_agents(config)
 
     # The same checks `ralph validate` runs, and they are not advisory. A run that starts on `main`
     # has already done the damage by the time anybody reads the warning it printed.
@@ -286,14 +301,16 @@ async def run(
     await install_once(repo, config.install_cmd)
 
     store = issue_store(repo, issues, linear, config)
+    selected_implementer = implementer if implementer is not None else implementer_of(config)
+    selected_editor = editor_of(config) if isinstance(editor, _NoEditorOverride) else editor
     scheduler = Scheduler(
         repo=repo,
         git=git,
         store=store,
         run_log=JsonlRunLog(path=repo / ".scratch" / "run.jsonl"),
         runner=runner,
-        implementer=implementer if implementer is not None else implementer_of(config),
-        editor=editor if editor is not None else editor_of(config),
+        implementer=selected_implementer,
+        editor=selected_editor,
         merge_queue=MergeQueue(git=git, runner=runner, integration=integration),
         integration=integration,
         budget=budget or Budget(),
@@ -407,7 +424,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     _load_env(args.repo)
     try:
         config = Config.resolve(args.repo)
-    except ConfigError as exc:
+        validate_agents(config)
+    except (ConfigError, NoAgent) as exc:
         print(exc)
         return 1
 

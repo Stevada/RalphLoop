@@ -95,14 +95,9 @@ class _Closed:
 class Scheduler:
     """The run.
 
-    `editor` is optional, and the `None` is meant literally: **there is no Editor in this run**. It
-    is not a null Editor. The tempting alternative — an adapter that always returns no verdict — is
-    a lie the taxonomy would faithfully propagate: `classify_editor` calls a verdictless Editor
-    `infra-failed`, so every impasse in the run would reach the human reported as a harness crash.
-
-    Without an Editor a failure escalates on the Implementer's own outcome and the run is
-    quarantine-and-drain. That is a real mode, not a degraded one: it is the cheap run, with no
-    second model and no second bill.
+    Every run has an Editor. The composition root resolves the concrete adapter before the
+    scheduler starts, so a failed Implementer session that routes to adjudication always reaches
+    the Editor loop.
     """
 
     def __init__(
@@ -117,7 +112,7 @@ class Scheduler:
         merge_queue: MergeQueue,
         integration: str,
         budget: Budget,
-        editor: Editor | None = None,
+        editor: Editor,
         concurrency: int = DEFAULT_CONCURRENCY,
     ) -> None:
         self._repo = repo
@@ -261,11 +256,6 @@ class Scheduler:
             # session plus an Editor session, and no Editor is involved in either.
             return await self._quarantine(sub.id, Actor.IMPLEMENTER, wt, report)
 
-        if self._editor is None:
-            # No Editor in this run: it is quarantine-and-drain, and the failure escalates on the
-            # Implementer's own outcome. The harness does not invent a verdict it never got.
-            return await self._quarantine(sub.id, Actor.IMPLEMENTER, wt, report)
-
         return await self._adjudicate(sub, context, report)
 
     async def _adjudicate(
@@ -292,9 +282,7 @@ class Scheduler:
         await self._record(
             sub.id, Actor.EDITOR, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS
         )
-        telemetry, verdict = await self._editor_of(sub).adjudicate(
-            context, report, must_be_terminal
-        )
+        telemetry, verdict = await self._editor.adjudicate(context, report, must_be_terminal)
         outcome = classify_editor(telemetry, verdict)
         await self._record(sub.id, Actor.EDITOR, EventKind.SESSION_FINISHED, outcome)
 
@@ -343,12 +331,6 @@ class Scheduler:
         )
         self._git.discard_worktree(context.worktree)
         return None
-
-    def _editor_of(self, sub: SubIssue) -> Editor:
-        """`_cycle` has already established there is one. This is for the type-checker."""
-        if self._editor is None:
-            raise RuntimeError(f"{sub.id}: reached the Editor with no Editor configured")
-        return self._editor
 
     async def _quarantine(
         self, id: SubIssueId, actor: Actor, wt: Worktree, report: FailureReport

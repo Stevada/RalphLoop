@@ -69,7 +69,7 @@ def store_of(*ids: str) -> FakeIssueStore:
 async def run_with(
     store: FakeIssueStore,
     implementer: FakeImplementer,
-    editor: Editor | None,
+    editor: Editor,
     git: FakeGit | None = None,
     log: FakeRunLog | None = None,
 ) -> RunReport:

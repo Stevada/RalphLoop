@@ -7,8 +7,7 @@ parallel, and one that integrates them:
          └── 03 ──┘
 
 against a real git repository, with real worktrees, a real merge queue, a real suite, and a real
-agent subprocess. **Zero mocks.** Nothing in this file imports `tests.fakes`, and `test_layering.py`
-holds that claim to its word rather than trusting this sentence.
+agent subprocess. Failure cases inject a scripted Editor so the test does not call a real model.
 
 This is not the moment the system first comes together — that was #04, and every ticket since has
 kept it working. There is no big-bang integration here. What is new is the *whole* claim, asserted
@@ -21,8 +20,10 @@ from __future__ import annotations
 import json
 
 from ralph.cli import render, run
-from ralph.harness import Outcome
+from ralph.harness import Outcome, Verdict
 from ralph.issues import SubIssueId
+from tests.builders import telemetry, verdict as editor_verdict
+from tests.fakes import FakeEditor
 from tests.testbed import (
     Behaviour,
     StandInAgent,
@@ -34,6 +35,12 @@ from tests.testbed import (
 # A contract, two in parallel behind it, one integrating both. The smallest graph in which
 # "in parallel" and "in order" are both claims, and can therefore both be wrong.
 PHASE = {"01": [], "02": ["01"], "03": ["01"], "04": ["02", "03"]}
+
+
+def terminal_editor() -> FakeEditor:
+    return FakeEditor(
+        scripted=[(telemetry(commits=0), editor_verdict(Verdict.PLANNING_DEFECT))]
+    )
 
 
 def events(repo: TargetRepo) -> list[dict[str, str]]:
@@ -117,7 +124,13 @@ async def test_the_run_log_carries_no_spend_no_diffstat_and_no_test_output(
     repo.write_graph(PHASE)
     spec = behaviour_spec(Behaviour.SUCCEED, {"02": Behaviour.RED_SUITE})
 
-    await run(repo.path, None, concurrency=4, implementer=stand_in(agent, spec))
+    await run(
+        repo.path,
+        None,
+        concurrency=4,
+        implementer=stand_in(agent, spec),
+        editor=terminal_editor(),
+    )
 
     raw = (repo.path / ".scratch" / "run.jsonl").read_text()
     assert all(set(e) == {"ts", "sub_issue", "actor", "kind", "details"} for e in events(repo))
@@ -133,7 +146,13 @@ async def test_one_failure_strands_its_dependents_and_nothing_else(
     repo.write_graph(PHASE)
     spec = behaviour_spec(Behaviour.SUCCEED, {"02": Behaviour.IMPASSE})
 
-    report = await run(repo.path, None, concurrency=4, implementer=stand_in(agent, spec))
+    report = await run(
+        repo.path,
+        None,
+        concurrency=4,
+        implementer=stand_in(agent, spec),
+        editor=terminal_editor(),
+    )
 
     assert sorted(report.landed) == ["01", "03"]
     assert report.failed == {SubIssueId("02"): Outcome.IMPASSE}
@@ -175,7 +194,13 @@ async def test_a_semantic_conflict_surfaces_on_the_second_to_land(
     repo.write_graph({"01": [], "02": []})
     spec = behaviour_spec(Behaviour.RENAMES_THE_API, {"02": Behaviour.CALLS_THE_API})
 
-    report = await run(repo.path, None, concurrency=2, implementer=stand_in(agent, spec))
+    report = await run(
+        repo.path,
+        None,
+        concurrency=2,
+        implementer=stand_in(agent, spec),
+        editor=terminal_editor(),
+    )
 
     assert len(report.landed) == 1
     assert list(report.failed.values()) == [Outcome.INTEGRATION_FAILED]

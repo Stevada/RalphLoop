@@ -101,7 +101,7 @@ class _SdkSession:
 
     async def _converse(self) -> None:
         # Imported here, not at module scope: `claude-agent-sdk` is an optional dependency, and a
-        # run with a Codex Implementer and no Editor must not require it to be installed.
+        # run that never reaches Claude adjudication must not require it to be installed.
         from claude_agent_sdk import (
             ClaudeAgentOptions,
             PermissionResultAllow,

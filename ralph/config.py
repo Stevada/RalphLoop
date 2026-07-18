@@ -26,7 +26,7 @@ import yaml
 
 # The one secret a run reads from the environment. Everything that is not a secret lives in
 # `ralph.yaml` (arguments) or on the command line (per-run values), never here.
-LINEAR_API_KEY_ENV = "LINEAR_API_KEY"
+LINEAR_API_KEY = "LINEAR_API_KEY"
 
 # The config filenames that mean the target repo uses pre-commit.
 PRE_COMMIT_CONFIGS = (".pre-commit-config.yaml", ".pre-commit-config.yml")
@@ -74,7 +74,7 @@ class Config:
             protected=_strset(raw, "protected", path),
             test_cmd=_cmd(raw, "test_cmd", path),
             install_cmd=_cmd(raw, "install_cmd", path),
-            linear_api_key=env.get(LINEAR_API_KEY_ENV),
+            linear_api_key=env.get(LINEAR_API_KEY),
         )
 
     def loggable(self) -> str:

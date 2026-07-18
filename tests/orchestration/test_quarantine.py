@@ -15,9 +15,11 @@ from __future__ import annotations
 import json
 
 from ralph.cli import render, run
-from ralph.harness import Outcome
+from ralph.harness import Outcome, Verdict
 from ralph.issues import SubIssueId
 from ralph.ports import Budget
+from tests.builders import telemetry, verdict as editor_verdict
+from tests.fakes import FakeEditor
 from tests.testbed import (
     Behaviour,
     StandInAgent,
@@ -25,6 +27,12 @@ from tests.testbed import (
     behaviour_spec,
     stand_in_implementer as stand_in,
 )
+
+
+def terminal_editor() -> FakeEditor:
+    return FakeEditor(
+        scripted=[(telemetry(commits=0), editor_verdict(Verdict.PLANNING_DEFECT))]
+    )
 
 
 def story(repo: TargetRepo) -> list[tuple[str, str, str]]:
@@ -44,7 +52,13 @@ async def test_a_failure_quarantines_and_the_run_drains_around_it(
     repo.write_graph({"01": [], "02": [], "03": ["01"], "04": ["02"]})
     spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.IMPASSE})
 
-    report = await run(repo.path, None, concurrency=3, implementer=stand_in(agent, spec))
+    report = await run(
+        repo.path,
+        None,
+        concurrency=3,
+        implementer=stand_in(agent, spec),
+        editor=terminal_editor(),
+    )
 
     assert sorted(report.landed) == ["02", "04"]  # every unaffected sub-issue still landed
     assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
@@ -69,7 +83,12 @@ async def test_the_quarantined_worktree_is_preserved_as_evidence(
     moved somewhere they will find it — `.worktrees/failed/` is where the notification says it is."""
     repo.write_graph({"01": []})
 
-    await run(repo.path, None, implementer=stand_in(agent, Behaviour.RED_SUITE))
+    await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.RED_SUITE),
+        editor=terminal_editor(),
+    )
 
     failed = repo.path / ".worktrees" / "failed" / "01"
     assert failed.is_dir()
@@ -109,7 +128,12 @@ async def test_a_report_carries_both_the_models_claim_and_the_harnesss_facts(
     """
     repo.write_graph({"01": []})
 
-    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.RED_SUITE))
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.RED_SUITE),
+        editor=terminal_editor(),
+    )
 
     escalation = report.notification.escalations[0]
     assert escalation.outcome is Outcome.IMPASSE
@@ -125,7 +149,12 @@ async def test_zero_commits_is_an_impasse_never_a_benign_skip(
     — which is how a graph of ten sub-issues finishes in four minutes having done nothing at all."""
     repo.write_graph({"01": []})
 
-    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.COMMIT_NOTHING))
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.COMMIT_NOTHING),
+        editor=terminal_editor(),
+    )
 
     assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
     assert report.notification.escalations[0].report.telemetry.commits == 0
@@ -161,7 +190,13 @@ async def test_one_notification_says_which_to_open_first(
     repo.write_graph({"01": [], "02": [], "03": ["01"], "04": ["03"]})
     spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.IMPASSE, "02": Behaviour.RED_SUITE})
 
-    report = await run(repo.path, None, concurrency=2, implementer=stand_in(agent, spec))
+    report = await run(
+        repo.path,
+        None,
+        concurrency=2,
+        implementer=stand_in(agent, spec),
+        editor=terminal_editor(),
+    )
     n = report.notification
 
     assert [e.sub_issue for e in n.escalations] == ["01", "02"]

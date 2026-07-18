@@ -171,15 +171,15 @@ or a `.env` typo that leaves the required secret absent, fails loudly.
 # <repo>/ralph.yaml
 source: filesystem          # filesystem | linear — where the sub-issue graph comes from
 implementer: codex          # codex | copilot — writes the code and the tests
-editor: claude              # claude | copilot | none — diagnoses failures; none is quarantine-and-drain
+editor: claude              # claude | copilot — diagnoses failures
 protected: [main, master]   # branches a run refuses to start from
 test_cmd: uv run pytest -q  # a string is split into an argv; a list is taken verbatim
 install_cmd: uv sync        # runs once, in the base checkout; a failure aborts the run
 ```
 
-Omitting any of these is a loud, fatal error — including `editor`, whose "no Editor" mode is the
-explicit value `none`, not an absence. How `codex`/`copilot` is driven, and the four Linear state
-names, are **not** arguments: they are hardcoded in the adapter that owns them.
+Omitting any of these is a loud, fatal error — including `editor`. How `codex`/`copilot` is driven,
+and the four Linear state names, are **not** arguments: they are hardcoded in the adapter that owns
+them.
 
 ### `.env` — the one secret
 

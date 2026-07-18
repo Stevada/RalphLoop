@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from ralph.issues.filesystem import FilesystemIssueStore
-from ralph.cli import Refused, main, render_plan, render_refusals, run, validate
+from ralph.cli import NoAgent, Refused, main, render_plan, render_refusals, run, validate
 from ralph.harness import (
     Check,
     RepoFacts,
@@ -201,6 +201,11 @@ def test_the_fixture_repo_is_ready_to_run(repo: TargetRepo) -> None:
     the repo they are all built on, say nothing at all."""
     assert validate(repo.path) == ()
     assert render_refusals(()) == "ready to run."
+
+
+def test_validate_rejects_editor_none(repo: TargetRepo) -> None:
+    with pytest.raises(NoAgent, match="Known: claude, copilot"):
+        validate(repo.path, config=make_config(editor="none"))
 
 
 # ── and the run runs them too ────────────────────────────────────────────────────────────────

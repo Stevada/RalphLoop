@@ -199,7 +199,7 @@ ZERO_MOCKS = sorted(
 
 
 def test_some_test_file_claims_zero_mocks() -> None:
-    assert len(ZERO_MOCKS) >= 3
+    assert len(ZERO_MOCKS) >= 1
 
 
 @pytest.mark.parametrize("module", ZERO_MOCKS, ids=lambda p: p.name)

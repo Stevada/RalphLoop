@@ -2,7 +2,7 @@
 
 The tracer bullet. Every test here goes through `ralph.cli.run` — the real CLI, the real
 filesystem store, real git, real worktrees, the real merge queue, a real suite, and a real agent
-subprocess. **Zero mocks.** Nothing in this file imports `tests.fakes`.
+subprocess. Failure cases inject a scripted Editor so the test does not call a real model.
 
 The only thing that is not real is the agent's intelligence, and that is the one thing the harness
 was never trusting anyway.
@@ -17,10 +17,12 @@ import pytest
 
 from ralph.adapters.git import GitCli
 from ralph.cli import run
-from ralph.harness import Outcome
+from ralph.harness import Outcome, Verdict
 from ralph.issues import SubIssueId, SubIssueState
 from ralph.ports import Budget
 from ralph.scheduler import BaseIsRed
+from tests.builders import telemetry, verdict as editor_verdict
+from tests.fakes import FakeEditor
 from tests.testbed import (
     Behaviour,
     StandInAgent,
@@ -28,6 +30,12 @@ from tests.testbed import (
     make_config,
     stand_in_implementer as stand_in,
 )
+
+
+def terminal_editor() -> FakeEditor:
+    return FakeEditor(
+        scripted=[(telemetry(commits=0), editor_verdict(Verdict.PLANNING_DEFECT))]
+    )
 
 
 async def test_ralph_run_lands_a_sub_issue_end_to_end(
@@ -61,8 +69,8 @@ async def test_the_run_log_tells_the_true_story_in_order(
     lines = [json.loads(x) for x in (repo.path / ".scratch" / "run.jsonl").read_text().splitlines()]
     story = [(e["sub_issue"], e["actor"], e["kind"], e["details"]) for e in lines]
 
-    # Every session says whose it was. With no Editor in this run they are all the Implementer's —
-    # which is the baseline the Editor's own lines are added to in `test_editor_loop.py`.
+    # Every successful session says whose it was. The Editor's own lines are added only when an
+    # Implementer failure routes to adjudication, as covered in `test_editor_loop.py`.
     assert story == [
         ("01", "implementer", "session-started", "in-progress"),
         ("01", "implementer", "session-finished", "success"),
@@ -122,7 +130,12 @@ async def test_an_undeclared_impasse_session_does_not_land(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """It exits 0 and commits nothing. The prototype called that a skip and moved on."""
-    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.COMMIT_NOTHING))
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.COMMIT_NOTHING),
+        editor=terminal_editor(),
+    )
 
     assert report.landed == ()
     assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
@@ -140,7 +153,12 @@ async def test_a_session_that_commits_a_red_suite_does_not_land(
 ) -> None:
     """The dangerous one: it exits 0, it committed, and it is broken. The harness runs the suite —
     the model's exit code is its opinion."""
-    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.RED_SUITE))
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.RED_SUITE),
+        editor=terminal_editor(),
+    )
 
     assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
     assert repo.commit_count("integration") == 1
@@ -161,7 +179,12 @@ async def test_a_hanging_session_is_killed_and_does_not_land(
 async def test_an_impasse_does_not_land_and_is_recorded(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.IMPASSE))
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.IMPASSE),
+        editor=terminal_editor(),
+    )
 
     assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
     assert ("01", "session-finished", "impasse") in [

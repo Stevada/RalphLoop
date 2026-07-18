@@ -318,10 +318,9 @@ sub-issue and `await asyncio.wait(..., FIRST_COMPLETED)`.
   be exceeded where it matters. `_cycle` returning `None` means `revise` — go round again, clean.
 - A cycle is **spent when the Editor half begins**, not when it ends: `must_be_terminal` must already
   count this cycle, or a killed Editor would cost nothing and buy its sub-issue infinite Implementers.
-- **The `editor` is `Editor | None`, and `None` means there is no Editor in this run** — not a null
-  one. An adapter that always returned no verdict would be a lie the taxonomy propagates faithfully
-  (`classify_editor` calls a verdictless Editor `infra-failed`). Without an Editor the run is
-  quarantine-and-drain; that is the cheap run, not a degraded one.
+- **The `editor` is always an `Editor`.** `ralph.yaml` names a concrete Editor, `cli.py` resolves
+  it before the scheduler starts, and any unknown name is a loud configuration failure. A failed
+  Implementer session that routes to adjudication always reaches the Editor loop.
 
 When a sub-issue escalates the run does **not** stop: everything transitively blocked by it never
 becomes eligible, every unaffected sub-issue lands, and the run ends with **one** notification

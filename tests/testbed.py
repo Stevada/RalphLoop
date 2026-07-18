@@ -185,10 +185,10 @@ class TargetRepo:
         self.git("commit", "-m", "a graph of the test's own shape")
 
 
-def write_ralph_yaml(root: Path, *, source: str = "filesystem", editor: str = "none") -> None:
+def write_ralph_yaml(root: Path, *, source: str = "filesystem", editor: str = "claude") -> None:
     """The `ralph.yaml` a throwaway repo runs on. `implementer: codex` is a placeholder — every test
-    injects the scripted stand-in through `run(implementer=…)` — and `editor: none` is the default
-    because most orchestration tests want quarantine-and-drain, not a model in the loop."""
+    injects the scripted stand-in through `run(implementer=…)`. Failure-path tests inject a stub
+    Editor through `run(editor=...)`, so no orchestration test calls a model."""
     (root / "ralph.yaml").write_text(
         yaml.safe_dump(
             {
@@ -210,7 +210,7 @@ def make_config(**overrides: object) -> Config:
     base: dict[str, object] = {
         "source": "filesystem",
         "implementer": "codex",
-        "editor": "none",
+        "editor": "claude",
         "protected": frozenset({"main", "master"}),
         "test_cmd": TEST_CMD,
         "install_cmd": INSTALL_CMD,

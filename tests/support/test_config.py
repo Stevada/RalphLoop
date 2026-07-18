@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from ralph.cli import _load_env
+from ralph.cli import NoAgent, _load_env, editor_of
 from ralph.config import CONFIG_FILE, ENV_FILE, Config, ConfigError
 
 FULL = (
@@ -50,13 +50,24 @@ def test_a_missing_file_is_a_loud_error(tmp_path: Path) -> None:
         Config.resolve(tmp_path, {})
 
 
-def test_a_missing_argument_is_a_loud_error(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "line",
+    [
+        "source: filesystem\n",
+        "implementer: codex\n",
+        "editor: claude\n",
+        "protected: [main, master]\n",
+        "test_cmd: uv run pytest -q\n",
+        "install_cmd: [uv, sync]\n",
+    ],
+)
+def test_a_missing_argument_is_a_loud_error(tmp_path: Path, line: str) -> None:
     """A configurable argument is required: dropping one fails the run rather than guessing a value.
     This is the old "no test suite detected" refusal, moved to where the argument is read."""
-    without_suite = FULL.replace("test_cmd: uv run pytest -q\n", "")
-    repo = _write(tmp_path, without_suite)
+    repo = _write(tmp_path, FULL.replace(line, ""))
+    key = line.split(":", 1)[0]
 
-    with pytest.raises(ConfigError, match="test_cmd is a required argument"):
+    with pytest.raises(ConfigError, match=f"{key} is a required argument"):
         Config.resolve(repo, {})
 
 
@@ -79,6 +90,13 @@ def test_a_malformed_argument_is_a_loud_error(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="protected"):
         Config.resolve(repo, {})
+
+
+def test_editor_none_names_no_editor(tmp_path: Path) -> None:
+    config = Config.resolve(_write(tmp_path, FULL.replace("editor: claude\n", "editor: none\n")), {})
+
+    with pytest.raises(NoAgent, match="Known: claude, copilot"):
+        editor_of(config)
 
 
 def test_the_loggable_summary_never_echoes_the_api_key(tmp_path: Path) -> None:

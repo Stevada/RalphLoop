@@ -13,13 +13,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ralph.harness import Outcome
+from ralph.harness import Outcome, Verdict
 from ralph.issues import SubIssueId, SubIssueState
 from ralph.mergequeue import MergeQueue
 from ralph.ports import Budget
 from ralph.scheduler import Scheduler
-from tests.builders import graph_of, telemetry
+from tests.builders import graph_of, telemetry, verdict
 from tests.fakes import (
+    FakeEditor,
     FakeGit,
     FakeImplementer,
     FakeIssueStore,
@@ -28,6 +29,10 @@ from tests.fakes import (
 )
 
 REPO = Path("/repo")
+
+
+def terminal_editor() -> FakeEditor:
+    return FakeEditor(scripted=[(telemetry(commits=0), verdict(Verdict.PLANNING_DEFECT))])
 
 
 def scheduler_over(
@@ -41,6 +46,7 @@ def scheduler_over(
         run_log=log,
         runner=runner,
         implementer=implementer,
+        editor=terminal_editor(),
         merge_queue=MergeQueue(git=git, runner=runner, integration="integration"),
         integration="integration",
         budget=Budget(),

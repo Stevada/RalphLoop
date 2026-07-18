@@ -17,8 +17,10 @@ from pathlib import Path
 import pytest
 
 from ralph.cli import run
-from ralph.harness import Outcome
+from ralph.harness import Outcome, Verdict
 from ralph.issues import SubIssueId
+from tests.builders import telemetry, verdict as editor_verdict
+from tests.fakes import FakeEditor
 from tests.testbed import (
     LEDGER_ENV,
     Behaviour,
@@ -28,6 +30,12 @@ from tests.testbed import (
     peak_concurrency,
     stand_in_implementer as stand_in,
 )
+
+
+def terminal_editor() -> FakeEditor:
+    return FakeEditor(
+        scripted=[(telemetry(commits=0), editor_verdict(Verdict.PLANNING_DEFECT))]
+    )
 
 
 def with_ledger(monkeypatch: pytest.MonkeyPatch, repo: TargetRepo) -> Path:
@@ -119,7 +127,13 @@ async def test_a_rebase_conflict_does_not_stall_the_queue_for_its_siblings(
     repo.write_graph({"01": [], "02": [], "03": []})
     spec = behaviour_spec(Behaviour.CONFLICT, {"03": Behaviour.SUCCEED})
 
-    report = await run(repo.path, None, concurrency=3, implementer=stand_in(agent, spec))
+    report = await run(
+        repo.path,
+        None,
+        concurrency=3,
+        implementer=stand_in(agent, spec),
+        editor=terminal_editor(),
+    )
 
     assert SubIssueId("03") in report.landed
     losers = [id for id, o in report.failed.items() if o is Outcome.INTEGRATION_FAILED]
@@ -129,7 +143,9 @@ async def test_a_rebase_conflict_does_not_stall_the_queue_for_its_siblings(
     # No retry: the loser opened exactly one session.
     opened = [
         line for line in (repo.path / ".scratch" / "run.jsonl").read_text().splitlines()
-        if f'"{losers[0]}"' in line and "session-started" in line
+        if f'"{losers[0]}"' in line
+        and '"actor": "implementer"' in line
+        and "session-started" in line
     ]
     assert len(opened) == 1
 
