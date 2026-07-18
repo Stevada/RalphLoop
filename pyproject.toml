@@ -8,9 +8,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# An extra, not a dev dependency: `RALPH_EDITOR=claude` is a *runtime* capability a user opts into,
-# and a run with a Codex Implementer and no Editor must not require the SDK installed at all.
+# Extras, not dev dependencies: SDK-backed actors are runtime capabilities a user opts into, and a
+# run that never reaches one must not require those SDKs installed at all.
 editor = ["claude-agent-sdk>=0.1"]
+copilot = [
+    "github-copilot-sdk>=1.0.7",
+]
 
 [project.scripts]
 ralph = "ralph.cli:main"
@@ -46,12 +49,15 @@ strict = true
 # isinstance on a Protocol compares method names, not signatures.
 files = ["ralph", "tests"]
 
-# The one import-fallback boundary in the package. `claude-agent-sdk` is an optional dependency —
-# a run with a Codex Implementer and no Editor must not require it installed — so its types are not
-# available to check against. Everything it returns is converted into our own values at the
-# boundary (`_turns_of`, `_observed`) and never carried inward.
+# The import-fallback boundaries in the package. SDKs are optional dependencies, so their types are
+# not available to check against unless the matching extra is installed. Everything they return is
+# converted into our own values at the boundary and never carried inward.
 [[tool.mypy.overrides]]
 module = "claude_agent_sdk.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "copilot.*"
 ignore_missing_imports = true
 
 [tool.ruff]
