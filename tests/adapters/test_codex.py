@@ -110,6 +110,10 @@ def test_the_sessions_dir_follows_codex_home(monkeypatch: pytest.MonkeyPatch) ->
     assert codex_sessions_dir() == Path("/somewhere/else/sessions")
 
 
+def test_the_implementer_does_not_construct_a_live_context_source() -> None:
+    assert codex_implementer().context is None
+
+
 # ── the parse ────────────────────────────────────────────────────────────────────────────────
 
 
@@ -311,12 +315,12 @@ async def test_a_session_that_stays_in_the_smart_zone_is_left_alone(
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
 
-    t = await stub_implementer("20000,60000,90000").run(session_context(wt))
+    t = await stub_implementer("20000,60000,90000", final=360_000).run(session_context(wt))
 
     assert t.killed is None
     assert t.exit_code == 0
-    assert t.peak_context_tokens == 90_000
-    assert t.consumed_tokens == 360_000  # four times the context, and gated on not at all
+    assert t.peak_context_tokens == 0
+    assert t.consumed_tokens == 360_000
 
 
 async def test_consumption_comes_from_the_end_of_turn_usage(
@@ -328,25 +332,24 @@ async def test_consumption_comes_from_the_end_of_turn_usage(
 
     t = await stub_implementer("20000,60000,90000", final=1_234_567).run(session_context(wt))
 
-    assert t.peak_context_tokens == 90_000
+    assert t.peak_context_tokens == 0
     assert t.consumed_tokens == 1_234_567
 
 
-async def test_a_session_that_leaves_it_is_killed_mid_flight(
+async def test_a_session_that_leaves_the_old_smart_zone_runs_to_completion(
     repo: TargetRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The stub would go on to a fourth model call and print `done`. It never gets there: the
-    harness reads 130k out of the rollout file *while the process is alive* and kills it."""
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
 
-    t = await stub_implementer("20000,130000,140000").run(session_context(wt))
+    t = await stub_implementer("20000,130000,140000", final=560_000).run(session_context(wt))
 
-    assert t.killed == "ceiling"
-    assert t.peak_context_tokens >= 120_000
-    assert "done" not in t.session_output  # it did not live to finish
-    assert classify_implementer(t, GREEN) is Outcome.CEILING_EXCEEDED
+    assert t.killed is None
+    assert t.peak_context_tokens == 0
+    assert t.consumed_tokens == 560_000
+    assert "done" in t.session_output
+    assert classify_implementer(t, GREEN) is Outcome.IMPASSE
 
 
 # ── and once, for real ───────────────────────────────────────────────────────────────────────
@@ -363,8 +366,7 @@ async def test_a_real_codex_session_lands_a_real_sub_issue(repo: TargetRepo) -> 
     Codex correctly; this proves it was reading Codex.
 
     It asserts nothing about the model's cleverness — only that a real `codex exec` produced real
-    commits, that the suite went green, and that the harness metered a real context out of a real
-    rollout file. If `peak_context_tokens` came back zero, the ceiling was never watching.
+    commits, that the suite went green, and that the harness recorded completed-turn usage.
     """
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
@@ -385,5 +387,6 @@ async def test_a_real_codex_session_lands_a_real_sub_issue(repo: TargetRepo) -> 
 
     assert t.killed is None
     assert t.commits >= 1
-    assert t.peak_context_tokens > 0  # a real rollout file was really tailed
+    assert t.peak_context_tokens == 0
+    assert t.consumed_tokens > 0
     assert repo.run_suite(wt.path)

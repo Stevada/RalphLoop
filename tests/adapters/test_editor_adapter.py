@@ -313,28 +313,32 @@ async def test_the_editor_returns_its_verdict_and_the_harnesss_facts() -> None:
     t, v = await adjudicate(session)
 
     assert v is not None
-    assert t.peak_context_tokens == 30_000
+    assert t.peak_context_tokens == 0
+    assert t.consumed_tokens == 31_000
     assert t.commits == 0  # by construction: it was denied every tool that could make one
     assert t.diffstat == ""
     assert t.impasse_report is None  # an Editor cannot declare an impasse. It adjudicates them.
     assert classify_editor(t, v) is Outcome.SUCCESS
 
 
-async def test_an_editor_that_leaves_the_smart_zone_is_killed_like_any_other_actor() -> None:
-    """The Editor is bounded exactly like an Implementer — same Budget, same ceiling, same
-    `run_bounded`. An Editor reasoning over 200k is a worse adjudicator than the same model over
-    100k, and it is the one actor whose judgment no suite can check."""
+async def test_an_editor_that_leaves_the_old_smart_zone_runs_to_completion() -> None:
     never_answers = StubSession(
-        [observation(60_000), observation(130_000), "still thinking...", verdict_json("revise")],
+        [
+            observation(60_000),
+            observation(130_000),
+            "still thinking...",
+            verdict_json("revise", revised_brief="# 01 — try again"),
+        ],
         pause=0.02,
     )
 
     t, v = await adjudicate(never_answers)
 
-    assert t.killed == "ceiling"
-    assert v is None  # it never got to answer
-    assert classify_editor(t, v) is Outcome.CEILING_EXCEEDED
-    assert never_answers.killed
+    assert t.killed is None
+    assert t.peak_context_tokens == 0
+    assert v is not None
+    assert classify_editor(t, v) is Outcome.SUCCESS
+    assert not never_answers.killed
 
 
 async def test_a_ceiling_killed_editor_pages_a_human_and_does_not_route_back() -> None:
@@ -415,7 +419,7 @@ async def test_the_run_of_a_session_is_metered_even_when_it_answers() -> None:
 
     t, v = await adjudicate(session)
 
-    assert t.peak_context_tokens == 50_000
+    assert t.peak_context_tokens == 0
     assert t.consumed_tokens == 55_000
     assert v is not None
     assert v.verdict is Verdict.PLANNING_DEFECT

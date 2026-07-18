@@ -22,7 +22,7 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from ralph.adapters.context import Bound, Killable, run_bounded
+from ralph.adapters.context import Bound, run_bounded
 from ralph.harness import EditorVerdict, SessionTelemetry, Verdict
 from ralph.issues import Brief, Findings
 from ralph.ports import Budget, Observation
@@ -178,9 +178,9 @@ because that is how the SDK delivers it — text and usage interleaved in the sa
 class EditorSession(Protocol):
     """A running Editor conversation. The SDK, or a CLI, or a stub — the bounding does not care.
 
-    `kill()` must make `turns()` **end**, not raise: it is how the ceiling stops a session, and a
-    ceiling that surfaced as a `CancelledError` three layers up would be reported as `infra-failed`
-    — a harness bug — rather than as the `ceiling-exceeded` it is.
+    `kill()` must make `turns()` **end**, not raise: it is how the wall clock stops a session, and
+    a kill that surfaced as a `CancelledError` three layers up would be reported as `infra-failed`
+    for the wrong reason.
     """
 
     @property
@@ -192,46 +192,34 @@ class EditorSession(Protocol):
 
     async def wait(self) -> int: ...
 
-
-@dataclass(slots=True)
-class _Metered:
-    """The observations, split out of the one stream the session emits, so `run_bounded` can watch
-    them while the text accumulates behind it."""
-
-    queue: asyncio.Queue[Observation | None]
-
-    async def observations(self) -> AsyncGenerator[Observation, None]:
-        while (o := await self.queue.get()) is not None:
-            yield o
-
-
 async def run_editor(
     session: EditorSession, budget: Budget
 ) -> tuple[SessionTelemetry, EditorVerdict | None]:
-    """One Editor session, under the same two bounds as an Implementer's — the same `Budget`, the
-    same `run_bounded`, the same `SessionTelemetry`. An Editor can leave the smart zone too, and
-    when it does it pages a human like any other actor.
+    """One Editor session, under the same wall-clock bound as an Implementer's.
 
     `commits` is zero and `diffstat` empty *by construction*, not by observation: the Editor was
     denied every tool that could have made them otherwise.
     """
     started = time.monotonic()
     said: list[str] = []
-    queue: asyncio.Queue[Observation | None] = asyncio.Queue()
+    consumed_tokens = 0
 
     async def pump() -> None:
-        try:
-            async for turn in session.turns():
-                if isinstance(turn, Observation):
-                    queue.put_nowait(turn)
-                else:
-                    said.append(turn)
-        finally:
-            queue.put_nowait(None)
+        nonlocal consumed_tokens
+        async for turn in session.turns():
+            if isinstance(turn, Observation):
+                consumed_tokens = max(consumed_tokens, turn.consumed_tokens)
+            else:
+                said.append(turn)
 
     reading = asyncio.create_task(pump())
-    bound = await run_bounded(_killable(session), _Metered(queue), budget)
+    bound = await run_bounded(_TurnStreamKillable(session, reading), None, budget)
     await reading
+    bound = Bound(
+        killed=bound.killed,
+        peak_context_tokens=bound.peak_context_tokens,
+        consumed_tokens=consumed_tokens,
+    )
 
     output = "".join(said)
     telemetry = editor_telemetry(
@@ -264,11 +252,24 @@ def editor_telemetry(bound: Bound, exit_code: int, output: str, wall_clock_s: fl
     )
 
 
-def _killable(session: EditorSession) -> Killable:
-    """An `EditorSession` is a `Killable` plus a stream. Named for mypy's benefit, and because the
-    two Protocols really are different ideas: one is *how you stop it*, the other is *what it says*.
-    """
-    return session
+@dataclass(frozen=True, slots=True)
+class _TurnStreamKillable:
+    """Clock-bound the turn stream, because an in-process Editor may not have subprocess wait
+    semantics. The session is finished when its turns are drained."""
+
+    session: EditorSession
+    reading: asyncio.Task[None]
+
+    @property
+    def returncode(self) -> int | None:
+        return self.session.returncode
+
+    def kill(self) -> None:
+        self.session.kill()
+
+    async def wait(self) -> int:
+        await asyncio.shield(self.reading)
+        return await self.session.wait()
 
 
 def verdict_of(output: str) -> EditorVerdict | None:

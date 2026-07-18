@@ -21,6 +21,7 @@ from ralph.adapters.copilot import (
     CopilotEditor,
     CopilotLogError,
     copilot_argv,
+    copilot_implementer,
     final_log_consumed_tokens,
     fresh_log_dir,
     log_dir_of,
@@ -208,8 +209,16 @@ async def test_implementer_consumption_comes_from_the_final_log_usage(repo: Targ
         )
     )
 
-    assert t.peak_context_tokens == 90_000
+    assert t.peak_context_tokens == 0
     assert t.consumed_tokens == 999_999
+
+
+def test_the_implementer_does_not_construct_a_live_context_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ralph.adapters.copilot.mcp_servers", lambda: ())
+
+    assert copilot_implementer().context is None
 
 
 async def test_a_log_with_no_usage_block_is_a_loud_error(tmp_path: Path) -> None:
@@ -360,13 +369,12 @@ def _worktree(tmp_path: Path) -> Worktree:
 # ── the whole Editor, against a stub `copilot` ───────────────────────────────────────────────
 
 
-async def test_the_editor_is_bounded_by_the_ceiling_like_any_other_actor(tmp_path: Path) -> None:
-    """An Editor can leave the smart zone too, and when it does it pages a human like anyone else."""
+async def test_the_editor_runs_past_the_old_context_ceiling(tmp_path: Path) -> None:
     telemetry, verdict = await _adjudicate(tmp_path, context=130_000, verdict=None)
 
-    assert telemetry.killed == "ceiling"
-    assert telemetry.peak_context_tokens == 130_000
-    assert verdict is None  # killed before it could answer. `infra-failed`, and a human reads it.
+    assert telemetry.killed is None
+    assert telemetry.peak_context_tokens == 0
+    assert verdict is None
 
 
 async def test_the_editor_reports_no_commits_by_construction(tmp_path: Path) -> None:

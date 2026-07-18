@@ -1,27 +1,17 @@
-"""The smart-zone ceiling: what it gates on, and — more importantly — what it does not.
-
-The one mistake this file exists to catch is a ceiling on **consumption**. Context and consumption
-arrive in the same event, adjacent, with names that read alike, and a ceiling built on the wrong
-one is not merely inaccurate — it is inverted. It would kill a long, cheap, perfectly focused
-session and wave through a bloated one. Several tests below would pass with either number wired in;
-`test_it_never_trips_on_consumption` is the one that would not.
-"""
+"""The wall-clock bound and the context-metering symbols retained during the ceiling migration."""
 
 from __future__ import annotations
 
 import asyncio
 import sys
-from collections.abc import AsyncGenerator
 from pathlib import Path
-
-import pytest
 
 from ralph.adapters.context import Bound, ContextMeter, run_bounded, tail
 from ralph.adapters.git import GitCli
 from ralph.adapters.session import SubprocessImplementer
 from ralph.harness import Outcome, SuiteResult, classify_implementer
 from ralph.issues import Brief, Findings
-from ralph.ports import Budget, ContextSource, Observation, SessionContext
+from ralph.ports import Budget, SessionContext, Worktree
 from tests.builders import observation, telemetry
 from tests.fakes import FakeContextSource
 from tests.testbed import TargetRepo
@@ -81,54 +71,42 @@ def test_the_meter_keeps_the_last_rate_limit_it_was_told() -> None:
 # ── the kill loop ────────────────────────────────────────────────────────────────────────────
 
 
-async def test_a_session_that_leaves_the_smart_zone_is_killed() -> None:
-    proc = await spawn(FOREVER)
-
+async def test_a_session_that_leaves_the_old_smart_zone_runs_to_completion() -> None:
+    proc = await spawn(AT_ONCE)
     climbing = FakeContextSource([observation(60_000), observation(130_000)])
 
     bound = await run_bounded(proc, climbing, SMART_ZONE)
 
-    assert bound.killed == "ceiling"
-    assert bound.peak_context_tokens >= CEILING
-    assert proc.returncode is not None  # really dead, not merely reported dead
+    assert bound == Bound(killed=None, peak_context_tokens=0, consumed_tokens=0)
+    assert proc.returncode == 0
 
 
-async def test_it_never_trips_on_consumption() -> None:
-    """**The test this file is for.** Context flat at 60k — comfortably inside the smart zone —
-    while cumulative consumption climbs past 500k. A ceiling wired to the wrong number kills this
-    session. The right one never even considers it.
-    """
+async def test_the_context_source_is_not_watched_for_consumption_either() -> None:
     proc = await spawn(AT_ONCE)
     climbing = [observation(60_000, consumed=spent) for spent in range(100_000, 600_001, 100_000)]
 
     bound = await run_bounded(proc, FakeContextSource(climbing), SMART_ZONE)
 
-    assert bound.killed is None
-    assert bound.peak_context_tokens == 60_000
-    assert bound.consumed_tokens == 600_000  # recorded in full, and gated on not at all
+    assert bound == Bound(killed=None, peak_context_tokens=0, consumed_tokens=0)
 
 
-async def test_a_session_inside_the_smart_zone_runs_to_completion() -> None:
+async def test_a_session_inside_the_old_smart_zone_runs_to_completion() -> None:
     proc = await spawn(AT_ONCE)
 
     bound = await run_bounded(proc, FakeContextSource([observation(118_000)]), SMART_ZONE)
 
-    assert bound == Bound(killed=None, peak_context_tokens=118_000, consumed_tokens=50_000)
+    assert bound == Bound(killed=None, peak_context_tokens=0, consumed_tokens=0)
     assert proc.returncode == 0
 
 
-async def test_the_clock_catches_what_the_ceiling_cannot() -> None:
-    """A session spinning on a failing suite has a *flat* context. It will never trip the ceiling
-    however long it runs — and it is the failure mode the ceiling most looks like it should catch.
-    Only the clock stops it, which is why there are two bounds and not one.
-    """
+async def test_the_clock_catches_a_stuck_session() -> None:
     proc = await spawn(FOREVER)
     flat = FakeContextSource([observation(1_000)] * 3)
 
     bound = await run_bounded(proc, flat, Budget(max_context_tokens=CEILING, wall_clock_s=0.3))
 
     assert bound.killed == "wall-clock"
-    assert bound.peak_context_tokens == 1_000  # never came close
+    assert bound.peak_context_tokens == 0
     assert proc.returncode is not None
 
 
@@ -140,42 +118,6 @@ async def test_an_agent_with_no_context_signal_is_still_bounded_on_the_clock() -
     bound = await run_bounded(proc, None, Budget(wall_clock_s=0.3))
 
     assert bound == Bound(killed="wall-clock", peak_context_tokens=0, consumed_tokens=0)
-
-
-async def test_the_rate_limit_is_logged_and_nothing_is_gated_on_it(
-    caplog: pytest.LogCaptureFixture
-) -> None:
-    proc = await spawn(AT_ONCE)
-    caplog.set_level("INFO", logger="ralph.adapters.context")
-
-    bound = await run_bounded(
-        proc, FakeContextSource([observation(1_000, rate_limit=97.5)]), SMART_ZONE
-    )
-
-    assert "97.5" in caplog.text
-    assert bound.killed is None  # 97.5% of the rate limit gone, and the session ran on
-
-
-async def test_the_source_is_closed_when_the_ceiling_fires(tmp_path: Path) -> None:
-    """The kill breaks out of the loop mid-stream, and a real source is holding a file handle open
-    at that moment. If `run_bounded` did not close it, a run of hundreds of sessions would leak one
-    descriptor per kill — and the leak would only show up in production."""
-    closed = asyncio.Event()
-
-    class Watchful:
-        async def observations(self) -> AsyncGenerator[Observation, None]:
-            try:
-                yield observation(130_000)
-                yield observation(10_000)
-            finally:
-                closed.set()
-
-    source: ContextSource = Watchful()
-    proc = await spawn(FOREVER)
-
-    await run_bounded(proc, source, SMART_ZONE)
-
-    assert closed.is_set()
 
 
 # ── the tail ─────────────────────────────────────────────────────────────────────────────────
@@ -238,16 +180,17 @@ def test_a_ceiling_kill_classifies_as_ceiling_exceeded_not_infra_failed() -> Non
     assert classify_implementer(killed, GREEN) is Outcome.CEILING_EXCEEDED
 
 
-async def test_the_ceiling_reaches_the_telemetry_of_a_real_session(repo: TargetRepo) -> None:
-    """End to end through `run_agent`: a real subprocess, killed by a real ceiling, and the peak
-    lands in the `SessionTelemetry` the scheduler will classify."""
+async def test_context_sources_no_longer_reach_real_session_telemetry(repo: TargetRepo) -> None:
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
+
+    def fail_if_constructed(transcript: object, worktree: Worktree) -> FakeContextSource:
+        del transcript, worktree
+        raise AssertionError("run_session must not construct a ContextSource")
+
     implementer = SubprocessImplementer(
-        build_argv=lambda brief, findings, worktree: (sys.executable, "-c", FOREVER),
-        context=lambda transcript, worktree: FakeContextSource(
-            [observation(200_000, consumed=210_000)]
-        ),
+        build_argv=lambda brief, findings, worktree: (sys.executable, "-c", AT_ONCE),
+        context=fail_if_constructed,
     )
 
     t = await implementer.run(
@@ -259,8 +202,8 @@ async def test_the_ceiling_reaches_the_telemetry_of_a_real_session(repo: TargetR
         )
     )
 
-    assert t.killed == "ceiling"
-    assert t.peak_context_tokens == 200_000
-    assert t.consumed_tokens == 210_000
-    assert t.commits == 0  # it never got the chance
-    assert classify_implementer(t, GREEN) is Outcome.CEILING_EXCEEDED
+    assert t.killed is None
+    assert t.peak_context_tokens == 0
+    assert t.consumed_tokens == 0
+    assert t.commits == 0
+    assert classify_implementer(t, GREEN) is Outcome.IMPASSE

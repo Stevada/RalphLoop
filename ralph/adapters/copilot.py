@@ -333,7 +333,7 @@ class CopilotContextSource:
 
 
 def copilot_implementer() -> SubprocessImplementer:
-    """Copilot with its hands free: every tool, and a mandate to commit."""
+    """Copilot with its hands free: every tool, a mandate to commit, and final log usage."""
     mcp = mcp_servers()
 
     def argv(brief: Brief, findings: Findings, worktree: Worktree) -> Sequence[str]:
@@ -344,17 +344,11 @@ def copilot_implementer() -> SubprocessImplementer:
             allow_all=True,
         )
 
-    def source(transcript: Transcript, worktree: Worktree) -> CopilotContextSource:
-        # `log_dir_of`, never `fresh_log_dir`: that would delete the log this session is at this
-        # moment writing. `argv` above has already emptied and made the directory.
-        return CopilotContextSource(transcript=transcript, log_dir=log_dir_of(worktree))
-
     async def consumed_tokens(_session: Session, worktree: Worktree) -> int | None:
         return await final_log_consumed_tokens(log_dir_of(worktree))
 
     return SubprocessImplementer(
         build_argv=argv,
-        context=source,
         final_consumed_tokens=consumed_tokens,
     )
 

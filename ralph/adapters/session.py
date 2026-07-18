@@ -1,9 +1,9 @@
 """Running an agent in a worktree, and collecting the facts it cannot report about itself.
 
 **This is the whole of an Implementer that is not model-specific.** Codex and Copilot are this
-plus an argv, a context source, and final usage; the stand-in agent is this plus an argv.
-Everything that makes a session a session — both bounds, counting the commits, reading the
-diffstat, finding the `<impasse>` sentinel — happens here, once.
+plus an argv and final usage; the stand-in agent is this plus an argv. Everything that makes a
+session a session — bounding on the clock, counting the commits, reading the diffstat, finding the
+`<impasse>` sentinel — happens here, once.
 
 The model's exit code is its opinion. Everything in the `SessionTelemetry` this returns is the
 harness's own observation, and the two are allowed to disagree. That disagreement is the signal.
@@ -70,20 +70,16 @@ class Transcript:
     it is still arriving.
 
     Two consumers with different needs, and pretending they were one is what would go wrong.
-    Telemetry wants the whole transcript, at the end, in order — that is `text`. A `ContextSource`
-    wants **one fact, live**: Codex announces its `thread_id` on the first line of stdout and that
-    id is the only link between this process and its rollout file. So `first()` watches the stream
-    until it finds what it came for and then stops republishing; nothing accumulates behind a
-    consumer that has lost interest.
+    Telemetry wants the whole transcript, at the end, in order — that is `text`. During the context
+    ceiling rollout this also supported live source discovery; the method stays until the source
+    vocabulary is removed.
     """
 
     def __init__(self) -> None:
         self._chunks: list[str] = []
         self._live: asyncio.Queue[str | None] | None = asyncio.Queue()
         self.closed = asyncio.Event()
-        """Set when stdout reaches EOF — the session has said everything it is going to say. This
-        is a `ContextSource`'s signal to stop tailing, and it fires slightly *before* the process
-        exits, which is why the tail reads once more afterwards."""
+        """Set when stdout reaches EOF — the session has said everything it is going to say."""
 
     def append(self, line: str) -> None:
         self._chunks.append(line)
@@ -155,11 +151,8 @@ one. `None` means there was no final figure to read, and the live observations r
 async def run_session(
     argv: Sequence[str], cwd: Path, budget: Budget, context: BoundSource | None = None
 ) -> Session:
-    """Run a command under both bounds and collect everything it said.
-
-    `context=None` is an agent with no context signal — the stand-in, or a bare `RALPH_AGENT_CMD`.
-    It runs on the clock alone and reports a peak of zero, which is the truth: nobody was watching.
-    """
+    """Run a command under the wall-clock bound and collect everything it said."""
+    del context
     started = time.monotonic()
 
     proc = await asyncio.create_subprocess_exec(
@@ -170,7 +163,7 @@ async def run_session(
 
     transcript = Transcript()
     pump = asyncio.create_task(_pump(proc.stdout, transcript))
-    bound = await run_bounded(proc, context(transcript) if context is not None else None, budget)
+    bound = await run_bounded(proc, None, budget)
     await pump  # the process is dead; drain whatever it managed to say before we stopped it
 
     return Session(
@@ -213,9 +206,9 @@ async def run_agent(
 class SubprocessImplementer:
     """An Implementer is an argv, a worktree, and the telemetry its CLI publishes.
 
-    That is the whole of it. Codex is this with `codex exec`, a rollout tail, and end-of-turn
-    usage; Copilot is this with `copilot -p`, a debug-log tail, and final log usage; the stand-in
-    agent is this with none of those. Nothing above this line knows the difference.
+    That is the whole of it. Codex is this with `codex exec` and end-of-turn usage; Copilot is this
+    with `copilot -p` and final log usage; the stand-in agent is this with neither. Nothing above
+    this line knows the difference.
     """
 
     build_argv: BuildArgv

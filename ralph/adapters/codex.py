@@ -187,15 +187,8 @@ class CodexContextSource:
 
 
 def codex_implementer() -> SubprocessImplementer:
-    """Codex is `codex exec`, a rollout tail, and the completed turn's usage."""
-    sessions = codex_sessions_dir()
+    """Codex is `codex exec` and the completed turn's usage."""
     return SubprocessImplementer(
         build_argv=codex_argv,
-        # The worktree is no help to Codex: its rollout lives in a directory shared with every
-        # other session on the machine, and the only thing that picks its own out of that pile is
-        # the thread id it announces on stdout.
-        context=lambda transcript, _worktree: CodexContextSource(
-            transcript=transcript, sessions_dir=sessions
-        ),
         final_consumed_tokens=end_of_turn_consumed_tokens,
     )
