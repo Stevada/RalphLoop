@@ -27,6 +27,7 @@ from tests.testbed import (
     StandInAgent,
     TargetRepo,
     behaviour_spec,
+    make_options,
     peak_concurrency,
     stand_in_implementer as stand_in,
 )
@@ -60,7 +61,12 @@ async def test_all_currently_eligible_sub_issues_run_concurrently(
     repo.write_graph({"01": [], "02": [], "03": [], "04": []})
     ledger = with_ledger(monkeypatch, repo)
 
-    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.SLOW))
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SLOW),
+        options=make_options(),
+    )
 
     assert sorted(report.landed) == ["01", "02", "03", "04"]
     assert peak_concurrency(ledger) == 4
@@ -79,7 +85,7 @@ async def test_a_fast_sub_issue_lands_without_waiting_for_a_slower_sibling(
     repo.write_graph({"01": [], "02": []})
     spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.SLOW})
 
-    report = await run(repo.path, None, implementer=stand_in(agent, spec))
+    report = await run(repo.path, None, implementer=stand_in(agent, spec), options=make_options())
 
     assert report.landed == (SubIssueId("02"), SubIssueId("01"))
 
@@ -91,7 +97,12 @@ async def test_concurrent_sub_issues_serialize_into_a_linear_history(
     integration branch grows by fast-forward and there is not a merge commit in it."""
     repo.write_graph({"01": [], "02": [], "03": []})
 
-    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED))
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        options=make_options(),
+    )
 
     assert report.clean
     assert repo.commit_count("integration") == 5  # initial + the graph + three sub-issues
@@ -117,6 +128,7 @@ async def test_a_rebase_conflict_does_not_stall_the_queue_for_its_siblings(
         None,
         implementer=stand_in(agent, spec),
         editor=terminal_editor(),
+        options=make_options(),
     )
 
     assert SubIssueId("03") in report.landed
@@ -150,7 +162,7 @@ async def test_a_sub_issue_is_dispatched_the_moment_its_blockers_land(
     spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.SLOW})
     ledger = with_ledger(monkeypatch, repo)
 
-    report = await run(repo.path, None, implementer=stand_in(agent, spec))
+    report = await run(repo.path, None, implementer=stand_in(agent, spec), options=make_options())
 
     assert report.clean
     assert report.landed[-1] == SubIssueId("01")  # the slow one finished last, blocking nobody

@@ -319,7 +319,7 @@ sub-issue and `await asyncio.wait(..., FIRST_COMPLETED)`.
 - A cycle is **spent when the Editor half begins**, not when it ends: `must_be_terminal` must already
   count this cycle, or a killed Editor would cost nothing and buy its sub-issue infinite Implementers.
 - **The `editor` is always an `Editor`.** The CLI names a concrete Editor, `cli.py` resolves it
-  before the scheduler starts, and any unknown name is a loud configuration failure. A failed
+  before the scheduler starts, and any unknown name is a loud option failure. A failed
   Implementer session that routes to adjudication always reaches the Editor loop.
 
 When a sub-issue escalates the run does **not** stop: everything transitively blocked by it never

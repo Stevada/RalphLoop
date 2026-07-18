@@ -31,7 +31,7 @@ from ralph.harness import (
     refusals,
 )
 from ralph.issues import IssueGraph, SubIssue, SubIssueId, SubIssueState
-from tests.testbed import TargetRepo, make_config
+from tests.testbed import TargetRepo, make_options
 
 BUILD_HARNESS = Path(__file__).parents[2] / ".scratch" / "build_harness" / "issues"
 
@@ -139,9 +139,9 @@ def test_a_protected_branch_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
 
 
 def test_the_protected_list_is_the_humans_to_set(repo: TargetRepo) -> None:
-    config = make_config(protected=frozenset({"integration", "trunk"}))
+    options = make_options(protected=frozenset({"integration", "trunk"}))
 
-    (refused,) = validate(repo.path, config=config)
+    (refused,) = validate(repo.path, options=options)
 
     assert refused.check is Check.PROTECTED_BRANCH  # `integration` is the fixture's HEAD, and now protected
 
@@ -177,8 +177,8 @@ def test_an_incoherent_issue_source_is_refused_on_a_real_repo(repo: TargetRepo) 
     """`invalid-issue-source`, not `invalid-issue-graph`: the harness never got as far as reading a
     graph. Under `issue_mode: linear`, omitting the Linear parent is an invocation problem, not a
     graph problem."""
-    config = make_config(issue_mode="linear", linear_api_key="lin_x")
-    (refused,) = validate(repo.path, config=config)
+    options = make_options(issue_mode="linear", linear_api_key="lin_x")
+    (refused,) = validate(repo.path, options=options)
 
     assert refused.check is Check.INVALID_ISSUE_SOURCE
     assert "issue_source" in refused.reason
@@ -205,7 +205,7 @@ def test_the_fixture_repo_is_ready_to_run(repo: TargetRepo) -> None:
 
 def test_validate_rejects_editor_none(repo: TargetRepo) -> None:
     with pytest.raises(NoAgent, match="Known: claude, copilot"):
-        validate(repo.path, config=make_config(editor="none"))
+        validate(repo.path, options=make_options(editor="none"))
 
 
 # ── and the run runs them too ────────────────────────────────────────────────────────────────

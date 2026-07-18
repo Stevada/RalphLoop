@@ -1,6 +1,0 @@
-# Ralph's repo-local commands. Run arguments like issue mode, actors, and protected branches live on
-# the CLI. The one secret (LINEAR_API_KEY) lives in .env alone.
-
-# This repo's suite and install. A string is split into an argv; a list is taken verbatim.
-test_cmd: uv run pytest -q
-install_cmd: uv sync

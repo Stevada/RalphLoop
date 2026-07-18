@@ -27,7 +27,7 @@ from tests.testbed import (
     Behaviour,
     StandInAgent,
     TargetRepo,
-    make_config,
+    make_options,
     stand_in_implementer as stand_in,
 )
 
@@ -41,7 +41,12 @@ def terminal_editor() -> FakeEditor:
 async def test_ralph_run_lands_a_sub_issue_end_to_end(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED))
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        options=make_options(),
+    )
 
     # Both sub-issues in the fixture's graph land, and 02 could only start once 01 had.
     assert report.landed == (SubIssueId("01"), SubIssueId("02"))
@@ -64,7 +69,12 @@ async def test_ralph_run_lands_a_sub_issue_end_to_end(
 async def test_the_run_log_tells_the_true_story_in_order(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED))
+    await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        options=make_options(),
+    )
 
     lines = [json.loads(x) for x in (repo.path / ".scratch" / "run.jsonl").read_text().splitlines()]
     story = [(e["sub_issue"], e["actor"], e["kind"], e["details"]) for e in lines]
@@ -93,7 +103,12 @@ async def test_a_red_base_aborts_the_run_before_a_single_agent_starts(
     repo.git("commit", "-m", "break the base")
 
     with pytest.raises(BaseIsRed):
-        await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED))
+        await run(
+            repo.path,
+            None,
+            implementer=stand_in(agent, Behaviour.SUCCEED),
+            options=make_options(),
+        )
 
     assert not repo.branch_exists("ralph/01")  # zero agents started
     assert not (repo.path / ".scratch" / "run.jsonl").exists()
@@ -102,10 +117,10 @@ async def test_a_red_base_aborts_the_run_before_a_single_agent_starts(
 async def test_a_failed_install_aborts_the_run_before_a_single_agent_starts(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    config = make_config(install_cmd=("false",))
+    options = make_options(install_cmd=("false",))
 
     with pytest.raises(Exception, match="exited 1"):
-        await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED), config=config)
+        await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED), options=options)
 
     assert not repo.branch_exists("ralph/01")
 
@@ -118,9 +133,9 @@ async def test_the_install_runs_once_in_the_base_checkout_never_per_worktree(
     ledger = repo.path.parent / "installs"
     installer = repo.path.parent / "install.py"
     installer.write_text(f"open({str(ledger)!r}, 'a').write('x')\n")
-    config = make_config(install_cmd=(sys.executable, str(installer)))
+    options = make_options(install_cmd=(sys.executable, str(installer)))
 
-    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED), config=config)
+    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED), options=options)
 
     assert len(report.landed) == 2
     assert ledger.read_text() == "x"
@@ -135,6 +150,7 @@ async def test_an_undeclared_impasse_session_does_not_land(
         None,
         implementer=stand_in(agent, Behaviour.COMMIT_NOTHING),
         editor=terminal_editor(),
+        options=make_options(),
     )
 
     assert report.landed == ()
@@ -158,6 +174,7 @@ async def test_a_session_that_commits_a_red_suite_does_not_land(
         None,
         implementer=stand_in(agent, Behaviour.RED_SUITE),
         editor=terminal_editor(),
+        options=make_options(),
     )
 
     assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
@@ -173,6 +190,7 @@ async def test_a_hanging_session_is_killed_and_does_not_land(
         None,
         budget=Budget(wall_clock_s=1.0),
         implementer=stand_in(agent, Behaviour.HANG),
+        options=make_options(),
     )
 
     assert report.failed == {SubIssueId("01"): Outcome.INFRA_FAILED}
@@ -187,6 +205,7 @@ async def test_an_impasse_does_not_land_and_is_recorded(
         None,
         implementer=stand_in(agent, Behaviour.IMPASSE),
         editor=terminal_editor(),
+        options=make_options(),
     )
 
     assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
@@ -207,7 +226,12 @@ async def test_a_read_only_issue_store_does_not_crash_the_run(
     (repo.issues_dir / "01-first.md").chmod(0o444)
     (repo.issues_dir / "02-second.md").chmod(0o444)
 
-    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED))
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        options=make_options(),
+    )
 
     assert report.landed == (SubIssueId("01"), SubIssueId("02"))
     assert "Status: ready" in (repo.issues_dir / "01-first.md").read_text()  # the mirror failed
@@ -222,7 +246,12 @@ async def test_a_read_only_issue_store_does_not_crash_the_run(
 async def test_the_worktree_branch_carries_the_sub_issue_id(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED))
+    await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        options=make_options(),
+    )
 
     assert GitCli(repo=repo.path).commits_between("main", "ralph/01") >= 1
     assert (repo.path / ".worktrees" / "active" / "01").is_dir()

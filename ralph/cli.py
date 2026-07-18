@@ -12,7 +12,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
+import shlex
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -22,13 +25,6 @@ from ralph.adapters.codex import codex_implementer
 from ralph.adapters.copilot import copilot_editor, copilot_implementer
 from ralph.adapters.git import GitCli, run_git
 from ralph.adapters.suite import SubprocessTestRunner, install_once
-from ralph.config import (
-    ENV_FILE,
-    LINEAR_API_KEY,
-    PRE_COMMIT_CONFIGS,
-    Config,
-    ConfigError,
-)
 from ralph.harness import (
     CycleLedger,
     Refusal,
@@ -65,6 +61,12 @@ DEFAULT_ISSUE_MODE = FILESYSTEM
 DEFAULT_IMPLEMENTER = CODEX
 DEFAULT_EDITOR = CLAUDE
 DEFAULT_PROTECTED = ("main", "master")
+DEFAULT_TEST_CMD = ("uv", "run", "pytest", "-q")
+DEFAULT_INSTALL_CMD = ("uv", "sync")
+
+LINEAR_API_KEY = "LINEAR_API_KEY"
+ENV_FILE = ".env"
+PRE_COMMIT_CONFIGS = (".pre-commit-config.yaml", ".pre-commit-config.yml")
 
 
 class _NoEditorOverride:
@@ -73,7 +75,7 @@ class _NoEditorOverride:
 
 _NO_EDITOR_OVERRIDE = _NoEditorOverride()
 
-# Operational verbosity is a command-line flag, not configuration — the harness's own diagnostic
+# Operational verbosity is a command-line flag: the harness's own diagnostic
 # log, separate from the run log. `WARNING` keeps a clean run quiet.
 DEFAULT_LOG_LEVEL = "WARNING"
 
@@ -93,34 +95,52 @@ class IssueSourceError(ValueError):
     """The CLI was not given a coherent issue source."""
 
 
-def _config_for(
-    repo: Path,
-    env: Mapping[str, str] | None = None,
+@dataclass(frozen=True, slots=True)
+class RunOptions:
+    """The run's resolved CLI options and one secret."""
+
+    issue_mode: str = DEFAULT_ISSUE_MODE
+    implementer: str = DEFAULT_IMPLEMENTER
+    editor: str = DEFAULT_EDITOR
+    protected: frozenset[str] = frozenset(DEFAULT_PROTECTED)
+    test_cmd: tuple[str, ...] = DEFAULT_TEST_CMD
+    install_cmd: tuple[str, ...] = DEFAULT_INSTALL_CMD
+    linear_api_key: str | None = None
+
+    def loggable(self) -> str:
+        return (
+            f"issue_mode={self.issue_mode} "
+            f"implementer={self.implementer} "
+            f"editor={self.editor} "
+            f"protected={{{', '.join(sorted(self.protected))}}} "
+            f"test_cmd={shlex.join(self.test_cmd)} "
+            f"install_cmd={shlex.join(self.install_cmd)} "
+            f"linear_api_key={'set' if self.linear_api_key else 'unset'}"
+        )
+
+
+def _options_for(
+    env: Mapping[str, str] = os.environ,
     *,
     issue_mode: str = DEFAULT_ISSUE_MODE,
     implementer: str = DEFAULT_IMPLEMENTER,
     editor: str = DEFAULT_EDITOR,
     protected: Sequence[str] = DEFAULT_PROTECTED,
-) -> Config:
-    if env is None:
-        return Config.resolve(
-            repo,
-            issue_mode=issue_mode,
-            implementer=implementer,
-            editor=editor,
-            protected=frozenset(protected),
-        )
-    return Config.resolve(
-        repo,
-        env,
+    test_cmd: str = shlex.join(DEFAULT_TEST_CMD),
+    install_cmd: str = shlex.join(DEFAULT_INSTALL_CMD),
+) -> RunOptions:
+    return RunOptions(
         issue_mode=issue_mode,
         implementer=implementer,
         editor=editor,
         protected=frozenset(protected),
+        test_cmd=tuple(shlex.split(test_cmd)),
+        install_cmd=tuple(shlex.split(install_cmd)),
+        linear_api_key=env.get(LINEAR_API_KEY),
     )
 
 
-def _add_config_flags(parser: argparse.ArgumentParser) -> None:
+def _add_option_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--issue-mode",
         choices=(FILESYSTEM, LINEAR),
@@ -146,48 +166,58 @@ def _add_config_flags(parser: argparse.ArgumentParser) -> None:
         metavar="BRANCH",
         help="branch a run refuses to start from. Repeat for more. Defaults to main and master.",
     )
+    parser.add_argument(
+        "--test-cmd",
+        default=shlex.join(DEFAULT_TEST_CMD),
+        help=f"test command to run in each worktree. Defaults to {shlex.join(DEFAULT_TEST_CMD)!r}.",
+    )
+    parser.add_argument(
+        "--install-cmd",
+        default=shlex.join(DEFAULT_INSTALL_CMD),
+        help=f"install command to run once in the base checkout. Defaults to {shlex.join(DEFAULT_INSTALL_CMD)!r}.",
+    )
 
 
-def validate_agents(config: Config) -> None:
+def validate_agents(options: RunOptions) -> None:
     """The CLI must name actors this harness knows, without constructing their adapters."""
-    if config.implementer not in {CODEX, COPILOT}:
+    if options.implementer not in {CODEX, COPILOT}:
         raise NoAgent(
-            f"implementer: {config.implementer!r} names no Implementer. Known: {CODEX}, {COPILOT}."
+            f"implementer: {options.implementer!r} names no Implementer. Known: {CODEX}, {COPILOT}."
         )
-    if config.editor not in {CLAUDE, COPILOT}:
+    if options.editor not in {CLAUDE, COPILOT}:
         raise NoAgent(
-            f"editor: {config.editor!r} names no Editor. Known: {CLAUDE}, {COPILOT}."
+            f"editor: {options.editor!r} names no Editor. Known: {CLAUDE}, {COPILOT}."
         )
 
 
-def editor_of(config: Config) -> Editor:
+def editor_of(options: RunOptions) -> Editor:
     """Which model adjudicates a failed session.
 
     The Editor and the Implementer should not be the same model on the same failure — an Editor
     adjudicating an impasse declared by *itself* is the least independent sensor the system could
     have. Nothing here enforces that; it is why two CLIs back each role.
     """
-    named = config.editor
+    named = options.editor
     if named == CLAUDE:
-        return ClaudeCodeEditor(open_session=claude_sdk_session, suite=config.test_cmd)
+        return ClaudeCodeEditor(open_session=claude_sdk_session, suite=options.test_cmd)
     if named == COPILOT:
         # Read-only, but guaranteed by Copilot's own permission engine rather than by a function
         # this harness owns and tests. Weaker on purpose, and worth knowing here at the point of
         # choosing: see `CopilotEditor`. It buys independence — an Editor that is not the model
         # that just failed.
-        return copilot_editor(suite=config.test_cmd)
-    validate_agents(config)
+        return copilot_editor(suite=options.test_cmd)
+    validate_agents(options)
     raise AssertionError("validate_agents accepted an unknown Editor")
 
 
-def implementer_of(config: Config) -> Implementer:
+def implementer_of(options: RunOptions) -> Implementer:
     """Which model implements — the one decision only this module is allowed to make."""
-    named = config.implementer
+    named = options.implementer
     if named == CODEX:
         return codex_implementer()
     if named == COPILOT:
         return copilot_implementer()
-    validate_agents(config)
+    validate_agents(options)
     raise AssertionError("validate_agents accepted an unknown Implementer")
 
 
@@ -205,25 +235,25 @@ def find_issues_dir(repo: Path, given: Path | None) -> Path:
     return candidates[0]
 
 
-def issue_store(repo: Path, issue_source: str | None, config: Config) -> IssueStore:
-    """The store `config.issue_mode` names. `LinearStateMap()` is unconfigured on purpose: the four
+def issue_store(repo: Path, issue_source: str | None, options: RunOptions) -> IssueStore:
+    """The store `options.issue_mode` names. `LinearStateMap()` is unconfigured on purpose: the four
     Linear state names are Ralph's canonical sub-issue states, hardcoded, not a per-run argument."""
-    if config.issue_mode == FILESYSTEM:
+    if options.issue_mode == FILESYSTEM:
         return FilesystemIssueStore(
             issues_dir=find_issues_dir(repo, Path(issue_source) if issue_source is not None else None)
         )
-    if config.issue_mode == LINEAR:
+    if options.issue_mode == LINEAR:
         if issue_source is None:
             raise IssueSourceError(f"issue_mode: {LINEAR} needs an issue_source")
-        if not config.linear_api_key:
+        if not options.linear_api_key:
             raise IssueSourceError(f"set {LINEAR_API_KEY} to use issue_mode: {LINEAR}")
         return LinearIssueStore(
             parent_identifier=issue_source,
-            client=LinearGraphQLClient(api_key=config.linear_api_key),
+            client=LinearGraphQLClient(api_key=options.linear_api_key),
             states=LinearStateMap(),
         )
     raise IssueSourceError(
-        f"issue_mode: {config.issue_mode!r} is not {FILESYSTEM} or {LINEAR}."
+        f"issue_mode: {options.issue_mode!r} is not {FILESYSTEM} or {LINEAR}."
     )
 
 
@@ -233,20 +263,20 @@ def _pre_commit(repo: Path) -> tuple[str | None, bool]:
     The hook path comes from git rather than from `.git/hooks/`, because a repo may move it with
     `core.hooksPath` and a run in a worktree does not have a `.git` directory at all.
     """
-    config = next((c for c in PRE_COMMIT_CONFIGS if (repo / c).exists()), None)
-    if config is None:
+    pre_commit_config = next((c for c in PRE_COMMIT_CONFIGS if (repo / c).exists()), None)
+    if pre_commit_config is None:
         return None, False
     hook = repo / run_git(repo, "rev-parse", "--git-path", "hooks/pre-commit")
-    return config, hook.exists()
+    return pre_commit_config, hook.exists()
 
 
 def _read_graph(
-    repo: Path, issue_source: str | None, config: Config
+    repo: Path, issue_source: str | None, options: RunOptions
 ) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]:
-    return issue_store(repo, issue_source, config).read_graph()
+    return issue_store(repo, issue_source, options).read_graph()
 
 
-def facts_about(repo: Path, issue_source: str | None, config: Config) -> RepoFacts:
+def facts_about(repo: Path, issue_source: str | None, options: RunOptions) -> RepoFacts:
     """Ask the world the five questions, and hand the answers to a rule that cannot ask anything.
 
     Each `except` is narrow and each keeps the raiser's own message: `IssueParseError` already says
@@ -259,7 +289,7 @@ def facts_about(repo: Path, issue_source: str | None, config: Config) -> RepoFac
     source_error: str | None = None
     graph_error: str | None = None
     try:
-        _read_graph(repo, issue_source, config)
+        _read_graph(repo, issue_source, options)
     except (IssueParseError, GraphError, LinearIssueStoreError) as exc:
         graph_error = str(exc)
     except (FileNotFoundError, IssueSourceError, LinearApiError) as exc:
@@ -267,7 +297,7 @@ def facts_about(repo: Path, issue_source: str | None, config: Config) -> RepoFac
 
     return RepoFacts(
         head_branch=git.head_branch(),
-        protected=config.protected,
+        protected=options.protected,
         dirty=git.dirty_files(),
         source_error=source_error,
         graph_error=graph_error,
@@ -279,11 +309,11 @@ def facts_about(repo: Path, issue_source: str | None, config: Config) -> RepoFac
 def validate(
     repo: Path,
     issue_source: str | None = None,
-    config: Config | None = None,
+    options: RunOptions | None = None,
 ) -> tuple[Refusal, ...]:
-    config = config or _config_for(repo)
-    validate_agents(config)
-    return refusals(facts_about(repo.resolve(), issue_source, config))
+    options = options or _options_for()
+    validate_agents(options)
+    return refusals(facts_about(repo.resolve(), issue_source, options))
 
 
 def render_refusals(found: tuple[Refusal, ...]) -> str:
@@ -297,16 +327,16 @@ def render_refusals(found: tuple[Refusal, ...]) -> str:
 def render_plan(
     repo: Path,
     issue_source: str | None = None,
-    config: Config | None = None,
+    options: RunOptions | None = None,
 ) -> str:
     """What `--dry-run` prints: the graph as the harness reads it, and the order it would work in.
 
     The cheapest possible dogfood — it parses every sub-issue, resolves every edge, and proves the
     graph is acyclic, and it costs nothing to run because no session is ever opened.
     """
-    config = config or _config_for(repo)
-    validate_agents(config)
-    graph, states = _read_graph(repo.resolve(), issue_source, config)
+    options = options or _options_for()
+    validate_agents(options)
+    graph, states = _read_graph(repo.resolve(), issue_source, options)
     edges = sum(len(sub.blocked_by) for sub in graph.sub_issues.values())
     lines = [f"{len(graph.sub_issues)} sub-issues, {edges} edges, no cycle."]
 
@@ -330,32 +360,31 @@ async def run(
     budget: Budget | None = None,
     implementer: Implementer | None = None,
     editor: Editor | _NoEditorOverride = _NO_EDITOR_OVERRIDE,
-    config: Config | None = None,
+    options: RunOptions | None = None,
 ) -> RunReport:
-    """Explicit `implementer`/`editor` override the ones the resolved config names — those are the seams
+    """Explicit `implementer`/`editor` override the ones the resolved options name — those are the seams
     the tests inject the scripted stand-in and a stub Editor through, and the reason no test in the
     suite calls a model."""
     repo = repo.resolve()
-    config = config or _config_for(repo)
-    validate_agents(config)
+    options = options or _options_for()
+    validate_agents(options)
 
     # The same checks `ralph validate` runs, and they are not advisory. A run that starts on `main`
     # has already done the damage by the time anybody reads the warning it printed.
-    found = validate(repo, issue_source, config)
+    found = validate(repo, issue_source, options)
     if found:
         raise Refused(render_refusals(found))
 
     git = GitCli(repo=repo)
     integration = git.head_branch()
 
-    # The suite command comes from `ralph.yaml`, resolved once; install runs once in the base
-    # checkout, before anything is dispatched.
-    runner = SubprocessTestRunner(cmd=config.test_cmd)
-    await install_once(repo, config.install_cmd)
+    # Install runs once in the base checkout, before anything is dispatched.
+    runner = SubprocessTestRunner(cmd=options.test_cmd)
+    await install_once(repo, options.install_cmd)
 
-    store = issue_store(repo, issue_source, config)
-    selected_implementer = implementer if implementer is not None else implementer_of(config)
-    selected_editor = editor_of(config) if isinstance(editor, _NoEditorOverride) else editor
+    store = issue_store(repo, issue_source, options)
+    selected_implementer = implementer if implementer is not None else implementer_of(options)
+    selected_editor = editor_of(options) if isinstance(editor, _NoEditorOverride) else editor
     scheduler = Scheduler(
         repo=repo,
         git=git,
@@ -448,7 +477,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=DEFAULT_LOG_LEVEL,
         help="the harness's diagnostic verbosity: DEBUG / INFO / WARNING / ERROR.",
     )
-    _add_config_flags(runner)
+    _add_option_flags(runner)
 
     checker = sub.add_parser("validate", help="refuse a run this repo is not ready for")
     checker.add_argument("repo", type=Path)
@@ -463,40 +492,41 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=DEFAULT_LOG_LEVEL,
         help="the harness's diagnostic verbosity: DEBUG / INFO / WARNING / ERROR.",
     )
-    _add_config_flags(checker)
+    _add_option_flags(checker)
 
     args = parser.parse_args(argv)
     level = args.log_level.upper()
     logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
     _load_env(args.repo)
+    options = _options_for(
+        issue_mode=args.issue_mode,
+        implementer=args.implementer,
+        editor=args.editor,
+        protected=args.protected or DEFAULT_PROTECTED,
+        test_cmd=args.test_cmd,
+        install_cmd=args.install_cmd,
+    )
     try:
-        config = _config_for(
-            args.repo,
-            issue_mode=args.issue_mode,
-            implementer=args.implementer,
-            editor=args.editor,
-            protected=args.protected or DEFAULT_PROTECTED,
-        )
-        validate_agents(config)
-    except (ConfigError, NoAgent) as exc:
+        validate_agents(options)
+    except NoAgent as exc:
         print(exc)
         return 1
 
     if args.command == "validate":
-        found = validate(args.repo, args.issue_source, config)
+        found = validate(args.repo, args.issue_source, options)
         print(render_refusals(found))
         return 1 if found else 0
 
     if args.dry_run:
-        print(render_plan(args.repo, args.issue_source, config))
+        print(render_plan(args.repo, args.issue_source, options))
         return 0
 
-    print(f"configuration: {config.loggable()} log_level={level}")
+    print(f"options: {options.loggable()} log_level={level}")
     report = asyncio.run(
         run(
             args.repo,
             args.issue_source,
-            config=config,
+            options=options,
         )
     )
     print(render(report.notification))

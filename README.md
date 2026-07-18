@@ -154,11 +154,11 @@ Four outcomes, and each one routes somewhere specific:
 `needs-human`, worktree preserved, its dependents never become eligible — and everything
 unaffected still lands. The human is paged **once**, at the end. The run never stops early.
 
-## Configuration
+## Run Options
 
-A run reads repo-local commands from `ralph.yaml`, run arguments from the CLI, and the one secret
-from `.env`. Ralph loads the whole `.env` so its suite inherits the target repo's own variables
-(`DATABASE_URL`, …) too, and reads only `LINEAR_API_KEY` for itself.
+A run reads every non-secret argument from the CLI and the one secret from `.env`. Ralph loads the
+whole `.env` so its suite inherits the target repo's own variables (`DATABASE_URL`, …) too, and
+reads only `LINEAR_API_KEY` for itself.
 
 The CLI defaults match Ralph's current common path:
 
@@ -168,18 +168,12 @@ The CLI defaults match Ralph's current common path:
 --editor claude
 --protected main
 --protected master
+--test-cmd 'uv run pytest -q'
+--install-cmd 'uv sync'
 ```
 
-### `ralph.yaml` — commands
-
-```yaml
-# <repo>/ralph.yaml
-test_cmd: uv run pytest -q  # a string is split into an argv; a list is taken verbatim
-install_cmd: uv sync        # runs once, in the base checkout; a failure aborts the run
-```
-
-Omitting either command is a loud, fatal error. How `codex`/`copilot` is driven, and the four Linear
-state names, are hardcoded in the adapter that owns them.
+Command flags are strings split with shell quoting rules. How `codex`/`copilot` is driven, and the
+four Linear state names, are hardcoded in the adapter that owns them.
 
 ### `.env` — the one secret
 
@@ -187,14 +181,14 @@ state names, are hardcoded in the adapter that owns them.
 |---|---|
 | `LINEAR_API_KEY` | Linear API key. Required only when `issue_mode: linear`. |
 
-Operational verbosity is the `--log-level` flag, not configuration; `issue_source` is the per-run
-argument. Neither is a secret, so neither lives here.
+Operational verbosity is the `--log-level` flag; `issue_source` is the per-run positional argument.
+Neither is a secret, so neither lives here.
 
 ## Design principles
 
 1. **Target repos stay agnostic** — Ralph never modifies target repo structure. It reads
    `.scratch/` for issues, a repo-level agent context file (`CLAUDE.md` for Copilot,
-   `AGENTS.md` or `CLAUDE.md` for Codex), and its own `ralph.yaml`/`.env` at the repo root.
+   `AGENTS.md` or `CLAUDE.md` for Codex), and `.env` at the repo root.
 2. **Single-repo scope** — intra-repo dependencies only. Cross-repo sequencing is the user's.
 3. **Skills as references** — the prompt invokes `/tdd` by name. Skills are installed at user
    level, never bundled here.

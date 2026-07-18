@@ -89,8 +89,7 @@ load-bearing facts:
   above `issues/` is injected into every session.
 - Worktrees live at `<repo>/.worktrees/active/`; failures preserved at `<repo>/.worktrees/failed/`.
 - Target repos stay agnostic — Ralph reads `.scratch/`, a repo-level context file (`CLAUDE.md` for
-  Copilot; `AGENTS.md` then `CLAUDE.md` for Codex), and its own `ralph.yaml`/`.env` at the repo root,
-  and modifies nothing else.
-- A run's configuration comes from CLI arguments, `ralph.yaml` (suite/install commands), and `.env`
-  (the one secret, `LINEAR_API_KEY`). The argument list and the failure taxonomy are in
-  [`README.md`](README.md).
+  Copilot; `AGENTS.md` then `CLAUDE.md` for Codex), and `.env` at the repo root, and modifies
+  nothing else.
+- A run's non-secret arguments come from CLI flags. `.env` carries the one secret,
+  `LINEAR_API_KEY`. The argument list and the failure taxonomy are in [`README.md`](README.md).

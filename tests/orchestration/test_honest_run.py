@@ -29,6 +29,7 @@ from tests.testbed import (
     StandInAgent,
     TargetRepo,
     behaviour_spec,
+    make_options,
     stand_in_implementer as stand_in,
 )
 
@@ -57,7 +58,12 @@ async def test_every_sub_issue_lands_and_the_history_is_linear(
 ) -> None:
     repo.write_graph(PHASE)
 
-    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED))
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        options=make_options(),
+    )
 
     assert sorted(report.landed) == ["01", "02", "03", "04"]
     assert report.clean
@@ -87,7 +93,12 @@ async def test_the_run_log_tells_the_true_story_in_order(
     """
     repo.write_graph(PHASE)
 
-    await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED))
+    await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        options=make_options(),
+    )
 
     lines = story(repo)
     at = lines.index
@@ -129,6 +140,7 @@ async def test_the_run_log_carries_no_spend_no_diffstat_and_no_test_output(
         None,
         implementer=stand_in(agent, spec),
         editor=terminal_editor(),
+        options=make_options(),
     )
 
     raw = (repo.path / ".scratch" / "run.jsonl").read_text()
@@ -150,6 +162,7 @@ async def test_one_failure_strands_its_dependents_and_nothing_else(
         None,
         implementer=stand_in(agent, spec),
         editor=terminal_editor(),
+        options=make_options(),
     )
 
     assert sorted(report.landed) == ["01", "03"]
@@ -197,6 +210,7 @@ async def test_a_semantic_conflict_surfaces_on_the_second_to_land(
         None,
         implementer=stand_in(agent, spec),
         editor=terminal_editor(),
+        options=make_options(),
     )
 
     assert len(report.landed) == 1

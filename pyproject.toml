@@ -5,7 +5,6 @@ description = "Harnessed engineering for coding agents"
 requires-python = ">=3.12"
 dependencies = [
     "python-dotenv>=1.2.2",
-    "pyyaml>=6.0.3",
 ]
 
 [project.optional-dependencies]
@@ -25,7 +24,6 @@ dev = [
     "pytest-asyncio>=0.24",
     "mypy>=1.13",
     "ruff>=0.8",
-    "types-pyyaml>=6.0.12.20260518",
 ]
 
 [build-system]

@@ -19,7 +19,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from ralph.config import ACTIVE, QUARANTINE
 from ralph.harness import (
     Actor,
     CycleLedger,
@@ -50,6 +49,9 @@ from ralph.ports import (
 from ralph.runlog import EventKind, event
 
 log = logging.getLogger("ralph")
+
+ACTIVE = Path(".worktrees") / "active"
+QUARANTINE = Path(".worktrees") / "failed"
 
 
 class BaseIsRed(RuntimeError):

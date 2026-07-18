@@ -48,6 +48,7 @@ from tests.testbed import (
     Behaviour,
     StandInAgent,
     TargetRepo,
+    make_options,
     stand_in_implementer as stand_in,
 )
 
@@ -448,7 +449,11 @@ async def test_a_revise_really_discards_the_work_and_the_sub_issue_really_lands(
     )
 
     report = await run(
-        repo.path, None, implementer=stand_in(agent, Behaviour.IMPASSE_ONCE), editor=editor
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.IMPASSE_ONCE),
+        editor=editor,
+        options=make_options(),
     )
 
     assert report.landed == (ONE,)
@@ -481,7 +486,13 @@ async def test_the_planners_original_survives_a_real_run(
         scripted=[(telemetry(commits=0), verdict(Verdict.REVISE, brief="a clearer bar"))]
     )
 
-    await run(repo.path, None, implementer=stand_in(agent, Behaviour.IMPASSE_ONCE), editor=editor)
+    await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.IMPASSE_ONCE),
+        editor=editor,
+        options=make_options(),
+    )
 
     revisions = repo.issues_dir / "revisions" / "01"
     assert (revisions / "0-brief.md").read_text() == original
@@ -503,7 +514,11 @@ async def test_a_real_run_dispatches_no_fourth_implementer_session(
     editor = FakeEditor(scripted=[(telemetry(commits=0), verdict(Verdict.REVISE))])
 
     report = await run(
-        repo.path, None, implementer=stand_in(agent, Behaviour.IMPASSE), editor=editor
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.IMPASSE),
+        editor=editor,
+        options=make_options(),
     )
 
     # The agent itself counted three starts. Not the harness's word for it.

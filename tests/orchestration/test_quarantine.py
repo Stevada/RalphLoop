@@ -25,6 +25,7 @@ from tests.testbed import (
     StandInAgent,
     TargetRepo,
     behaviour_spec,
+    make_options,
     stand_in_implementer as stand_in,
 )
 
@@ -57,6 +58,7 @@ async def test_a_failure_quarantines_and_the_run_drains_around_it(
         None,
         implementer=stand_in(agent, spec),
         editor=terminal_editor(),
+        options=make_options(),
     )
 
     assert sorted(report.landed) == ["02", "04"]  # every unaffected sub-issue still landed
@@ -87,6 +89,7 @@ async def test_the_quarantined_worktree_is_preserved_as_evidence(
         None,
         implementer=stand_in(agent, Behaviour.RED_SUITE),
         editor=terminal_editor(),
+        options=make_options(),
     )
 
     failed = repo.path / ".worktrees" / "failed" / "01"
@@ -112,6 +115,7 @@ async def test_a_killed_session_yields_a_report_built_from_harness_facts_only(
         None,
         budget=Budget(wall_clock_s=1.0),
         implementer=stand_in(agent, Behaviour.HANG),
+        options=make_options(),
     )
 
     escalation = report.notification.escalations[0]
@@ -137,6 +141,7 @@ async def test_a_report_carries_both_the_models_claim_and_the_harnesss_facts(
         None,
         implementer=stand_in(agent, Behaviour.RED_SUITE),
         editor=terminal_editor(),
+        options=make_options(),
     )
 
     escalation = report.notification.escalations[0]
@@ -158,6 +163,7 @@ async def test_zero_commits_is_an_impasse_never_a_benign_skip(
         None,
         implementer=stand_in(agent, Behaviour.COMMIT_NOTHING),
         editor=terminal_editor(),
+        options=make_options(),
     )
 
     assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
@@ -178,6 +184,7 @@ async def test_nothing_is_ever_retried(
         None,
         budget=Budget(wall_clock_s=1.0),
         implementer=stand_in(agent, spec),
+        options=make_options(),
     )
 
     assert report.failed == {SubIssueId("01"): Outcome.INFRA_FAILED}
@@ -204,6 +211,7 @@ async def test_one_notification_says_which_to_open_first(
         None,
         implementer=stand_in(agent, spec),
         editor=terminal_editor(),
+        options=make_options(),
     )
     n = report.notification
 
