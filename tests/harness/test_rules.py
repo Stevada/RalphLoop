@@ -325,7 +325,13 @@ def test_the_notification_counts_what_each_failure_stranded() -> None:
         SubIssueId("04"): SubIssueState.LANDED,
     }
 
-    n = notify(graph, states, [SubIssueId("04")], {SubIssueId("01"): escalate(Outcome.IMPASSE)})
+    n = notify(
+        graph,
+        states,
+        [SubIssueId("04")],
+        {SubIssueId("01"): escalate(Outcome.IMPASSE)},
+        {},
+    )
 
     assert n.landed == (SubIssueId("04"),)
     assert n.escalations[0].stranded == (SubIssueId("02"), SubIssueId("03"))
@@ -363,6 +369,7 @@ def test_a_declared_impasse_opens_before_an_undeclared_one() -> None:
             SubIssueId("02"): declared,
             SubIssueId("03"): integration,
         },
+        {},
     )
 
     assert [e.sub_issue for e in n.escalations] == [
@@ -388,6 +395,7 @@ def test_the_ranking_puts_the_worse_kind_first_even_when_it_strands_less() -> No
             SubIssueId("02"): escalate(Outcome.IMPASSE),
             SubIssueId("01"): escalate(Outcome.INFRA_FAILED),
         },
+        {},
     )
 
     assert [e.sub_issue for e in n.escalations] == [SubIssueId("01"), SubIssueId("02")]
@@ -412,6 +420,7 @@ def test_blast_radius_breaks_the_tie_between_two_failures_of_the_same_kind() -> 
             SubIssueId("01"): escalate(Outcome.IMPASSE),
             SubIssueId("02"): escalate(Outcome.IMPASSE),
         },
+        {},
     )
 
     assert [e.sub_issue for e in n.escalations] == [SubIssueId("02"), SubIssueId("01")]
@@ -424,4 +433,4 @@ def test_a_success_that_reached_the_notification_is_a_defect_and_says_so() -> No
     states = {SubIssueId("01"): SubIssueState.NEEDS_HUMAN}
 
     with pytest.raises(ValueError, match="not a failure"):
-        notify(graph, states, [], {SubIssueId("01"): escalate(Outcome.SUCCESS)})
+        notify(graph, states, [], {SubIssueId("01"): escalate(Outcome.SUCCESS)}, {})

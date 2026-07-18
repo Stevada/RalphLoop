@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from ralph.harness import FailureReport, Outcome, never_eligible
+from ralph.issues import SessionConsumption
 from ralph.issues.graph import IssueGraph, SubIssueId
 from ralph.issues.state import SubIssueState
-from ralph.notification.model import Escalation, Notification
+from ralph.notification.model import Escalation, Notification, SubIssueConsumption
 
 ATTENTION_ORDER: Mapping[Outcome, int] = {
     # The harness or the environment broke. Nothing else this run says is trustworthy until you
@@ -30,6 +31,7 @@ def notify(
     states: Mapping[SubIssueId, SubIssueState],
     landed: Sequence[SubIssueId],
     failures: Mapping[SubIssueId, FailureReport],
+    consumption: Mapping[SubIssueId, Sequence[SessionConsumption]],
 ) -> Notification:
     """One notification, at the end. What landed, what failed and why, and what to open first."""
     stranded = never_eligible(graph, states)
@@ -49,7 +51,21 @@ def notify(
     ]
     return Notification(
         landed=tuple(landed),
+        consumption=_summarize_consumption(graph, consumption),
         escalations=tuple(sorted(escalations, key=_open_this_one_first)),
+    )
+
+
+def _summarize_consumption(
+    graph: IssueGraph, consumption: Mapping[SubIssueId, Sequence[SessionConsumption]]
+) -> tuple[SubIssueConsumption, ...]:
+    return tuple(
+        SubIssueConsumption(
+            sub_issue=id,
+            consumed_tokens=sum(record.consumed_tokens for record in consumption[id]),
+        )
+        for id in sorted(graph.sub_issues)
+        if id in consumption and consumption[id]
     )
 
 

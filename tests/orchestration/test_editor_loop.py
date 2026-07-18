@@ -249,6 +249,46 @@ async def test_each_session_consumption_is_persisted_for_the_sub_issue() -> None
     )
 
 
+async def test_run_report_and_notification_include_persisted_consumption_for_quarantined_runs() -> None:
+    store = FakeIssueStore(
+        graph=graph_of({"01": [], "02": ["01"], "03": ["02"]}),
+        states={
+            SubIssueId("01"): SubIssueState.READY,
+            SubIssueId("02"): SubIssueState.READY,
+            SubIssueId("03"): SubIssueState.READY,
+        },
+    )
+    store.consumption_records.extend(
+        [
+            (
+                SubIssueId("01"),
+                SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=900),
+            ),
+            (SubIssueId("02"), SessionConsumption(actor=Actor.EDITOR, consumed_tokens=800)),
+        ]
+    )
+    implementer = FakeImplementer(
+        scripted=[
+            telemetry(commits=1, consumed_tokens=10),
+            telemetry(commits=0, consumed_tokens=20),
+        ]
+    )
+    editor = FakeEditor(scripted=[(telemetry(commits=0, consumed_tokens=5), verdict())])
+
+    report = await run_with(store, implementer, editor)
+
+    assert report.consumption == {SubIssueId("01"): 10, SubIssueId("02"): 25}
+    assert report.total_consumed_tokens == 35
+
+    text = render(report.notification)
+    assert "consumption:" in text
+    assert "  01: 10 tokens" in text
+    assert "  02: 25 tokens" in text
+    assert "  total: 35 tokens" in text
+    assert "  03:" not in text
+    assert "02  impasse" in text
+
+
 async def test_a_revision_may_change_the_findings_without_the_brief() -> None:
     """Brief and findings round-trip as **separate** fields. An Editor that returns no findings has
     left them alone, and the harness must carry the old ones forward rather than blanking them."""

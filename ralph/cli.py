@@ -415,8 +415,13 @@ def render(n: Notification) -> str:
     believes it cannot satisfy. Most urgent first; there is no scrolling to find the important one.
     """
     lines = [f"landed: {', '.join(n.landed) if n.landed else 'nothing'}"]
+    if n.consumption:
+        lines.append("\nconsumption:")
+        for c in n.consumption:
+            lines.append(f"  {c.sub_issue}: {c.consumed_tokens} tokens")
+        lines.append(f"  total: {n.total_consumed_tokens} tokens")
     if not n.escalations:
-        return lines[0]
+        return "\n".join(lines)
 
     lines.append(f"\nneeds a human ({len(n.escalations)}), most urgent first:")
     for e in n.escalations:

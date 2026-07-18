@@ -19,6 +19,17 @@ class Escalation:
 
 
 @dataclass(frozen=True, slots=True)
+class SubIssueConsumption:
+    sub_issue: SubIssueId
+    consumed_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
 class Notification:
     landed: tuple[SubIssueId, ...]
+    consumption: tuple[SubIssueConsumption, ...]
     escalations: tuple[Escalation, ...]  # ranked: the one to open first comes first
+
+    @property
+    def total_consumed_tokens(self) -> int:
+        return sum(c.consumed_tokens for c in self.consumption)

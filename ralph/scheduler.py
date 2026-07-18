@@ -81,6 +81,14 @@ class RunReport:
         return {e.sub_issue: e.outcome for e in self.notification.escalations}
 
     @property
+    def consumption(self) -> Mapping[SubIssueId, int]:
+        return {c.sub_issue: c.consumed_tokens for c in self.notification.consumption}
+
+    @property
+    def total_consumed_tokens(self) -> int:
+        return self.notification.total_consumed_tokens
+
+    @property
     def clean(self) -> bool:
         return not self.notification.escalations
 
@@ -131,6 +139,9 @@ class Scheduler:
         await self._refuse_a_red_base()
 
         graph, states = self._store.read_graph()
+        consumption_offsets = {
+            id: len(self._store.consumption(id)) for id in graph.sub_issues
+        }
         landed: list[SubIssueId] = []
         failures: dict[SubIssueId, FailureReport] = {}
 
@@ -147,7 +158,11 @@ class Scheduler:
                     running.add(asyncio.create_task(self._pipeline(graph.sub_issues[id])))
 
                 if not running:
-                    return RunReport(notify(graph, states, landed, failures))
+                    consumption = {
+                        id: self._store.consumption(id)[consumption_offsets[id] :]
+                        for id in graph.sub_issues
+                    }
+                    return RunReport(notify(graph, states, landed, failures, consumption))
 
                 # FIRST_COMPLETED, not gather: the loop re-derives eligibility on every completion,
                 # so a sub-issue starts the moment its blockers land rather than at the end of a
