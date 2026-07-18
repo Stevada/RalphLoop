@@ -12,6 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ralph.issues.content import Brief, Findings
+from ralph.issues.consumption import (
+    SessionConsumption,
+    parse_consumption_records,
+    render_consumption_line,
+)
 from ralph.issues.graph import IssueGraph, SubIssue, SubIssueId
 from ralph.issues.state import SubIssueState
 from ralph.runlog import Event, EventKind
@@ -30,6 +35,10 @@ REVISIONS = "revisions"
 A directory, not a suffix on the `.md`, so that `_files()`'s `*.md` glob — which is what defines
 the graph — never sees a revision and mistakes it for a sub-issue.
 """
+
+CONSUMPTION = "consumption"
+"""One markdown file per sub-issue, outside the live brief so telemetry is durable but not prompt
+material for the next Implementer session."""
 
 
 class IssueParseError(ValueError):
@@ -173,6 +182,9 @@ class FilesystemIssueStore:
         body = self._path_of(id).read_text()
         return Brief(body=body), Findings(body=_section(body, _FINDINGS).strip())
 
+    def _consumption_path(self, id: SubIssueId) -> Path:
+        return self.issues_dir / CONSUMPTION / f"{id}.md"
+
     def content(self, id: SubIssueId) -> tuple[Brief, Findings]:
         """What the next Implementer session works from: the newest revision, or the Planner's
         original when there is none.
@@ -190,6 +202,13 @@ class FilesystemIssueStore:
             Brief(body=(dir / f"{latest}-brief.md").read_text(), revision=latest),
             Findings(body=(dir / f"{latest}-findings.md").read_text()),
         )
+
+    def consumption(self, id: SubIssueId) -> tuple[SessionConsumption, ...]:
+        self._path_of(id)
+        path = self._consumption_path(id)
+        if not path.exists():
+            return ()
+        return parse_consumption_records(path.read_text())
 
     async def record_revision(self, id: SubIssueId, brief: Brief, findings: Findings) -> None:
         """Written **alongside** the Planner's original, never over it.
@@ -220,6 +239,15 @@ class FilesystemIssueStore:
         next = latest + 1
         (dir / f"{next}-brief.md").write_text(brief.body)
         (dir / f"{next}-findings.md").write_text(findings.body)
+
+    async def record_consumption(self, id: SubIssueId, record: SessionConsumption) -> None:
+        self._path_of(id)
+        path = self._consumption_path(id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(f"# Token consumption for {id}\n\n")
+        with path.open("a") as handle:
+            handle.write(render_consumption_line(record))
 
     async def write_event(self, e: Event) -> None:
         """Mirror a terminal state into the `Status:` line. Other events are the run log's job."""

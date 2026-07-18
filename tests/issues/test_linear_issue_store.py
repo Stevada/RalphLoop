@@ -12,7 +12,7 @@ from dataclasses import replace
 import pytest
 
 from ralph.harness import Actor
-from ralph.issues import Brief, Findings, SubIssueId, SubIssueState
+from ralph.issues import Brief, Findings, SessionConsumption, SubIssueId, SubIssueState
 from ralph.issues.linear import (
     LinearComment,
     LinearIssue,
@@ -246,3 +246,41 @@ async def test_session_events_do_not_touch_linear_state() -> None:
     )
 
     assert client.updated_states == []
+
+
+async def test_consumption_is_mirrored_to_a_linear_sub_issue_comment() -> None:
+    client = FakeLinearClient(parent_with(sub_issue("RAL-2", id="linear-2")))
+    store = LinearIssueStore(parent_identifier="RAL-1", client=client)
+    store.read_graph()
+
+    await store.record_consumption(
+        SubIssueId("RAL-2"),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000),
+    )
+
+    assert len(client.created_comments) == 1
+    issue_id, body = client.created_comments[0]
+    assert issue_id == "linear-2"
+    assert "<!-- ralph:consumption -->" in body
+    assert "implementer" in body
+    assert "123000" in body
+    assert store.consumption(SubIssueId("RAL-2")) == (
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000),
+    )
+
+
+async def test_unreachable_linear_does_not_fail_consumption_persistence() -> None:
+    class UnreachableLinearClient(FakeLinearClient):
+        def create_comment(self, issue_id: str, body: str) -> None:
+            raise RuntimeError("linear is down")
+
+    client = UnreachableLinearClient(parent_with(sub_issue("RAL-2", id="linear-2")))
+    store = LinearIssueStore(parent_identifier="RAL-1", client=client)
+    store.read_graph()
+
+    await store.record_consumption(
+        SubIssueId("RAL-2"),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000),
+    )
+
+    assert store.consumption(SubIssueId("RAL-2")) == ()

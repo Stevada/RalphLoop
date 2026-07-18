@@ -419,9 +419,10 @@ what happened. It tracks only two kinds of thing:
 - **Decisions.** The verdict an Editor returned (`revise`, `planning-defect`,
   `inconclusive`).
 
-Nothing else. Token spend, diffstats, and failing-test output belong in the impasse report,
-not here. The run log answers one question — *what happened, in what order, to which
-sub-issue* — and it is exactly what the write-through mirrors to Linear, best-effort.
+Nothing else. Token spend is deliberately excluded from the run log and persisted as
+per-sub-issue consumption on the issue record; diffstats and failing-test output belong in the
+impasse report, not here. The run log answers one question — *what happened, in what order, to
+which sub-issue* — and it is exactly what the write-through mirrors to Linear, best-effort.
 
 ### The merge/write window
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from ralph.issues.content import Brief, Findings
+from ralph.issues.consumption import SessionConsumption
 from ralph.issues.graph import IssueGraph, SubIssueId
 from ralph.issues.state import SubIssueState
 from ralph.runlog import Event
@@ -18,17 +19,21 @@ from ralph.runlog import Event
 class IssueStore(Protocol):
     """The issue tracker: filesystem markdown or Linear.
 
-    `write_event` mirrors a transition back into the tracker, and `publish_notification` gives the
-    tracker the final human-facing run summary. Both are **best-effort** — the tracker is a
-    convenience for humans, and a run must not die because it was unreachable. The harness's own
-    authoritative record is the `RunLog`, which is a different sink with different durability.
+    `write_event` mirrors a transition back into the tracker, `record_consumption` persists the
+    tokens each actor session consumed, and `publish_notification` gives the tracker the final
+    human-facing run summary. The harness's authoritative lifecycle record is the `RunLog`, which is
+    a different sink with different durability.
     """
 
     def read_graph(self) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]: ...
 
     def content(self, id: SubIssueId) -> tuple[Brief, Findings]: ...
 
+    def consumption(self, id: SubIssueId) -> tuple[SessionConsumption, ...]: ...
+
     async def record_revision(self, id: SubIssueId, brief: Brief, findings: Findings) -> None: ...
+
+    async def record_consumption(self, id: SubIssueId, record: SessionConsumption) -> None: ...
 
     async def write_event(self, e: Event) -> None: ...
 

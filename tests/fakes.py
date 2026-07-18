@@ -18,13 +18,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ralph.harness import (
-    EditorVerdict,
-    FailureReport,
-    SessionTelemetry,
-    SuiteResult,
+from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
+from ralph.issues import (
+    Brief,
+    Findings,
+    IssueGraph,
+    SessionConsumption,
+    SubIssueId,
+    SubIssueState,
 )
-from ralph.issues import Brief, Findings, IssueGraph, SubIssueId, SubIssueState
 from ralph.ports import SessionContext, Worktree
 from ralph.runlog import Event
 from tests.builders import telemetry
@@ -80,6 +82,7 @@ class FakeIssueStore:
     contents: dict[SubIssueId, tuple[Brief, Findings]] = field(default_factory=dict)
     mirrored: list[Event] = field(default_factory=list)
     revisions: list[tuple[SubIssueId, Brief, Findings]] = field(default_factory=list)
+    consumption_records: list[tuple[SubIssueId, SessionConsumption]] = field(default_factory=list)
     notifications: list[str] = field(default_factory=list)
 
     def read_graph(self) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]:
@@ -88,9 +91,15 @@ class FakeIssueStore:
     def content(self, id: SubIssueId) -> tuple[Brief, Findings]:
         return self.contents.get(id, (Brief(body=f"build {id}"), Findings(body="")))
 
+    def consumption(self, id: SubIssueId) -> tuple[SessionConsumption, ...]:
+        return tuple(record for issue, record in self.consumption_records if issue == id)
+
     async def record_revision(self, id: SubIssueId, brief: Brief, findings: Findings) -> None:
         self.contents[id] = (brief, findings)
         self.revisions.append((id, brief, findings))
+
+    async def record_consumption(self, id: SubIssueId, record: SessionConsumption) -> None:
+        self.consumption_records.append((id, record))
 
     async def write_event(self, e: Event) -> None:
         self.mirrored.append(e)

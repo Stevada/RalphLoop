@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 
 from ralph.issues.content import Brief, Findings
+from ralph.issues.consumption import (
+    CONSUMPTION_MARKER,
+    SessionConsumption,
+    parse_consumption_records,
+    render_consumption_line,
+)
 from ralph.issues.graph import IssueGraph, SubIssue, SubIssueId
 from ralph.issues.linear.markdown import (
     latest_revision,
@@ -24,6 +31,8 @@ from ralph.issues.state import SubIssueState
 from ralph.runlog import Event, EventKind
 
 RUN_NOTIFICATION_MARKER = "<!-- ralph:run-notification -->"
+
+log = logging.getLogger("ralph")
 
 
 @dataclass(slots=True)
@@ -66,6 +75,15 @@ class LinearIssueStore:
         brief, findings = parse_content(issue)
         return Brief(body=brief, revision=latest_revision(issue.comments)), Findings(body=findings)
 
+    def consumption(self, id: SubIssueId) -> tuple[SessionConsumption, ...]:
+        issue = self._issue(id)
+        records: list[SessionConsumption] = []
+        for comment in issue.comments:
+            if CONSUMPTION_MARKER not in comment.body:
+                continue
+            records.extend(parse_consumption_records(comment.body))
+        return tuple(records)
+
     async def record_revision(self, id: SubIssueId, brief: Brief, findings: Findings) -> None:
         issue = self._issue(id)
         latest = latest_revision(issue.comments)
@@ -93,6 +111,20 @@ class LinearIssueStore:
             ),
         )
         self._cache_issue(id, issue)
+
+    async def record_consumption(self, id: SubIssueId, record: SessionConsumption) -> None:
+        issue = self._issue(id)
+        body = _render_consumption_comment(record)
+        try:
+            self.client.create_comment(issue.id, body)
+        except Exception:  # noqa: BLE001 — Linear write-through is best-effort by design
+            log.warning(
+                "could not mirror token consumption for %s into Linear", id, exc_info=True
+            )
+            return
+        self._append_cached_comment(
+            id, LinearComment(id=f"ralph-consumption-{len(issue.comments)}-{issue.id}", body=body)
+        )
 
     async def write_event(self, e: Event) -> None:
         if e.kind is not EventKind.SUB_ISSUE_CLOSED or not isinstance(e.details, SubIssueState):
@@ -139,3 +171,11 @@ class LinearIssueStore:
 
 def _render_notification_comment(parent_identifier: str, body: str) -> str:
     return f"{RUN_NOTIFICATION_MARKER}\n## Ralph run complete\n\nParent: {parent_identifier}\n\n{body}\n"
+
+
+def _render_consumption_comment(record: SessionConsumption) -> str:
+    return (
+        f"{CONSUMPTION_MARKER}\n"
+        "## Ralph token consumption\n\n"
+        f"{render_consumption_line(record)}"
+    )

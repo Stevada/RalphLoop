@@ -113,7 +113,9 @@ rather than a rule someone must remember.
 `IssueStore` ([store.py](../ralph/issues/store.py)) is the tracker seam: filesystem markdown or
 Linear.
 `content()` returns the **newest** revision. `write_event` is **best-effort** — a run must not die
-because Linear was unreachable.
+because Linear was unreachable. `record_consumption()` stores each actor session's token
+consumption per sub-issue; filesystem storage is the readable local record, and Linear mirrors the
+same record as best-effort sub-issue comments.
 
 `FilesystemIssueStore` ([filesystem/](../ralph/issues/filesystem/)) reads
 `.scratch/<phase>/issues/*.md` with numeric-prefix edges. `LinearIssueStore`
@@ -311,7 +313,8 @@ becomes eligible, every unaffected sub-issue lands, and the run ends with **one*
 ### `RunLog` and the two sinks — [runlog/](../ralph/runlog/)
 
 Append-only, one line per event, two kinds of thing only: session states and Editor verdicts. Token
-spend, diffstats, and failing-test output belong in the impasse report, not here.
+spend is deliberately not a run-log event; per-session consumption is persisted through the
+`IssueStore`, and diffstats and failing-test output belong in the impasse report.
 
 `Event` and `EventKind` live in [runlog/model.py](../ralph/runlog/model.py), outside `harness/`,
 because they are the ledger vocabulary rather than a harness decision. `event()` lives beside them
@@ -324,7 +327,8 @@ Editor crashed.
 
 The run log (**authoritative** — failing to write it fails the run) and `IssueStore.write_event`
 (**best-effort** — mirrors the transition into the tracker) are the same `Event` to two sinks of
-different durability. A cycle's worth reads as a story with two characters:
+different durability. Consumption is a separate issue-store record, not a third run-log event. A
+cycle's worth reads as a story with two characters:
 
 ```
 01  implementer  session-started    in-progress

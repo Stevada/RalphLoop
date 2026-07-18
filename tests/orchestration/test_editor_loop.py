@@ -29,7 +29,7 @@ from ralph.harness import (
     Verdict,
     route,
 )
-from ralph.issues import Brief, Findings, SubIssueId, SubIssueState
+from ralph.issues import Brief, Findings, SessionConsumption, SubIssueId, SubIssueState
 from ralph.cli import render, run
 from ralph.mergequeue import MergeQueue
 from ralph.ports import Budget, Editor
@@ -221,6 +221,32 @@ async def test_knowledge_survives_only_through_the_findings() -> None:
     second = implementer.calls[1]
     assert second.brief.body == "the bar"  # the bar did not move
     assert second.findings.body == "the client's retry logic swallows the expected error"
+
+
+async def test_each_session_consumption_is_persisted_for_the_sub_issue() -> None:
+    store = store_of("01")
+    implementer = FakeImplementer(
+        scripted=[
+            telemetry(commits=0, consumed_tokens=100_000),
+            telemetry(commits=1, consumed_tokens=200_000),
+        ]
+    )
+    editor = FakeEditor(
+        scripted=[
+            (
+                telemetry(commits=0, consumed_tokens=50_000),
+                verdict(Verdict.REVISE, brief="try the supported API"),
+            )
+        ]
+    )
+
+    await run_with(store, implementer, editor)
+
+    assert store.consumption(ONE) == (
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=100_000),
+        SessionConsumption(actor=Actor.EDITOR, consumed_tokens=50_000),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=200_000),
+    )
 
 
 async def test_a_revision_may_change_the_findings_without_the_brief() -> None:

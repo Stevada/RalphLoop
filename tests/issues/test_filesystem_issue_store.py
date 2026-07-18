@@ -12,7 +12,7 @@ import pytest
 
 from ralph.issues.filesystem import FilesystemIssueStore, IssueParseError
 from ralph.harness import Actor
-from ralph.issues import Brief, Findings, SubIssueId, SubIssueState
+from ralph.issues import Brief, Findings, SessionConsumption, SubIssueId, SubIssueState
 from ralph.runlog import EventKind, event
 
 READY = "Status: ready\n\n## Acceptance criteria\n\n- [ ] It works.\n"
@@ -148,6 +148,23 @@ async def test_a_session_event_does_not_touch_the_status_line(tmp_path: Path) ->
     )
 
     assert "Status: ready" in path.read_text()
+
+
+async def test_consumption_records_round_trip_for_a_sub_issue(tmp_path: Path) -> None:
+    issue(tmp_path, "01-first.md")
+    store = FilesystemIssueStore(issues_dir=tmp_path)
+
+    await store.record_consumption(
+        SubIssueId("01"), SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000)
+    )
+    await store.record_consumption(
+        SubIssueId("01"), SessionConsumption(actor=Actor.EDITOR, consumed_tokens=45_000)
+    )
+
+    assert store.consumption(SubIssueId("01")) == (
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000),
+        SessionConsumption(actor=Actor.EDITOR, consumed_tokens=45_000),
+    )
 
 
 # --- revisions ------------------------------------------------------------------------------------

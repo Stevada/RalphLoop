@@ -33,6 +33,7 @@ from ralph.harness import (
     route,
 )
 from ralph.issues import SubIssue, SubIssueId, SubIssueState
+from ralph.issues.consumption import SessionConsumption
 from ralph.issues.store import IssueStore
 from ralph.mergequeue import LandResult, MergeQueue
 from ralph.notification import Notification, notify
@@ -213,6 +214,12 @@ class Scheduler:
 
         context = SessionContext(brief=brief, findings=findings, worktree=wt, budget=self._budget)
         telemetry = await self._implementer.run(context)
+        await self._store.record_consumption(
+            sub.id,
+            SessionConsumption(
+                actor=Actor.IMPLEMENTER, consumed_tokens=telemetry.consumed_tokens
+            ),
+        )
         # The suite result, not the exit code, is the outcome. The harness runs the tests.
         suite = await self._runner.run(wt.path)
         outcome = classify_implementer(telemetry, suite)
@@ -277,6 +284,10 @@ class Scheduler:
             sub.id, Actor.EDITOR, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS
         )
         telemetry, verdict = await self._editor.adjudicate(context, report, must_be_terminal)
+        await self._store.record_consumption(
+            sub.id,
+            SessionConsumption(actor=Actor.EDITOR, consumed_tokens=telemetry.consumed_tokens),
+        )
         outcome = classify_editor(telemetry, verdict)
         await self._record(sub.id, Actor.EDITOR, EventKind.SESSION_FINISHED, outcome)
 

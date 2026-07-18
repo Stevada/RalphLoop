@@ -5,6 +5,7 @@ layout is an implementation detail.
 """
 
 from ralph.issues.content import Brief, Findings
+from ralph.issues.consumption import SessionConsumption
 from ralph.issues.graph import GraphError, IssueGraph, SubIssue, SubIssueId
 from ralph.issues.state import SubIssueState
 
@@ -13,6 +14,7 @@ __all__ = [
     "Findings",
     "GraphError",
     "IssueGraph",
+    "SessionConsumption",
     "SubIssue",
     "SubIssueId",
     "SubIssueState",
