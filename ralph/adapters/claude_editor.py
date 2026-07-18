@@ -14,14 +14,14 @@ lines of message translation, and they are the only lines here that a real sessi
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 
 from ralph.adapters.editor import (
+    Ask,
+    OpenSession,
     READ_ONLY_TOOLS,
     EditorSession,
-    Permission,
     TokenUsage,
     Turn,
     read_only,
@@ -34,21 +34,6 @@ from ralph.ports import SessionContext
 MODEL = "claude-opus-4-8"
 """The Editor is the expensive one on purpose. It runs at most three times per sub-issue and it is
 the only actor whose judgment the harness cannot check against a suite."""
-
-Permit = Callable[[str, dict[str, object]], Permission]
-
-
-@dataclass(frozen=True, slots=True)
-class Ask:
-    """Everything a session needs to start. A value, so the seam can be crossed by a stub."""
-
-    prompt: str
-    cwd: Path
-    permit: Permit
-
-
-OpenSession = Callable[[Ask], EditorSession]
-"""The seam. `claude_sdk_session` in production; a stub in every test."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +95,7 @@ class _SdkSession:
 
         async def can_use_tool(tool: str, input: dict[str, object], context: object) -> object:
             """**The enforcement surface.** The harness adjudicates the call before it happens."""
+            assert self._ask.permit is not None
             permission = self._ask.permit(tool, input)
             if permission.allowed:
                 return PermissionResultAllow()

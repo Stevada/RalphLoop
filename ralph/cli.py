@@ -201,10 +201,6 @@ def editor_of(options: RunOptions) -> Editor:
     if named == CLAUDE:
         return ClaudeCodeEditor(open_session=claude_sdk_session, suite=options.test_cmd)
     if named == COPILOT:
-        # Read-only, but guaranteed by Copilot's own permission engine rather than by a function
-        # this harness owns and tests. Weaker on purpose, and worth knowing here at the point of
-        # choosing: see `CopilotEditor`. It buys independence — an Editor that is not the model
-        # that just failed.
         return copilot_editor(suite=options.test_cmd)
     validate_agents(options)
     raise AssertionError("validate_agents accepted an unknown Editor")

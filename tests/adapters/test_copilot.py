@@ -1,8 +1,8 @@
-"""The Copilot adapter: the invocation, the log parser, and the read-only ask.
+"""The Copilot adapter: the command line, the log parser, and the SDK-backed Editor.
 
 **No test here runs the real `copilot` binary.** The fixture at `tests/fixtures/copilot-debug.log`
-is a genuine debug log from a real session, and the stub process below replays one. What is under
-test is everything the harness does with that log — not whether GitHub's CLI keeps its promises.
+is a genuine debug log from a real session, and the stub process below replays one. The Editor tests
+drive the SDK seam with a stub session, so no test here depends on a model answering.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 
 from ralph.adapters.copilot import (
-    READ_ONLY_TOOLS,
     CopilotEditor,
     CopilotLogError,
     copilot_argv,
@@ -24,9 +23,9 @@ from ralph.adapters.copilot import (
     fresh_log_dir,
     log_dir_of,
     json_blocks,
-    read_only_patterns,
     usage_of,
 )
+from ralph.adapters.editor import Ask, Permission, TokenUsage, Turn
 from ralph.adapters.git import GitCli
 from ralph.adapters.session import SubprocessImplementer
 from ralph.harness import (
@@ -178,7 +177,7 @@ def _copilot_implementer(log: str) -> SubprocessImplementer:
     )
 
 
-# ── the invocation ───────────────────────────────────────────────────────────────────────────
+# ── the command line ─────────────────────────────────────────────────────────────────────────
 
 
 def test_debug_logging_is_set_never_assumed(tmp_path: Path) -> None:
@@ -199,41 +198,6 @@ def test_the_implementer_may_use_every_tool(tmp_path: Path) -> None:
     argv = copilot_argv("do it", tmp_path, mcp=(), allow_all=True)
     assert "--allow-all-tools" in argv
     assert not any(a.startswith("--available-tools") for a in argv)
-
-
-def test_the_editor_gets_an_allowlist_of_four_tools_and_no_more(tmp_path: Path) -> None:
-    """`create` and `edit` are denied by **absence** — the same shape as the SDK Editor's, and for
-    the same reason: a blocklist fails open on the tool nobody thought of."""
-    argv = copilot_argv("adjudicate", tmp_path, mcp=(), tools=READ_ONLY_TOOLS, allow=("shell(ls)",))
-    assert "--available-tools=view,glob,grep,bash" in argv
-    assert "create" not in "".join(argv)
-    assert "edit" not in "".join(a for a in argv if a.startswith("--available-tools"))
-
-
-def test_the_editor_never_gets_allow_all_tools(tmp_path: Path) -> None:
-    """Not passing it is itself enforcement: without `--allow-all-tools` Copilot denies any shell
-    command that was not allowed by name, and refuses shell redirection outright. That is what
-    closes the `git log > evidence.txt` hole, which no per-command check can see."""
-    argv = copilot_argv("adjudicate", tmp_path, mcp=(), tools=READ_ONLY_TOOLS)
-    assert "--allow-all-tools" not in argv
-    assert "--deny-tool=write" in argv
-
-
-def test_the_editor_may_run_the_suite_and_read_the_repo() -> None:
-    patterns = read_only_patterns(SUITE)
-    assert "shell(python -m pytest)" in patterns
-    assert "shell(python -m pytest:*)" in patterns  # it will want to narrow to the failing test
-    assert "shell(git diff)" in patterns
-    assert "shell(grep)" in patterns
-
-
-def test_the_editor_may_not_commit_or_write() -> None:
-    """The allowlist is shared with the SDK Editor: `READ_ONLY_GIT` has one home, and `commit` was
-    never in it."""
-    patterns = read_only_patterns(SUITE)
-    for forbidden in ("shell(git commit)", "shell(git cherry-pick)", "shell(git push)",
-                      "shell(git apply)", "shell(git reset)", "shell(tee)", "shell(sed)"):
-        assert forbidden not in patterns  # fmt: skip
 
 
 # ── the log directory ────────────────────────────────────────────────────────────────────────
@@ -266,11 +230,32 @@ def _worktree(tmp_path: Path) -> Worktree:
     return Worktree(path=path, branch="ralph/02-thing", base="integration")
 
 
-# ── the whole Editor, against a stub `copilot` ───────────────────────────────────────────────
+# ── the whole Editor, against a stub SDK session ─────────────────────────────────────────────
+
+
+class StubEditorSession:
+    def __init__(self, turns: Sequence[Turn]) -> None:
+        self._turns = turns
+        self.returncode: int | None = None
+        self.killed = False
+
+    async def turns(self) -> AsyncGenerator[Turn, None]:
+        for turn in self._turns:
+            if self.killed:
+                return
+            yield turn
+        self.returncode = 0
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+    async def wait(self) -> int:
+        return self.returncode if self.returncode is not None else -1
 
 
 async def test_the_editor_runs_to_completion(tmp_path: Path) -> None:
-    telemetry, verdict = await _adjudicate(tmp_path, context=130_000, verdict=None)
+    telemetry, verdict = await _adjudicate(tmp_path, consumed_tokens=130_000, verdict=None)
 
     assert telemetry.killed is None
     assert not hasattr(telemetry, "peak_context_tokens")
@@ -279,7 +264,7 @@ async def test_the_editor_runs_to_completion(tmp_path: Path) -> None:
 
 async def test_the_editor_reports_no_commits_by_construction(tmp_path: Path) -> None:
     """Not observed — *constructed*. It was denied every tool that could have made one."""
-    telemetry, verdict = await _adjudicate(tmp_path, context=9_000, verdict=Verdict.REVISE)
+    telemetry, verdict = await _adjudicate(tmp_path, consumed_tokens=9_000, verdict=Verdict.REVISE)
 
     assert telemetry.commits == 0
     assert telemetry.diffstat == ""
@@ -287,35 +272,61 @@ async def test_the_editor_reports_no_commits_by_construction(tmp_path: Path) -> 
     assert verdict is not None and verdict.verdict is Verdict.REVISE
 
 
-async def test_the_editor_reads_the_verdict_out_of_a_real_session(tmp_path: Path) -> None:
-    _, verdict = await _adjudicate(tmp_path, context=9_000, verdict=Verdict.PLANNING_DEFECT)
+async def test_the_editor_reads_the_verdict_out_of_the_sdk_session(tmp_path: Path) -> None:
+    _, verdict = await _adjudicate(
+        tmp_path, consumed_tokens=9_000, verdict=Verdict.PLANNING_DEFECT
+    )
 
     assert verdict is not None
     assert verdict.verdict is Verdict.PLANNING_DEFECT
     assert verdict.rationale.startswith("the brief assumed")
 
 
-async def test_the_prompt_reaches_the_model_and_the_log_dir_reaches_the_cli(tmp_path: Path) -> None:
-    """The two things the harness must actually deliver. A `--log-dir` that never arrived is a
-    session with no usage telemetry; a brief that never arrived is a session adjudicating nothing."""
-    seen: list[tuple[str, Path]] = []
-    await _adjudicate(tmp_path, context=9_000, verdict=Verdict.REVISE, seen=seen)
+async def test_the_prompt_and_worktree_reach_the_sdk_session(tmp_path: Path) -> None:
+    seen: list[Ask] = []
+    await _adjudicate(tmp_path, consumed_tokens=9_000, verdict=Verdict.REVISE, seen=seen)
 
-    prompt, log_dir = seen[0]
-    assert "You are the **Editor**" in prompt
-    assert "build it" in prompt  # the brief the Implementer was given
-    assert log_dir.is_dir()
+    assert "You are the **Editor**" in seen[0].prompt
+    assert "build it" in seen[0].prompt  # the brief the Implementer was given
+    assert seen[0].cwd == tmp_path / ".worktrees" / "active" / "02-thing"
+
+
+async def test_the_editor_denies_mutating_tools_through_the_shared_permit(tmp_path: Path) -> None:
+    denied: list[Permission] = []
+
+    def open_session(ask: Ask) -> StubEditorSession:
+        assert ask.permit is not None
+        denied.extend(
+            [
+                ask.permit("Write", {"file_path": "calculator.py"}),
+                ask.permit("Bash", {"command": "git commit -m fixed"}),
+                ask.permit("Bash", {"command": "git cherry-pick abc123"}),
+            ]
+        )
+        return StubEditorSession([])
+
+    await CopilotEditor(open_session=open_session, suite=SUITE).adjudicate(
+        SessionContext(
+            brief=Brief(body="build it"),
+            findings=Findings(body=""),
+            worktree=_worktree(tmp_path),
+            budget=Budget(wall_clock_s=20.0),
+        ),
+        FAILURE,
+        must_be_terminal=False,
+    )
+
+    assert [permission.allowed for permission in denied] == [False, False, False]
 
 
 async def _adjudicate(
     tmp_path: Path,
     *,
-    context: int,
+    consumed_tokens: int,
     verdict: Verdict | None,
-    seen: list[tuple[str, Path]] | None = None,
+    seen: list[Ask] | None = None,
 ) -> tuple[SessionTelemetry, EditorVerdict | None]:
-    """The whole Editor, against a stub `copilot`: a process that writes a real debug log and says
-    a real verdict, through the same seam the real one is wired through in `cli.py`."""
+    """The whole Editor, against a stub session through the same seam `cli.py` wires."""
     said = ""
     if verdict is not None:
         answer: dict[str, str] = {
@@ -328,18 +339,16 @@ async def _adjudicate(
             answer["revised_brief"] = "do it again, better"
         said = f"<verdict>{json.dumps(answer)}</verdict>"
 
-    def argv(prompt: str, log_dir: Path) -> Sequence[str]:
+    def open_session(ask: Ask) -> StubEditorSession:
         if seen is not None:
-            seen.append((prompt, log_dir))
-        script = (
-            f"import pathlib\n"
-            f"pathlib.Path({str(log_dir)!r}, 'process-1.log')"
-            f".write_text({_completion(context, context + 50)!r})\n"
-            f"print({said!r})\n"
-        )
-        return [sys.executable, "-c", script]
+            seen.append(ask)
+        turns: list[Turn] = []
+        if said:
+            turns.append(said)
+        turns.append(TokenUsage(consumed_tokens=consumed_tokens))
+        return StubEditorSession(turns)
 
-    return await CopilotEditor(argv=argv).adjudicate(
+    return await CopilotEditor(open_session=open_session, suite=SUITE).adjudicate(
         SessionContext(
             brief=Brief(body="build it"),
             findings=Findings(body=""),

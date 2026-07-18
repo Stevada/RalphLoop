@@ -11,6 +11,7 @@ import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -19,7 +20,6 @@ from ralph.adapters.copilot_sdk_session import (
     ASSISTANT_MESSAGE_DELTA,
     ASSISTANT_TURN_END,
     ASSISTANT_USAGE,
-    Ask,
     AutoCompaction,
     CopilotSdkUsageError,
     CopilotSdkSession,
@@ -27,9 +27,17 @@ from ralph.adapters.copilot_sdk_session import (
     SESSION_COMPACTION_FINISHED,
     SESSION_IDLE,
     SdkEvent,
+    SdkPermissionHandler,
     copilot_sdk_session,
 )
-from ralph.adapters.editor import TokenUsage, Turn
+from ralph.adapters.editor import Ask, TokenUsage, Turn, read_only
+
+if TYPE_CHECKING:
+    from copilot.generated.session_events import PermissionRequest
+else:
+    PermissionRequest = object
+
+SUITE: Sequence[str] = ("uv", "run", "pytest", "-q")
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,12 +78,40 @@ class CompactionFinished:
     tokens_removed: int
 
 
+@dataclass(frozen=True, slots=True)
+class ShellRequest:
+    full_command_text: str
+    kind: str = "shell"
+
+
+@dataclass(frozen=True, slots=True)
+class WriteRequest:
+    file_name: str
+    kind: str = "write"
+
+
+@dataclass(frozen=True, slots=True)
+class Decision:
+    allowed: bool
+    reason: str = ""
+
+
 class StubCopilotSession:
-    def __init__(self, events: Sequence[SdkEvent], *, pause: float = 0.0) -> None:
+    def __init__(
+        self,
+        events: Sequence[SdkEvent],
+        *,
+        permission_requests: Sequence[object] = (),
+        pause: float = 0.0,
+    ) -> None:
         self._events = events
+        self._permission_requests = permission_requests
         self._pause = pause
         self._handler: Callable[[SdkEvent], None] | None = None
+        self._permission_handler: SdkPermissionHandler | None = None
         self.sent: list[str] = []
+        self.decisions: list[object] = []
+        self.executed_permission_requests: list[object] = []
         self.aborted = False
         self.disconnected = False
 
@@ -87,8 +123,21 @@ class StubCopilotSession:
 
         return unsubscribe
 
+    def on_permission_request(
+        self, handler: SdkPermissionHandler | None
+    ) -> None:
+        self._permission_handler = handler
+
     async def send(self, prompt: str) -> str:
         self.sent.append(prompt)
+        for request in self._permission_requests:
+            if self._permission_handler is None:
+                self.executed_permission_requests.append(request)
+                continue
+            decision = self._permission_handler(cast(PermissionRequest, request), {})
+            self.decisions.append(decision)
+            if getattr(decision, "allowed", False):
+                self.executed_permission_requests.append(request)
         for event in self._events:
             if self.aborted:
                 return "message-1"
@@ -105,13 +154,22 @@ class StubCopilotSession:
         self.disconnected = True
 
 
-def open_session(stub: RunningCopilotSession) -> CopilotSdkSession:
-    async def create(_ask: Ask, observe: Callable[[SdkEvent], None]) -> RunningCopilotSession:
+def open_session(
+    stub: StubCopilotSession,
+    *,
+    ask: Ask = Ask(prompt="build it", cwd=Path("/w/01")),
+) -> CopilotSdkSession:
+    async def create(
+        _ask: Ask,
+        observe: Callable[[SdkEvent], None],
+        on_permission_request: SdkPermissionHandler | None,
+    ) -> RunningCopilotSession:
         stub.on(observe)
+        stub.on_permission_request(on_permission_request)
         return stub
 
     return CopilotSdkSession(
-        Ask(prompt="build it", cwd=Path("/w/01")),
+        ask,
         create_session=create,
     )
 
@@ -203,6 +261,47 @@ async def test_compaction_events_are_captured_for_later_persistence() -> None:
             tokens_removed=127_000,
         ),
     )
+
+
+async def test_permission_handler_denies_mutating_requests_pre_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "ralph.adapters.copilot_sdk_session._approve_once",
+        lambda: Decision(allowed=True),
+    )
+    monkeypatch.setattr(
+        "ralph.adapters.copilot_sdk_session._reject_permission",
+        lambda reason: Decision(allowed=False, reason=reason),
+    )
+    stub = StubCopilotSession(
+        [Event(SESSION_IDLE, object())],
+        permission_requests=[
+            WriteRequest("calculator.py"),
+            ShellRequest("git commit -m fixed"),
+            ShellRequest("git cherry-pick abc123"),
+        ],
+    )
+    session = open_session(
+        stub,
+        ask=Ask(
+            prompt="adjudicate",
+            cwd=Path("/w/01"),
+            permit=lambda tool, input: read_only(tool, input, SUITE),
+        ),
+    )
+
+    await collect(session)
+
+    assert stub.executed_permission_requests == []
+    assert stub.decisions == [
+        Decision(allowed=False, reason="`Write` can modify the worktree. The Editor is read-only."),
+        Decision(allowed=False, reason="`git commit` may write to the repository. You are read-only."),
+        Decision(
+            allowed=False,
+            reason="`git cherry-pick` may write to the repository. You are read-only.",
+        ),
+    ]
 
 
 async def test_kill_aborts_the_sdk_session_and_ends_the_stream() -> None:

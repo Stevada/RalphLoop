@@ -5,9 +5,8 @@ how it is bounded.
 invariant is enforced by the harness — a mutating tool call is *denied*, not discouraged. A prompt
 that asks nicely is not an invariant; it is a hope with good manners.
 
-`ClaudeCodeEditor` is this plus the Agent SDK. `CopilotEditor` (#10) is this plus `copilot -p` and
-its `--deny-tool` flags. What differs is only *how the denial is delivered*; what counts as
-mutating is decided once, here.
+`ClaudeCodeEditor` and `CopilotEditor` are this plus their SDK sessions. What differs is only *how
+the denial is delivered*; what counts as mutating is decided once, here.
 """
 
 from __future__ import annotations
@@ -18,8 +17,9 @@ import logging
 import re
 import shlex
 import time
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from ralph.adapters.context import Bound, run_bounded
@@ -81,6 +81,21 @@ class Permission:
 
     allowed: bool
     reason: str = ""
+
+
+Permit = Callable[[str, dict[str, object]], Permission]
+
+
+@dataclass(frozen=True, slots=True)
+class Ask:
+    """Everything an SDK-backed Editor session needs to start."""
+
+    prompt: str
+    cwd: Path
+    permit: Permit | None = None
+
+
+OpenSession = Callable[[Ask], "EditorSession"]
 
 
 def _permitted_command(argv: Sequence[str], suite: Sequence[str]) -> Permission:

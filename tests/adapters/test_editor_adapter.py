@@ -14,8 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from ralph.adapters.claude_editor import Ask, ClaudeCodeEditor
+from ralph.adapters.claude_editor import ClaudeCodeEditor
 from ralph.adapters.editor import (
+    Ask,
     VERDICT_CLOSE,
     VERDICT_OPEN,
     EditorSession,
@@ -386,6 +387,7 @@ async def test_the_editor_is_pointed_at_the_failed_worktree() -> None:
     )
 
     assert asks[0].cwd == WORKTREE.path
+    assert asks[0].permit is not None
     assert asks[0].permit("Bash", {"command": "git commit -m x"}).allowed is False
 
 

@@ -1,12 +1,12 @@
-"""Copilot, as either actor. One invocation and one log parser, backing both roles.
+"""Copilot as a CLI Implementer, plus the SDK-backed Editor.
 
 Keeping two CLIs on each side is a **portfolio decision, not a hedge**: the Implementer and the
 Editor should not be the same model on the same failure, because an Editor adjudicating an impasse
 declared by *itself* is the least independent sensor the system could have. `cli.py` picks; this
 module is picked.
 
-Copilot's debug log contains completed usage blocks. The harness reads those at session end for
-token-consumption telemetry.
+The CLI Implementer's debug log contains completed usage blocks. The harness reads those at session
+end for token-consumption telemetry.
 """
 
 from __future__ import annotations
@@ -15,13 +15,14 @@ import json
 import logging
 import shutil
 import subprocess
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ralph.adapters.editor import READ_ONLY_COMMANDS, READ_ONLY_GIT, editor_telemetry, verdict_of
+from ralph.adapters.copilot_sdk_session import copilot_sdk_session
+from ralph.adapters.editor import Ask, OpenSession, read_only, run_editor
 from ralph.adapters.prompt import editor_prompt, implementer_prompt
-from ralph.adapters.session import Session, SubprocessImplementer, run_session
+from ralph.adapters.session import Session, SubprocessImplementer
 from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry
 from ralph.issues import Brief, Findings
 from ralph.ports import SessionContext, Worktree
@@ -36,19 +37,12 @@ USAGE = "usage"
 PROMPT_TOKENS = "prompt_tokens"
 TOTAL_TOKENS = "total_tokens"
 
-VIEW, GLOB, GREP, BASH = "view", "glob", "grep", "bash"
-READ_ONLY_TOOLS = (VIEW, GLOB, GREP, BASH)
-"""Copilot's names for the four tools an Editor may hold — the same four the SDK Editor holds as
-`Read`, `Glob`, `Grep`, `Bash`. `create` and `edit` are denied by **absence**: `--available-tools`
-is an allowlist, and Copilot honours it by never sending the others to the model. Verified against
-a real session's wire request, where they were simply not there."""
-
 
 class CopilotLogError(RuntimeError):
     """A Copilot log whose usage payload the harness cannot read."""
 
 
-# ── the invocation, shared by both roles ─────────────────────────────────────────────────────
+# ── the command line ─────────────────────────────────────────────────────────────────────────
 
 
 def mcp_servers() -> tuple[str, ...]:
@@ -69,46 +63,14 @@ def mcp_servers() -> tuple[str, ...]:
     return tuple(servers) if isinstance(servers, dict) else ()
 
 
-def suite_patterns(suite: Sequence[str]) -> tuple[str, ...]:
-    """The one thing the Editor may run that *executes*: the repo's own suite.
-
-    Both an exact match and a prefix match, because the Editor will want to narrow the run down to
-    the failing test and the harness cannot know in advance what it will append.
-    """
-    command = " ".join(suite)
-    return (f"shell({command})", f"shell({command}:*)")
-
-
-def read_only_patterns(suite: Sequence[str]) -> tuple[str, ...]:
-    """Copilot's spelling of the read-only allowlist that `adapters/editor.py` owns.
-
-    The **contents** are not redefined here — `READ_ONLY_COMMANDS` and `READ_ONLY_GIT` are the same
-    frozensets the SDK Editor's permission callback consults. What counts as read-only is one piece
-    of knowledge with one home; this function only translates it into `shell(...)` patterns. If the
-    two lists were maintained separately they would drift, and the day they drifted the two Editors
-    would no longer be running under the same rules.
-    """
-    git = tuple(f"shell(git {sub})" for sub in sorted(READ_ONLY_GIT))
-    commands = tuple(f"shell({cmd})" for cmd in sorted(READ_ONLY_COMMANDS))
-    return suite_patterns(suite) + git + commands
-
-
 def copilot_argv(
     prompt: str,
     log_dir: Path,
     *,
     mcp: Sequence[str],
-    tools: Sequence[str] | None = None,
-    allow: Sequence[str] = (),
     allow_all: bool = False,
 ) -> list[str]:
-    """One command line, both actors. What differs is only what the session may touch.
-
-    `allow_all=True` is the Implementer: it is here to write code. `tools` + `allow` is the Editor.
-    **Not passing `--allow-all-tools` is itself part of the enforcement**: without it Copilot denies
-    any shell command that was not explicitly allowed, and refuses shell redirection outright —
-    which is what closes the `git log > evidence.txt` hole that no per-command check can see.
-    """
+    """The Copilot CLI command line. `allow_all=True` is the Implementer: it is here to write code."""
     argv = [
         COPILOT,
         "-p",
@@ -124,15 +86,8 @@ def copilot_argv(
     ]
     for server in mcp:
         argv += ["--disable-mcp-server", server]
-    if tools is not None:
-        argv.append(f"--available-tools={','.join(tools)}")
     if allow_all:
         argv.append("--allow-all-tools")
-    else:
-        # Denial beats every allow in Copilot's engine, including an `--allow-all-tools` that a
-        # later edit puts on this command line by mistake. It costs one argument to say it twice.
-        argv.append("--deny-tool=write")
-        argv += [f"--allow-tool={pattern}" for pattern in allow]
     return argv
 
 
@@ -269,29 +224,12 @@ def copilot_implementer() -> SubprocessImplementer:
     )
 
 
-EditorArgv = Callable[[str, Path], Sequence[str]]
-"""How this Editor is spelled on a command line: a prompt and a log directory in, an argv out.
-
-The seam the tests drive a stub `copilot` through — the same shape as `ClaudeCodeEditor`'s
-`OpenSession`, and for the same reason: no test in this suite may depend on a model answering.
-"""
-
-
 @dataclass(frozen=True, slots=True)
 class CopilotEditor:
-    """Copilot adjudicating a failed session, in the failed worktree, read-only.
+    """Copilot adjudicating a failed session, in the failed worktree, read-only."""
 
-    **This Editor's read-only guarantee is weaker than the SDK Editor's, and the difference is not
-    that one list is longer.** It is that `ClaudeCodeEditor`'s enforcement is a pure function the
-    harness owns and the suite tests fifty ways; this one's is a permission engine inside a binary
-    we do not control, cannot inspect, and do not exercise in any test. What is checked here is that
-    the harness *asks* correctly — an allowlist of four tools, an allowlist of shell commands, no
-    `--allow-all-tools`, and `--deny-tool=write` on top. That Copilot then *honours* the ask is an
-    assumption. It is a reasonable one, and it is still an assumption. Prefer the SDK Editor where
-    the choice is free; this exists so the Editor need not be the same model as the Implementer.
-    """
-
-    argv: EditorArgv
+    open_session: OpenSession
+    suite: Sequence[str]
 
     async def adjudicate(
         self,
@@ -299,31 +237,17 @@ class CopilotEditor:
         failure: FailureReport,
         must_be_terminal: bool,
     ) -> tuple[SessionTelemetry, EditorVerdict | None]:
-        worktree = context.worktree
-        log_dir = fresh_log_dir(worktree)
-        session = await run_session(
-            self.argv(
-                editor_prompt(context.brief, context.findings, failure, must_be_terminal), log_dir
-            ),
-            worktree.path,  # the failed worktree, exactly as the Implementer left it
-            context.budget,
+        session = self.open_session(
+            Ask(
+                prompt=editor_prompt(
+                    context.brief, context.findings, failure, must_be_terminal
+                ),
+                cwd=context.worktree.path,
+                permit=lambda tool, input: read_only(tool, input, self.suite),
+            )
         )
-        telemetry = editor_telemetry(
-            bound=session.bound,
-            exit_code=session.exit_code,
-            output=session.output,
-            wall_clock_s=session.wall_clock_s,
-        )
-        # `must_be_terminal` was told to the model and is enforced nowhere near it: a third-cycle
-        # `revise` is refused by the *scheduler*. One rule, one home.
-        return telemetry, verdict_of(session.output)
+        return await run_editor(session, context.budget)
 
 
 def copilot_editor(suite: Sequence[str]) -> CopilotEditor:
-    mcp = mcp_servers()
-    allow = read_only_patterns(suite)
-
-    def argv(prompt: str, log_dir: Path) -> Sequence[str]:
-        return copilot_argv(prompt, log_dir, mcp=mcp, tools=READ_ONLY_TOOLS, allow=allow)
-
-    return CopilotEditor(argv=argv)
+    return CopilotEditor(open_session=copilot_sdk_session, suite=suite)

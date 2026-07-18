@@ -7,12 +7,18 @@ auto-compaction events, and a `kill()` that aborts the active SDK turn and ends 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
-from ralph.adapters.editor import EditorSession, TokenUsage, Turn
+from ralph.adapters.editor import Ask, EditorSession, Permit, TokenUsage, Turn
+
+if TYPE_CHECKING:
+    from copilot.generated.session_events import PermissionRequest as SdkPermissionRequest
+    from copilot.session import PermissionRequestResult as SdkPermissionResult
+else:
+    SdkPermissionRequest = object
+    SdkPermissionResult = object
 
 ASSISTANT_MESSAGE_DELTA = "assistant.message_delta"
 ASSISTANT_MESSAGE = "assistant.message"
@@ -41,12 +47,6 @@ SUCCESS = "success"
 
 class CopilotSdkUsageError(RuntimeError):
     """A Copilot SDK usage event whose token total Ralph cannot read."""
-
-
-@dataclass(frozen=True, slots=True)
-class Ask:
-    prompt: str
-    cwd: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +79,11 @@ class RunningCopilotSession(Protocol):
     async def disconnect(self) -> None: ...
 
 
-CreateSession = Callable[[Ask, Callable[[SdkEvent], None]], Awaitable[RunningCopilotSession]]
+SdkPermissionHandler = Callable[[SdkPermissionRequest, dict[str, str]], SdkPermissionResult]
+CreateSession = Callable[
+    [Ask, Callable[[SdkEvent], None], SdkPermissionHandler | None],
+    Awaitable[RunningCopilotSession],
+]
 
 
 class CopilotSdkSession(EditorSession):
@@ -128,7 +132,9 @@ class CopilotSdkSession(EditorSession):
 
     async def _converse(self) -> None:
         try:
-            self._running_session = await self._create_session(self._ask, self._observe)
+            self._running_session = await self._create_session(
+                self._ask, self._observe, _permission_handler(self._ask.permit)
+            )
             await self._running_session.send(self._ask.prompt)
             await self._idle.wait()
             if self._code is None:
@@ -220,7 +226,9 @@ class _RuntimeSession:
 
 
 async def _open_real_session(
-    ask: Ask, observe: Callable[[SdkEvent], None]
+    ask: Ask,
+    observe: Callable[[SdkEvent], None],
+    on_permission_request: SdkPermissionHandler | None,
 ) -> RunningCopilotSession:
     from copilot import CopilotClient
 
@@ -231,6 +239,7 @@ async def _open_real_session(
             RunningCopilotSession,
             await client.create_session(
                 streaming=True,
+                on_permission_request=on_permission_request,
             ),
         )
     except Exception:
@@ -243,6 +252,51 @@ async def _open_real_session(
 
 def copilot_sdk_session(ask: Ask) -> CopilotSdkSession:
     return CopilotSdkSession(ask, create_session=_open_real_session)
+
+
+def _permission_handler(permit: Permit | None) -> SdkPermissionHandler | None:
+    if permit is None:
+        return None
+
+    def on_permission_request(
+        request: SdkPermissionRequest, metadata: dict[str, str]
+    ) -> SdkPermissionResult:
+        tool, input = _permission_tool_input(request, metadata)
+        permission = permit(tool, input)
+        if permission.allowed:
+            return _approve_once()
+        return _reject_permission(permission.reason)
+
+    return on_permission_request
+
+
+def _permission_tool_input(
+    request: object, metadata: Mapping[str, str]
+) -> tuple[str, dict[str, object]]:
+    kind = _str_attr(request, "kind") or ""
+    if kind == "shell":
+        return "Bash", {"command": _str_attr(request, "full_command_text") or ""}
+    if kind == "read":
+        return "Read", {"file_path": _str_attr(request, "path") or ""}
+    if kind == "write":
+        return "Write", {"file_path": _str_attr(request, "file_name") or ""}
+    if kind == "custom-tool":
+        return _str_attr(request, "tool_name") or kind, _mapping_attr(request, "args")
+    if kind == "mcp":
+        return _str_attr(request, "tool_name") or kind, _mapping_attr(request, "args")
+    return kind or request.__class__.__name__, dict(metadata)
+
+
+def _approve_once() -> SdkPermissionResult:
+    from copilot.generated.rpc import PermissionDecisionApproveOnce
+
+    return PermissionDecisionApproveOnce()
+
+
+def _reject_permission(reason: str) -> SdkPermissionResult:
+    from copilot.generated.rpc import PermissionDecisionReject
+
+    return PermissionDecisionReject(feedback=reason)
 
 
 def _event_type(event: SdkEvent) -> str:
@@ -270,6 +324,11 @@ def _usage_tokens(data: object) -> int:
 def _str_attr(data: object, name: str) -> str | None:
     value = getattr(data, name, None)
     return value if isinstance(value, str) else None
+
+
+def _mapping_attr(data: object, name: str) -> dict[str, object]:
+    value = getattr(data, name, None)
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 def _optional_int_attr(data: object, name: str) -> int | None:
