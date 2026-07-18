@@ -241,14 +241,15 @@ vendors' schedule, not ours. What matters at *this* layer: the three numbers (`c
 `consumed_tokens`, `rate_limit`) travel together in one `Observation` because that is how they
 arrive — adjacent, alike-named — and a ceiling on the wrong one is *inverted*.
 
-### An Implementer is an argv and a context source
+### An Implementer is an argv and telemetry sources
 
 That is the whole of `SubprocessImplementer` ([session.py](../ralph/adapters/session.py)), and it is
 why `codex.py` is a hundred lines. Everything that makes a session a session — both bounds, counting
 commits, reading the diffstat, finding the `<impasse>` sentinel — lives once in `session.py`; each
-CLI adapter is an argv plus a `ContextSource`. [prompt.py](../ralph/adapters/prompt.py) is the one
-place a `Brief` becomes text a model reads, shared by Codex and Copilot so their failures stay
-comparable; findings go in as a **separate section**, never folded into the brief.
+CLI adapter is an argv plus a `ContextSource`, and may also read `consumed_tokens` from the CLI's
+completed usage payload. [prompt.py](../ralph/adapters/prompt.py) is the one place a `Brief` becomes
+text a model reads, shared by Codex and Copilot so their failures stay comparable; findings go in as
+a **separate section**, never folded into the brief.
 
 ### The Editor writes nothing but brief and findings — enforced, not asked
 

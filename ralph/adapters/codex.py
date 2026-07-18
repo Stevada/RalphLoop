@@ -35,7 +35,7 @@ from pathlib import Path
 
 from ralph.adapters.context import tail
 from ralph.adapters.prompt import implementer_prompt
-from ralph.adapters.session import SubprocessImplementer, Transcript
+from ralph.adapters.session import Session, SubprocessImplementer, Transcript
 from ralph.issues import Brief, Findings
 from ralph.ports import Observation, Worktree
 
@@ -50,6 +50,7 @@ SANDBOX = "workspace-write"
 APPROVAL = "never"
 
 THREAD_STARTED = "thread.started"
+TURN_COMPLETED = "turn.completed"
 TOKEN_COUNT = "token_count"
 POLL_S = 0.05
 
@@ -100,6 +101,20 @@ def thread_id(line: str) -> str | None:
         return None
     id = event.get("thread_id")
     return id if isinstance(id, str) else None
+
+
+async def end_of_turn_consumed_tokens(session: Session, _worktree: Worktree) -> int | None:
+    """The total Codex reports when the `exec` turn completes, or none if it never completed."""
+    found: int | None = None
+    for line in session.output.splitlines():
+        event = _loads(line)
+        if event.get("type") != TURN_COMPLETED:
+            continue
+        total = _obj(event.get("usage")).get("total_tokens")
+        if not isinstance(total, int):
+            raise RolloutParseError(f"a turn.completed event with no total_tokens in it: {line!r}")
+        found = total
+    return found
 
 
 def parse_observation(line: str) -> Observation | None:
@@ -172,7 +187,7 @@ class CodexContextSource:
 
 
 def codex_implementer() -> SubprocessImplementer:
-    """An Implementer is an argv and a context source. Codex is `codex exec` and a rollout tail."""
+    """Codex is `codex exec`, a rollout tail, and the completed turn's usage."""
     sessions = codex_sessions_dir()
     return SubprocessImplementer(
         build_argv=codex_argv,
@@ -182,4 +197,5 @@ def codex_implementer() -> SubprocessImplementer:
         context=lambda transcript, _worktree: CodexContextSource(
             transcript=transcript, sessions_dir=sessions
         ),
+        final_consumed_tokens=end_of_turn_consumed_tokens,
     )

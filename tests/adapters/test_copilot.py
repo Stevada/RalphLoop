@@ -21,12 +21,15 @@ from ralph.adapters.copilot import (
     CopilotEditor,
     CopilotLogError,
     copilot_argv,
+    final_log_consumed_tokens,
     fresh_log_dir,
+    log_dir_of,
     json_blocks,
     read_only_patterns,
     usage_of,
 )
-from ralph.adapters.session import Transcript
+from ralph.adapters.git import GitCli
+from ralph.adapters.session import SubprocessImplementer, Transcript
 from ralph.harness import (
     EditorVerdict,
     Outcome,
@@ -37,6 +40,7 @@ from ralph.harness import (
 from ralph.issues import Brief, Findings
 from ralph.ports import Budget, SessionContext, Worktree
 from tests.builders import impasse, suite, telemetry
+from tests.testbed import TargetRepo
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "copilot-debug.log"
 
@@ -189,6 +193,25 @@ async def test_consumption_accumulates_because_copilot_reports_it_per_call(tmp_p
     assert seen[-1].consumed_tokens > seen[-1].context_tokens  # spend outruns context. Always.
 
 
+async def test_implementer_consumption_comes_from_the_final_log_usage(repo: TargetRepo) -> None:
+    git = GitCli(repo=repo.path)
+    wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
+
+    t = await _copilot_implementer(
+        _completion(20_000, 20_100) + _completion(90_000, 999_999)
+    ).run(
+        SessionContext(
+            brief=Brief(body="build it"),
+            findings=Findings(body=""),
+            worktree=wt,
+            budget=Budget(max_context_tokens=120_000, wall_clock_s=20.0),
+        )
+    )
+
+    assert t.peak_context_tokens == 90_000
+    assert t.consumed_tokens == 999_999
+
+
 async def test_a_log_with_no_usage_block_is_a_loud_error(tmp_path: Path) -> None:
     """**The `--log-level debug` failure, and the reason it needs its own alarm.**
 
@@ -220,6 +243,27 @@ def _completion(context: int, total: int) -> str:
         "prompt_tokens": context, "completion_tokens": total - context, "total_tokens": total,
     }}, indent=2)  # fmt: skip
     return f"2026-01-01T00:00:00.000Z [DEBUG] {body}\n"
+
+
+def _copilot_implementer(log: str) -> SubprocessImplementer:
+    def argv(brief: Brief, findings: Findings, worktree: Worktree) -> Sequence[str]:
+        log_dir = fresh_log_dir(worktree)
+        script = (
+            "import pathlib, sys\n"
+            f"pathlib.Path({str(log_dir)!r}, 'process-1.log').write_text({log!r})\n"
+            "print('done')\n"
+        )
+        return [sys.executable, "-c", script]
+
+    return SubprocessImplementer(
+        build_argv=argv,
+        context=lambda transcript, worktree: CopilotContextSource(
+            transcript=transcript, log_dir=log_dir_of(worktree)
+        ),
+        final_consumed_tokens=lambda _session, worktree: final_log_consumed_tokens(
+            log_dir_of(worktree)
+        ),
+    )
 
 
 # ── the invocation ───────────────────────────────────────────────────────────────────────────

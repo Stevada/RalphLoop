@@ -1,9 +1,9 @@
 """Running an agent in a worktree, and collecting the facts it cannot report about itself.
 
 **This is the whole of an Implementer that is not model-specific.** Codex and Copilot are this
-plus an argv and a context source; the stand-in agent is this plus an argv. Everything that makes
-a session a session — both bounds, counting the commits, reading the diffstat, finding the
-`<impasse>` sentinel — happens here, once.
+plus an argv, a context source, and final usage; the stand-in agent is this plus an argv.
+Everything that makes a session a session — both bounds, counting the commits, reading the
+diffstat, finding the `<impasse>` sentinel — happens here, once.
 
 The model's exit code is its opinion. Everything in the `SessionTelemetry` this returns is the
 harness's own observation, and the two are allowed to disagree. That disagreement is the signal.
@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -147,6 +147,11 @@ class Session:
     wall_clock_s: float
 
 
+FinalConsumedTokens = Callable[[Session, Worktree], Awaitable[int | None]]
+"""Where a model-specific adapter reads the session's final consumption figure, if it publishes
+one. `None` means there was no final figure to read, and the live observations remain the fallback."""
+
+
 async def run_session(
     argv: Sequence[str], cwd: Path, budget: Budget, context: BoundSource | None = None
 ) -> Session:
@@ -177,16 +182,25 @@ async def run_session(
 
 
 async def run_agent(
-    argv: Sequence[str], wt: Worktree, budget: Budget, context: BoundSource | None = None
+    argv: Sequence[str],
+    wt: Worktree,
+    budget: Budget,
+    context: BoundSource | None = None,
+    final_consumed_tokens: FinalConsumedTokens | None = None,
 ) -> SessionTelemetry:
     """One Implementer session: a bounded subprocess, plus the two facts it cannot report about
     itself — how many commits it actually made, and what it actually changed."""
     session = await run_session(argv, wt.path, budget, context)
+    consumed_tokens = session.bound.consumed_tokens
+    if final_consumed_tokens is not None:
+        final = await final_consumed_tokens(session, wt)
+        if final is not None:
+            consumed_tokens = final
     return SessionTelemetry(
         exit_code=session.exit_code,
         killed=session.bound.killed,
         peak_context_tokens=session.bound.peak_context_tokens,
-        consumed_tokens=session.bound.consumed_tokens,
+        consumed_tokens=consumed_tokens,
         wall_clock_s=session.wall_clock_s,
         commits=int(run_git(wt.path, "rev-list", "--count", f"{wt.base}..HEAD")),
         diffstat=run_git(wt.path, "diff", "--stat", f"{wt.base}..HEAD"),
@@ -197,15 +211,16 @@ async def run_agent(
 
 @dataclass(frozen=True, slots=True)
 class SubprocessImplementer:
-    """An Implementer is an argv, a worktree, and — where the CLI publishes one — a context source.
+    """An Implementer is an argv, a worktree, and the telemetry its CLI publishes.
 
-    That is the whole of it. Codex is this with `codex exec` and a rollout tail; Copilot is this
-    with `copilot -p` and a debug-log tail; the stand-in agent is this with neither. Nothing above
-    this line knows the difference.
+    That is the whole of it. Codex is this with `codex exec`, a rollout tail, and end-of-turn
+    usage; Copilot is this with `copilot -p`, a debug-log tail, and final log usage; the stand-in
+    agent is this with none of those. Nothing above this line knows the difference.
     """
 
     build_argv: BuildArgv
     context: SourceFactory | None = None
+    final_consumed_tokens: FinalConsumedTokens | None = None
 
     async def run(self, context: SessionContext) -> SessionTelemetry:
         factory = self.context
@@ -218,4 +233,5 @@ class SubprocessImplementer:
             worktree,
             context.budget,
             bound,
+            self.final_consumed_tokens,
         )

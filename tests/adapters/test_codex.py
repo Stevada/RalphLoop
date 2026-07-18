@@ -279,18 +279,28 @@ for context in [int(n) for n in sys.argv[1].split(",")]:
     print(json.dumps({"type": "item.completed"}), flush=True)
     time.sleep(0.1)
 
+final = int(sys.argv[2])
+if final:
+    print(json.dumps({"type": "turn.completed", "usage": {"total_tokens": final}}), flush=True)
 print("done", flush=True)
 """
 """A stub that behaves like Codex where it matters: it announces a thread id on stdout, and it
 appends `token_count` events to the rollout file named after that thread, as it goes."""
 
 
-def stub_implementer(contexts: str) -> SubprocessImplementer:
+def stub_implementer(contexts: str, final: int = 0) -> SubprocessImplementer:
     """The real adapter — real source, real tail, real kill loop — around a fake model."""
     real = codex_implementer()
     return SubprocessImplementer(
-        build_argv=lambda brief, findings, wt: (sys.executable, "-c", STUB_CODEX, contexts),
+        build_argv=lambda brief, findings, wt: (
+            sys.executable,
+            "-c",
+            STUB_CODEX,
+            contexts,
+            str(final),
+        ),
         context=real.context,
+        final_consumed_tokens=real.final_consumed_tokens,
     )
 
 
@@ -307,6 +317,19 @@ async def test_a_session_that_stays_in_the_smart_zone_is_left_alone(
     assert t.exit_code == 0
     assert t.peak_context_tokens == 90_000
     assert t.consumed_tokens == 360_000  # four times the context, and gated on not at all
+
+
+async def test_consumption_comes_from_the_end_of_turn_usage(
+    repo: TargetRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    git = GitCli(repo=repo.path)
+    wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
+
+    t = await stub_implementer("20000,60000,90000", final=1_234_567).run(session_context(wt))
+
+    assert t.peak_context_tokens == 90_000
+    assert t.consumed_tokens == 1_234_567
 
 
 async def test_a_session_that_leaves_it_is_killed_mid_flight(

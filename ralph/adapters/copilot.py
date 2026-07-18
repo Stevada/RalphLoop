@@ -47,7 +47,7 @@ from pathlib import Path
 from ralph.adapters.context import tail
 from ralph.adapters.editor import READ_ONLY_COMMANDS, READ_ONLY_GIT, editor_telemetry, verdict_of
 from ralph.adapters.prompt import editor_prompt, implementer_prompt
-from ralph.adapters.session import SubprocessImplementer, Transcript, run_session
+from ralph.adapters.session import Session, SubprocessImplementer, Transcript, run_session
 from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry
 from ralph.issues import Brief, Findings
 from ralph.ports import Observation, SessionContext, Worktree
@@ -259,6 +259,23 @@ def usage_of(block: dict[str, object]) -> tuple[int, int] | None:
     return context, spent
 
 
+async def final_log_consumed_tokens(log_dir: Path) -> int | None:
+    """The last completed usage total in Copilot's finished log, if the session reached one."""
+    found: int | None = None
+    for path in sorted(log_dir.glob("*.log")):
+        async for block in json_blocks(_file_lines(path)):
+            usage = usage_of(block)
+            if usage is not None:
+                _context, total = usage
+                found = total
+    return found
+
+
+async def _file_lines(path: Path) -> AsyncGenerator[str, None]:
+    for line in path.read_text().splitlines():
+        yield line
+
+
 @dataclass(slots=True)
 class CopilotContextSource:
     """Tails the one log in the session's own log directory, an observation per model call.
@@ -332,7 +349,14 @@ def copilot_implementer() -> SubprocessImplementer:
         # moment writing. `argv` above has already emptied and made the directory.
         return CopilotContextSource(transcript=transcript, log_dir=log_dir_of(worktree))
 
-    return SubprocessImplementer(build_argv=argv, context=source)
+    async def consumed_tokens(_session: Session, worktree: Worktree) -> int | None:
+        return await final_log_consumed_tokens(log_dir_of(worktree))
+
+    return SubprocessImplementer(
+        build_argv=argv,
+        context=source,
+        final_consumed_tokens=consumed_tokens,
+    )
 
 
 EditorArgv = Callable[[str, Path], Sequence[str]]
