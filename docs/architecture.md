@@ -12,7 +12,7 @@ module for the current signature.
 - **Why** any of this is shaped the way it is: `docs/design.md`.
 - **Terms** (canonical, including identifiers): [`UBIQUITOUS_LANGUAGE.md`](../UBIQUITOUS_LANGUAGE.md).
   An "aliases to avoid" word appearing as a class, function, field, or state name is a defect.
-- **How each CLI exposes its context signal**: [`docs/cli-metering.md`](cli-metering.md).
+- **How each CLI exposes token usage telemetry**: [`docs/cli-metering.md`](cli-metering.md).
 
 ## One process, asyncio
 
@@ -214,7 +214,7 @@ A portfolio decision, not a hedge: the Implementer and Editor should not be the 
 same failure — an Editor adjudicating an impasse it declared *itself* is the least independent sensor
 the system could have.
 
-### The wall-clock bound and token usage
+### The wall-clock bound and token usage telemetry
 
 `run_bounded(proc, budget)` ([context.py](../ralph/adapters/context.py)) is the kill loop every
 adapter's `run`/`adjudicate` reduces to. It takes a `Killable` rather than a subprocess, because the

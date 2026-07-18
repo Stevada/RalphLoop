@@ -164,6 +164,23 @@ A session that re-runs a failing suite for too long is a stuck session, and the 
 Token consumption is recorded as telemetry — it is what the session cost — but nothing is gated on
 it.
 
+#### A retired quality bound
+
+Earlier Ralph designs included a harness-enforced stop based on wrapper-side context usage: once a
+session crossed a configured threshold, the harness would stop the actor and classify the run as a
+quality failure. That ceiling has been removed.
+
+The reversal is deliberate. Modern model CLIs already manage their own context windows and
+compaction strategies, while the signals exposed to a wrapper vary by vendor and change outside
+Ralph's control. Treating those signals as a hard quality bound would make the harness responsible
+for second-guessing a moving model-runtime policy. It would also create false escalations: a session
+could be making valid progress, with the model still able to reason over the task, and Ralph would
+stop it only because a wrapper-side counter crossed a line.
+
+The remaining hard bound is wall clock, because it measures the failure Ralph can judge from the
+outside: the actor has spent too long without producing a terminal result. Token consumption still
+matters, but as telemetry for humans and cost accounting, not as an automated routing decision.
+
 ### 4.5 The merge queue
 
 This is the piece that makes parallelism honest, and the piece Ralph most conspicuously

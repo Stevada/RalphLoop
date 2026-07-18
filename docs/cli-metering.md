@@ -1,7 +1,7 @@
-# CLI Metering
+# CLI Usage Telemetry
 
 Reference for token-consumption telemetry exposed by each backend CLI. Consumption is recorded for
-human visibility and cost accounting; it is not a session bound.
+human visibility and cost accounting; it is not a session bound, and no harness decision gates on it.
 
 ## Codex
 
