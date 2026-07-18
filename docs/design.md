@@ -139,7 +139,7 @@ It exits exactly one of two ways:
 - **`<impasse>`**, with a structured impasse report.
 
 "About three tries" is **guidance in the prompt**, not a harness-enforced counter. The
-harness counts nothing but tokens.
+harness enforces the cycle cap outside the model.
 
 #### The impasse report
 
@@ -150,68 +150,19 @@ approaches tried and why each was abandoned; the specific acceptance criterion i
 unsatisfiable; what would make it satisfiable.
 
 The harness appends, independently of the model's narration: final test output, diffstat,
-files touched, wall-clock, context high-water mark, tokens consumed.
+files touched, wall-clock, and tokens consumed.
 
 **The model's story, checked against the harness's facts.** Those two disagreeing is
 itself a signal worth surfacing.
 
-#### The only hard bound
+#### The hard session bound
 
-**120,000 tokens of context.** Wall-clock timeout as a backstop.
+The session bound is the **wall-clock timeout**, enforced in real time from outside the model.
+A session that re-runs a failing suite for too long is a stuck session, and the honest outcome is
+`infra-failed`.
 
-**The ceiling is on context, not on consumption.** 120k is the size of the model's *smart
-zone* — the region where its judgment is reliable. It is not a budget, not a share of the
-window, and not a count of what the session spent. A model reasoning over 200k of context is
-a worse engineer than the same model reasoning over 100k, and this ceiling exists to keep
-every session inside the zone where we trust it. Cost is not the argument; **quality** is.
-
-Crossing the ceiling kills the session, with the outcome `ceiling-exceeded` — a distinct
-outcome, never `infra-failed`, because it is not transient. A session whose context grew past
-the smart zone is not going to need less context on a retry: either the brief is too large to
-hold in a trustworthy context, or the model wandered. Either way the answer is not to run it
-again, so it is **never retried**.
-
-**It pages the human, from either actor. It is the one outcome that never reaches the Editor.**
-
-That is not an oversight; it is the whole shape of the thing. *"This sub-issue could not be
-completed inside a trustworthy context"* is a statement about how the work was **cut** — and
-re-cutting is precisely what the Editor is forbidden to do. Invariant 2: it may rewrite a brief,
-never add, remove, or re-link a sub-issue. Hand it a ceiling kill and the only move left to it
-is to soften the brief until the work fits, which is bet #2's failure mode arriving dressed as
-a remedy. The sub-issue goes to `needs-human` with its worktree preserved, and it **spends no
-cycle**, because no cycle occurred.
-
-It also keeps the Editor off a bill it cannot earn back. Paying Opus to explain that a context
-grew too large is the same waste as paying it to diagnose `npm ci` — the waste this taxonomy
-exists to prevent.
-
-##### Enforcement
-
-Real time, from outside the model. `codex exec --json` on stdout does **not** stream usage —
-one `exec` invocation is a single turn and its `turn.completed` event lands only at the end.
-But Codex appends a `token_count` event to its session rollout file
-(`~/.codex/sessions/<date>/rollout-*.jsonl`) after **every model call**, carrying:
-
-```
-info.last_token_usage.input_tokens   → the context on the most recent call   ← the ceiling
-info.total_token_usage.total_tokens  → cumulative consumption                ← telemetry only
-info.model_context_window            → 272,000 for gpt-5.5
-rate_limits.primary.used_percent     → free early warning for the 429 → infra-failed case
-```
-
-The harness tails that file and kills the process the moment `last_token_usage.input_tokens`
-crosses 120k. Note the ceiling sits far below the 272k window, so it always fires **before**
-Codex would auto-compact — compaction never gets the chance to silently drop the context back
-under the bound and hide the crossing.
-
-Consumption is recorded as telemetry — it is what the session cost — but nothing is gated on
-it. A session that re-runs a failing suite twenty times may consume several hundred thousand
-tokens while its context sits at 60k; that is a stuck session, and the thing that catches it
-is the **wall-clock timeout**, not the ceiling. The two bounds catch different failures and
-neither substitutes for the other.
-
-The 120k figure is a starting guess at where the smart zone ends. Instrument real runs, look
-at the distribution of context high-water marks against outcomes, then tune.
+Token consumption is recorded as telemetry — it is what the session cost — but nothing is gated on
+it.
 
 ### 4.5 The merge queue
 
@@ -285,9 +236,7 @@ Decomposition quality has no other automated check in this system. This is it.
 ### 4.6 The Editor's session
 
 Triggered by an `impasse` — declared or not — or an `integration-failed` merge. Never by
-`infra-failed`, and never by `ceiling-exceeded` — those two are the outcomes the Editor
-cannot help with, one because it is transient and one because its remedy is a re-cut the
-Editor is forbidden to make.
+`infra-failed`, which is not a failure the Editor can help with.
 
 The Editor:
 
@@ -375,14 +324,13 @@ amount of replanning fixes a bad PRD.
 
 ## 5. The failure taxonomy
 
-The harness owns **four** failure outcomes, not one. This is the single highest-value piece
+The harness owns **three** failure outcomes, not one. This is the single highest-value piece
 of harness logic.
 
 | Outcome | Detection | Routes to |
 |---|---|---|
 | `impasse` | Session did not deliver: the `<impasse>` sentinel, or no commits, or a red suite | **Editor** |
 | `integration-failed` | Prospective merge conflicts, or the suite is red after rebase onto the integration head | **Editor** |
-| `ceiling-exceeded` | Context crossed the 120k smart zone; session killed | **Human — from either actor. Never the Editor.** |
 | `infra-failed` | Setup failure, wall-clock timeout (exit 124), rate limit, OOM | **Human — from either actor. Never the Editor.** |
 
 `integration-failed` is the one outcome that does not classify a *session*: the Implementer
@@ -399,16 +347,10 @@ session again against the same broken environment. Retrying would burn the budge
 notification, and — because the failure is invisible to the model — produce a second failure
 identical to the first. The honest move is to stop and say so.
 
-Like `ceiling-exceeded`, an `infra-failed` session **spends no cycle**, because no cycle
-occurred: a cycle is an Implementer session plus the Editor session that follows it, and no
-Editor is involved. The sub-issue goes to `needs-human` with its worktree preserved, and
-quarantine-and-drain does the rest — the run continues, and everything not downstream of it
-still lands.
-
-So the two outcomes the Editor never sees — `ceiling-exceeded` and `infra-failed` — share one
-destination and differ only in what they tell the human: *the sub-issue was cut too large*
-versus *your environment is broken*. Same page, different morning; one sends you to the graph,
-the other to the lockfile. That is why they remain distinct outcomes despite the shared route.
+An `infra-failed` session **spends no cycle**, because no cycle occurred: a cycle is an
+Implementer session plus the Editor session that follows it, and no Editor is involved. The
+sub-issue goes to `needs-human` with its worktree preserved, and quarantine-and-drain does the
+rest — the run continues, and everything not downstream of it still lands.
 **The notification carries the diagnosis, and the diagnosis is the product.**
 
 **The model's word for its own outcome; the harness's word for everything the model cannot
@@ -430,10 +372,8 @@ times before the human is paged, with the Editor rewriting a perfectly good brie
 cycle. The notification finally reads *"inconclusive after three cycles"* — the most
 alarming message the system can send — and it means the lockfile was stale.
 
-A 429 across N parallel agents on one API key produces the same signature. So does an OOM
-kill. So does the 120k ceiling: a session killed for leaving the smart zone exits non-zero
-and, unless marked `ceiling-exceeded`, is indistinguishable from a crash — and gets retried,
-straight back out of the smart zone.
+A 429 across N parallel Implementers on one API key produces the same signature. So does an OOM
+kill.
 
 Pre-commit hooks do not help here. They *cause* this: the hook rejects the commit, the
 agent thrashes, the agent declares an impasse. **Hooks protect the branch. Classification
@@ -474,7 +414,7 @@ sync is the last piece to land. Each line is one event: a timestamp, the sub-iss
 what happened. It tracks only two kinds of thing:
 
 - **States.** A session started; a session finished with its outcome (`success`, `impasse`,
-  `ceiling-exceeded`, `infra-failed`); a sub-issue reached a terminal state
+  `infra-failed`); a sub-issue reached a terminal state
   (`landed`, `needs-human`, or skipped).
 - **Decisions.** The verdict an Editor returned (`revise`, `planning-defect`,
   `inconclusive`).

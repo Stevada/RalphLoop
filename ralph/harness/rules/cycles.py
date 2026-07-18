@@ -2,8 +2,7 @@
 
 A **cycle** is one Implementer session plus the Editor session that follows it. At most three per
 sub-issue, hard-enforced: the harness dispatches no fourth Implementer session, whatever the Editor
-says. `ceiling-exceeded` and `infra-failed` spend no cycle at all — no Editor is involved in
-either, so there is no cycle to spend.
+says. `infra-failed` spends no cycle at all — no Editor is involved, so there is no cycle to spend.
 """
 
 from __future__ import annotations

@@ -245,10 +245,9 @@ class Scheduler:
         report = failure_report(outcome, telemetry, suite, detail, attempt)
 
         if route(Actor.IMPLEMENTER, outcome) is not Destination.EDITOR:
-            # `ceiling-exceeded` and `infra-failed`: the two outcomes no Editor can help with. The
-            # session did not reason badly — it reasoned over too much, or the harness broke. Both
-            # go straight to the human, and both **spend no cycle**: a cycle is an Implementer
-            # session plus an Editor session, and no Editor is involved in either.
+            # `infra-failed`: the outcome no Editor can help with. It goes straight to the human
+            # and spends no cycle: a cycle is an Implementer session plus an Editor session, and no
+            # Editor is involved.
             return await self._quarantine(sub.id, Actor.IMPLEMENTER, wt, report)
 
         return await self._adjudicate(sub, context, report)

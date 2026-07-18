@@ -80,8 +80,8 @@ load-bearing facts:
   acceptance criterion until it passes, is the failure mode the whole harness exists to catch.
 - [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md) is canonical for every domain term, **including
   code identifiers**. An "aliases to avoid" word as a class/function/field/state name is a defect.
-- **Why** the system is shaped this way: [`docs/design.md`](docs/design.md). **Per-CLI context
-  metering** (the ceiling's input): [`docs/cli-metering.md`](docs/cli-metering.md).
+- **Why** the system is shaped this way: [`docs/design.md`](docs/design.md). **Per-CLI token
+  consumption telemetry**: [`docs/cli-metering.md`](docs/cli-metering.md).
 - The docs form an acyclic reference DAG (README + CLAUDE are roots; UL + design.md are leaves). When
   editing, point *down* toward detail — never add a reference from a leaf back up.
 

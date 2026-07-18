@@ -25,7 +25,7 @@ from typing import Protocol, runtime_checkable
 from ralph.adapters.context import Bound, run_bounded
 from ralph.harness import EditorVerdict, SessionTelemetry, Verdict
 from ralph.issues import Brief, Findings
-from ralph.ports import Budget, Observation
+from ralph.ports import Budget
 
 log = logging.getLogger(__name__)
 
@@ -169,9 +169,15 @@ def parse_verdict(output: str) -> EditorVerdict | None:
 
 # ── how the Editor is bounded ────────────────────────────────────────────────────────────────
 
-Turn = str | Observation
-"""What a session emits as it goes: something it said, or a model call to meter. One stream,
-because that is how the SDK delivers it — text and usage interleaved in the same iterator."""
+@dataclass(frozen=True, slots=True)
+class TokenUsage:
+    """Token consumption reported by a model call."""
+
+    consumed_tokens: int
+
+
+Turn = str | TokenUsage
+"""What a session emits as it goes: something it said, or usage from a model call."""
 
 
 @runtime_checkable
@@ -207,19 +213,15 @@ async def run_editor(
     async def pump() -> None:
         nonlocal consumed_tokens
         async for turn in session.turns():
-            if isinstance(turn, Observation):
+            if isinstance(turn, TokenUsage):
                 consumed_tokens = max(consumed_tokens, turn.consumed_tokens)
             else:
                 said.append(turn)
 
     reading = asyncio.create_task(pump())
-    bound = await run_bounded(_TurnStreamKillable(session, reading), None, budget)
+    bound = await run_bounded(_TurnStreamKillable(session, reading), budget)
     await reading
-    bound = Bound(
-        killed=bound.killed,
-        peak_context_tokens=bound.peak_context_tokens,
-        consumed_tokens=consumed_tokens,
-    )
+    bound = Bound(killed=bound.killed, consumed_tokens=consumed_tokens)
 
     output = "".join(said)
     telemetry = editor_telemetry(
@@ -242,7 +244,6 @@ def editor_telemetry(bound: Bound, exit_code: int, output: str, wall_clock_s: fl
     return SessionTelemetry(
         exit_code=exit_code,
         killed=bound.killed,
-        peak_context_tokens=bound.peak_context_tokens,
         consumed_tokens=bound.consumed_tokens,
         wall_clock_s=wall_clock_s,
         commits=0,

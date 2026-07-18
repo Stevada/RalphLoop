@@ -98,7 +98,7 @@ def test_exactly_two_outcomes_reach_the_editor() -> None:
 
     A test that checked two outcomes go to the Editor would still pass if a third were quietly
     added to the routing table. The interesting half of this claim is the half about what does *not*
-    reach it: `ceiling-exceeded` and `infra-failed` are unhelpable by an Editor, and a harness that
+    reach it: `infra-failed` is unhelpable by an Editor, and a harness that
     sent them there would burn a cycle and a model on a question with no answer.
     """
     to_the_editor = {
@@ -153,7 +153,7 @@ async def test_integration_failed_spends_a_cycle_exactly_like_an_impasse() -> No
 
 
 async def test_a_revise_discards_the_work_and_restarts_clean_against_the_revised_brief() -> None:
-    """The whole ticket in one test.
+    """The whole sub-issue lifecycle in one test.
 
     The Implementer declares an impasse. The Editor rewrites the brief. The second Implementer
     session gets a **fresh worktree cut from the integration branch** and the **revised** brief —
@@ -307,13 +307,13 @@ async def test_the_scheduler_and_only_the_scheduler_rejects_a_third_cycle_revise
     assert not report.clean
 
 
-async def test_ceiling_and_infra_failures_spend_no_cycle() -> None:
+async def test_infra_failures_spend_no_cycle() -> None:
     """A cycle is an Implementer session **plus the Editor session that follows it**. No Editor is
-    involved in either of these, so there is no cycle to spend — and no Editor is asked about a
+    involved, so there is no cycle to spend — and no Editor is asked about a
     failure it cannot help with."""
     store = store_of("01", "02")
     implementer = FakeImplementer(
-        scripted=[telemetry(killed="ceiling", exit_code=137, commits=0)]
+        scripted=[telemetry(killed="wall-clock", exit_code=124, commits=0)]
     )
     editor = FakeEditor(scripted=[(telemetry(commits=0), verdict(Verdict.REVISE))])
 
@@ -322,8 +322,8 @@ async def test_ceiling_and_infra_failures_spend_no_cycle() -> None:
     assert editor.calls == []  # it was never asked
     assert len(implementer.calls) == 2  # one each for 01 and 02 — neither was ever re-run
     assert report.failed == {
-        ONE: Outcome.CEILING_EXCEEDED,
-        SubIssueId("02"): Outcome.CEILING_EXCEEDED,
+        ONE: Outcome.INFRA_FAILED,
+        SubIssueId("02"): Outcome.INFRA_FAILED,
     }
     assert report.notification.escalations[0].report.cycles == 1
 
@@ -350,15 +350,14 @@ async def test_an_editor_that_returns_no_verdict_escalates_as_infra_failed() -> 
     assert git.discarded == []  # the evidence is kept, not thrown away
 
 
-async def test_a_ceiling_killed_editor_pages_the_human_like_any_other_actor() -> None:
-    """The Editor is bounded exactly like an Implementer: same Budget, same telemetry. It can come
-    back `ceiling-exceeded`, and when it does there is nobody left to adjudicate the adjudicator."""
+async def test_a_wall_clock_killed_editor_pages_the_human_like_any_other_actor() -> None:
+    """The Editor is bounded exactly like an Implementer: same Budget, same telemetry."""
     store = store_of("01")
-    editor = FakeEditor(scripted=[(telemetry(killed="ceiling", commits=0), None)])
+    editor = FakeEditor(scripted=[(telemetry(killed="wall-clock", exit_code=124, commits=0), None)])
 
     report = await run_with(store, FakeImplementer(scripted=[IMPASSE]), editor)
 
-    assert report.failed == {ONE: Outcome.CEILING_EXCEEDED}
+    assert report.failed == {ONE: Outcome.INFRA_FAILED}
 
 
 async def test_a_killed_editor_still_spends_its_cycle() -> None:
@@ -429,10 +428,10 @@ async def test_a_sub_issue_in_its_second_cycle_does_not_stall_its_siblings() -> 
 async def test_a_revise_really_discards_the_work_and_the_sub_issue_really_lands(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    """Real git, real worktrees, a real agent subprocess, a real suite — and a stub Editor, which is
+    """Real git, real worktrees, a real Implementer subprocess, a real suite — and a stub Editor, which is
     the only thing here that is not real, because no Editor adapter exists until #09.
 
-    The agent commits a partial attempt, declares an impasse, and is restarted. **The partial attempt
+    The Implementer commits a partial attempt, declares an impasse, and is restarted. **The partial attempt
     must not survive.** In the fakes it is enough to assert `discard_worktree` was called; here the
     claim is checked against the thing that actually matters — the history that landed. A harness
     that merely *moved* the failed worktree aside, or that re-cut the branch without deleting it,
@@ -468,7 +467,7 @@ async def test_a_revise_really_discards_the_work_and_the_sub_issue_really_lands(
     assert not (repo.path / "partial_01.py").exists()
     assert "wip(01)" not in repo.git("log", "--oneline", "--all")
 
-    # And the Editor really was handed the impasse the agent really emitted.
+    # And the Editor really was handed the impasse the Implementer really emitted.
     _, failure, _ = editor.calls[0]
     assert failure.outcome is Outcome.IMPASSE
     assert failure.claim is not None
@@ -505,7 +504,7 @@ async def test_the_planners_original_survives_a_real_run(
 async def test_a_real_run_dispatches_no_fourth_implementer_session(
     repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An agent that always fails, and an Editor that always says try again. Three sessions, then a
+    """An Implementer that always fails, and an Editor that always says try again. Three sessions, then a
     human — proven against a real repo, where "a session" means a real subprocess really ran."""
     repo.write_graph({"01": []})
     ledger = repo.path.parent / "ledger"
@@ -521,7 +520,7 @@ async def test_a_real_run_dispatches_no_fourth_implementer_session(
         options=make_options(),
     )
 
-    # The agent itself counted three starts. Not the harness's word for it.
+    # The Implementer itself counted three starts. Not the harness's word for it.
     assert ledger.read_text().count("+01") == CycleLedger.MAX_CYCLES == 3
     assert report.failed == {ONE: Outcome.IMPASSE}
     assert "Status: needs-human" in (repo.issues_dir / "01-sub.md").read_text()

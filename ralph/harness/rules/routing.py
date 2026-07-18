@@ -1,8 +1,7 @@
 """The failure taxonomy, executable. One test per row.
 
-`ceiling-exceeded` and `infra-failed` route identically for both actors; only SUCCESS needs to
-know who is asking, because an Implementer's success goes to the merge queue and an Editor's
-success is a verdict to act on.
+Only SUCCESS needs to know who is asking, because an Implementer's success goes to the merge queue
+and an Editor's success is a verdict to act on.
 """
 
 from __future__ import annotations
@@ -24,10 +23,9 @@ class Destination(StrEnum):
 def route(actor: Actor, outcome: Outcome) -> Destination:
     """Where a classified session goes next.
 
-    CEILING_EXCEEDED and INFRA_FAILED are the two outcomes the Editor never sees, from either
-    actor, and neither is ever retried. Both go straight to the human with the worktree preserved,
-    and both spend no cycle — a cycle is an Implementer session plus the Editor session that
-    follows it, and no Editor is involved in either.
+    INFRA_FAILED goes straight to the human with the worktree preserved, and spends no cycle — a
+    cycle is an Implementer session plus the Editor session that follows it, and no Editor is
+    involved.
     """
     match outcome:
         case Outcome.SUCCESS:
@@ -40,7 +38,7 @@ def route(actor: Actor, outcome: Outcome) -> Destination:
                     assert_never(actor)
         case Outcome.IMPASSE | Outcome.INTEGRATION_FAILED:
             return Destination.EDITOR
-        case Outcome.CEILING_EXCEEDED | Outcome.INFRA_FAILED:
+        case Outcome.INFRA_FAILED:
             return Destination.HUMAN
         case _:
             assert_never(outcome)

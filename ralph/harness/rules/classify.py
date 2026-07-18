@@ -22,14 +22,9 @@ def _died_on_the_clock(t: SessionTelemetry) -> bool:
 
 
 def classify_implementer(t: SessionTelemetry, suite: SuiteResult) -> Outcome:
-    """Precedence is load-bearing: a ceiling kill and a crash both exit non-zero and are
-    indistinguishable downstream unless they are separated here.
-
-    Zero commits is never a benign skip — it is an `impasse`. The suite result, not the exit
+    """Zero commits is never a benign skip — it is an `impasse`. The suite result, not the exit
     code, is the outcome: a model's exit code is its opinion, the suite is a fact.
     """
-    if t.killed == "ceiling":
-        return Outcome.CEILING_EXCEEDED
     if _died_on_the_clock(t):
         return Outcome.INFRA_FAILED
     if t.impasse_report is not None or t.commits == 0 or not suite.green:
@@ -41,8 +36,6 @@ def classify_editor(t: SessionTelemetry, verdict: EditorVerdict | None) -> Outco
     """Editor success is a verdict returned. An Editor that produced none failed, whatever it
     exited with. Cannot yield IMPASSE.
     """
-    if t.killed == "ceiling":
-        return Outcome.CEILING_EXCEEDED
     if _died_on_the_clock(t):
         return Outcome.INFRA_FAILED
     if verdict is None:

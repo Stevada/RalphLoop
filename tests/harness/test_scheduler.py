@@ -1,12 +1,7 @@
-"""The scheduler, against the fakes — for the failures a real agent cannot yet be made to produce.
+"""The scheduler, against the fakes.
 
-Everything a stand-in agent *can* do is tested end-to-end against a real repo, in `test_parallel.py`
-and `test_quarantine.py`, and that is where it belongs. What is left here is the one outcome no
-subprocess can fake today: `ceiling-exceeded`, which needs a context meter that arrives in #08.
-
-Testing it now anyway is deliberate. The rule it proves — that the two outcomes the Editor never
-sees go straight to a human — is the rule most likely to be quietly broken by whoever wires the
-ceiling up, and this test will be sitting here waiting when they do.
+Everything a stand-in Implementer *can* do is tested end-to-end against a real repo, in `test_parallel.py`
+and `test_quarantine.py`, and that is where it belongs.
 """
 
 from __future__ import annotations
@@ -53,20 +48,20 @@ def scheduler_over(
     )
 
 
-async def test_a_ceiling_kill_goes_straight_to_a_human_and_never_to_the_editor() -> None:
-    """`ceiling-exceeded` is not a failure the Editor can help with. The session did not reason
-    badly — it reasoned over too much, outside the smart zone, and the only fix is to re-cut the
-    sub-issue. That is a Planner's job, and it spends no cycle."""
+async def test_an_infra_failure_goes_straight_to_a_human_and_never_to_the_editor() -> None:
+    """An infra failure is not a failure the Editor can help with, and it spends no cycle."""
     store = FakeIssueStore(
         graph=graph_of({"01": [], "02": ["01"]}),
         states={SubIssueId("01"): SubIssueState.READY, SubIssueId("02"): SubIssueState.READY},
     )
-    implementer = FakeImplementer(scripted=[telemetry(killed="ceiling", exit_code=137, commits=0)])
+    implementer = FakeImplementer(
+        scripted=[telemetry(killed="wall-clock", exit_code=124, commits=0)]
+    )
     git, log = FakeGit(head="integration"), FakeRunLog()
 
     report = await scheduler_over(store, implementer, git, log).run()
 
-    assert report.failed == {SubIssueId("01"): Outcome.CEILING_EXCEEDED}
+    assert report.failed == {SubIssueId("01"): Outcome.INFRA_FAILED}
     assert git.merged == []  # it never reached the merge queue
     assert len(implementer.calls) == 1  # and it was never run a second time
 

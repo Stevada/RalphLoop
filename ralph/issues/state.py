@@ -18,4 +18,4 @@ class SubIssueState(StrEnum):
     READY = "ready"  # stored: the Planner authorised this sub-issue to run
     IN_PROGRESS = "in-progress"
     LANDED = "landed"  # terminal: fast-forwarded into the integration branch
-    NEEDS_HUMAN = "needs-human"  # quarantine: planning-defect, inconclusive, ceiling, or infra
+    NEEDS_HUMAN = "needs-human"  # quarantine: planning-defect, inconclusive, impasse, or infra

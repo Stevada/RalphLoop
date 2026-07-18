@@ -1,7 +1,7 @@
-"""Running an agent in a worktree, and collecting the facts it cannot report about itself.
+"""Running an Implementer in a worktree, and collecting the facts it cannot report about itself.
 
 **This is the whole of an Implementer that is not model-specific.** Codex and Copilot are this
-plus an argv and final usage; the stand-in agent is this plus an argv. Everything that makes a
+plus an argv and final usage; the stand-in Implementer is this plus an argv. Everything that makes a
 session a session — bounding on the clock, counting the commits, reading the diffstat, finding the
 `<impasse>` sentinel — happens here, once.
 
@@ -22,12 +22,12 @@ from ralph.adapters.context import Bound, run_bounded
 from ralph.adapters.git import run_git
 from ralph.harness import Approach, ImpasseReport, SessionTelemetry
 from ralph.issues import Brief, Findings
-from ralph.ports import Budget, ContextSource, SessionContext, Worktree
+from ralph.ports import Budget, SessionContext, Worktree
 
 IMPASSE_OPEN, IMPASSE_CLOSE = "<impasse>", "</impasse>"
 
 BuildArgv = Callable[[Brief, Findings, Worktree], Sequence[str]]
-"""What separates one Implementer from another, in this ticket: how you spell the command."""
+"""What separates one Implementer from another: how you spell the command."""
 
 
 class ImpasseParseError(ValueError):
@@ -66,60 +66,22 @@ def parse_impasse(output: str) -> ImpasseReport | None:
 
 
 class Transcript:
-    """The session's stdout: accumulated in full for telemetry, and republished line by line while
-    it is still arriving.
-
-    Two consumers with different needs, and pretending they were one is what would go wrong.
-    Telemetry wants the whole transcript, at the end, in order — that is `text`. During the context
-    ceiling rollout this also supported live source discovery; the method stays until the source
-    vocabulary is removed.
-    """
+    """The session's stdout, accumulated in full for telemetry."""
 
     def __init__(self) -> None:
         self._chunks: list[str] = []
-        self._live: asyncio.Queue[str | None] | None = asyncio.Queue()
         self.closed = asyncio.Event()
         """Set when stdout reaches EOF — the session has said everything it is going to say."""
 
     def append(self, line: str) -> None:
         self._chunks.append(line)
-        if self._live is not None:
-            self._live.put_nowait(line)
 
     def close(self) -> None:
-        if self._live is not None:
-            self._live.put_nowait(None)
         self.closed.set()
 
     @property
     def text(self) -> str:
         return "".join(self._chunks)
-
-    async def first(self, extract: Callable[[str], str | None]) -> str | None:
-        """The first thing `extract` finds on a line of stdout, or None if the session ended
-        without ever saying it. Watchable once: there is only one such fact, and only one asker."""
-        live = self._live
-        if live is None:
-            raise RuntimeError("stdout is watchable once, and something is already watching it")
-        try:
-            while (line := await live.get()) is not None:
-                found = extract(line)
-                if found is not None:
-                    return found
-            return None
-        finally:
-            self._live = None  # stop republishing; `text` keeps accumulating regardless
-
-
-BoundSource = Callable[[Transcript], ContextSource]
-"""A context source with everything it needs but the session's own voice."""
-
-SourceFactory = Callable[[Transcript, Worktree], ContextSource]
-"""How an Implementer finds its own context signal. Both CLIs publish it to a file, and neither
-puts the number on stdout — but they answer *which file is mine?* differently, and the two answers
-are why this takes both arguments. Codex writes into one shared sessions directory and must be
-matched to its own rollout by the thread id it announces on **stdout**. Copilot is handed a private
-`--log-dir` derived from its **worktree**, and so has nothing to disambiguate at all."""
 
 
 async def _pump(stream: asyncio.StreamReader, transcript: Transcript) -> None:
@@ -148,11 +110,8 @@ FinalConsumedTokens = Callable[[Session, Worktree], Awaitable[int | None]]
 one. `None` means there was no final figure to read, and the live observations remain the fallback."""
 
 
-async def run_session(
-    argv: Sequence[str], cwd: Path, budget: Budget, context: BoundSource | None = None
-) -> Session:
+async def run_session(argv: Sequence[str], cwd: Path, budget: Budget) -> Session:
     """Run a command under the wall-clock bound and collect everything it said."""
-    del context
     started = time.monotonic()
 
     proc = await asyncio.create_subprocess_exec(
@@ -163,7 +122,7 @@ async def run_session(
 
     transcript = Transcript()
     pump = asyncio.create_task(_pump(proc.stdout, transcript))
-    bound = await run_bounded(proc, None, budget)
+    bound = await run_bounded(proc, budget)
     await pump  # the process is dead; drain whatever it managed to say before we stopped it
 
     return Session(
@@ -178,12 +137,11 @@ async def run_agent(
     argv: Sequence[str],
     wt: Worktree,
     budget: Budget,
-    context: BoundSource | None = None,
     final_consumed_tokens: FinalConsumedTokens | None = None,
 ) -> SessionTelemetry:
     """One Implementer session: a bounded subprocess, plus the two facts it cannot report about
     itself — how many commits it actually made, and what it actually changed."""
-    session = await run_session(argv, wt.path, budget, context)
+    session = await run_session(argv, wt.path, budget)
     consumed_tokens = session.bound.consumed_tokens
     if final_consumed_tokens is not None:
         final = await final_consumed_tokens(session, wt)
@@ -192,7 +150,6 @@ async def run_agent(
     return SessionTelemetry(
         exit_code=session.exit_code,
         killed=session.bound.killed,
-        peak_context_tokens=session.bound.peak_context_tokens,
         consumed_tokens=consumed_tokens,
         wall_clock_s=session.wall_clock_s,
         commits=int(run_git(wt.path, "rev-list", "--count", f"{wt.base}..HEAD")),
@@ -207,24 +164,18 @@ class SubprocessImplementer:
     """An Implementer is an argv, a worktree, and the telemetry its CLI publishes.
 
     That is the whole of it. Codex is this with `codex exec` and end-of-turn usage; Copilot is this
-    with `copilot -p` and final log usage; the stand-in agent is this with neither. Nothing above
+    with `copilot -p` and final log usage; the stand-in Implementer is this with neither. Nothing above
     this line knows the difference.
     """
 
     build_argv: BuildArgv
-    context: SourceFactory | None = None
     final_consumed_tokens: FinalConsumedTokens | None = None
 
     async def run(self, context: SessionContext) -> SessionTelemetry:
-        factory = self.context
         worktree = context.worktree
-        bound: BoundSource | None = (
-            None if factory is None else lambda transcript: factory(transcript, worktree)
-        )
         return await run_agent(
             self.build_argv(context.brief, context.findings, worktree),
             worktree,
             context.budget,
-            bound,
             self.final_consumed_tokens,
         )

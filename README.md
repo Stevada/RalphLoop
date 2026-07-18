@@ -56,7 +56,7 @@ own sentence, and `ralph run` runs the same checks before it dispatches anything
 |---|---|
 | `docs/design.md` | Why the system is shaped this way, and the bets taken deliberately |
 | `docs/architecture.md` | The map — layers, where each concept lives, seams, invariants |
-| `docs/cli-metering.md` | How each backend CLI exposes its context signal (the ceiling's input) |
+| `docs/cli-metering.md` | How each backend CLI exposes token-consumption telemetry |
 | `docs/harness-flow.mmd` | The control flow of one run, as a diagram |
 | `UBIQUITOUS_LANGUAGE.md` | Canonical for every domain term, **including code identifiers** |
 | `CLAUDE.md` | How to work in this repo (status, commands); coding rules auto-load from `.claude/rules/` |
@@ -147,7 +147,6 @@ Four outcomes, and each one routes somewhere specific:
 |---|---|---|
 | `impasse` | The Implementer did not deliver — it said why, committed nothing, or left the suite red | Editor |
 | `integration-failed` | Green alone, red or conflicting on the merge | Editor |
-| `ceiling-exceeded` | The session left the model's smart zone | Human |
 | `infra-failed` | The environment is broken, not the code | Human |
 
 **There is no retry anywhere in this system.** A failed sub-issue is quarantined — marked

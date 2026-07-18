@@ -14,16 +14,11 @@ class Actor(StrEnum):
     EDITOR = "editor"
 
 
-type Killed = Literal["ceiling", "wall-clock"]
+type Killed = Literal["wall-clock"]
 """Why the harness stopped a session, when it was the harness that stopped it.
 
-The two bounds catch different failures and neither substitutes for the other. `ceiling` means the
-session left the smart zone — it was still working, and its judgment was about to stop being worth
-trusting. `wall-clock` means it stopped getting anywhere: a session spinning on a failing suite has
-a *flat* context and would never trip a ceiling.
-
 Named here, in the harness core, because `classify_implementer` turns it into an `Outcome` and the
-adapter that sets it must be spelling the same two words.
+adapter that sets it must spell the same word.
 """
 
 
@@ -31,7 +26,6 @@ class Outcome(StrEnum):
     SUCCESS = "success"
     IMPASSE = "impasse"
     INTEGRATION_FAILED = "integration-failed"
-    CEILING_EXCEEDED = "ceiling-exceeded"
     INFRA_FAILED = "infra-failed"
 
 
@@ -41,7 +35,6 @@ class SessionTelemetry:
 
     exit_code: int
     killed: Killed | None
-    peak_context_tokens: int  # the ceiling is on THIS
     consumed_tokens: int  # telemetry only. nothing is gated on it.
     wall_clock_s: float
     commits: int

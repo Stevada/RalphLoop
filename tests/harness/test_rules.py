@@ -53,13 +53,6 @@ def test_a_session_that_committed_but_left_the_suite_red_is_an_impasse() -> None
     assert classify_implementer(t, suite(green=False)) is Outcome.IMPASSE
 
 
-def test_a_ceiling_kill_is_ceiling_exceeded_not_infra_failed() -> None:
-    """Both exit non-zero. Conflating them retries the session straight back out of the smart
-    zone."""
-    t = telemetry(exit_code=137, killed="ceiling", peak_context_tokens=121_000, commits=0)
-    assert classify_implementer(t, suite(green=False)) is Outcome.CEILING_EXCEEDED
-
-
 def test_a_wall_clock_kill_is_infra_failed() -> None:
     t = telemetry(exit_code=124, killed="wall-clock", commits=0)
     assert classify_implementer(t, suite(green=False)) is Outcome.INFRA_FAILED
@@ -69,13 +62,6 @@ def test_exit_124_is_infra_failed_even_if_the_harness_did_not_do_the_killing() -
     """`timeout(1)` may have got there first. Same failure, same route."""
     t = telemetry(exit_code=124, killed=None, commits=0)
     assert classify_implementer(t, suite(green=False)) is Outcome.INFRA_FAILED
-
-
-def test_the_ceiling_outranks_the_impasse_sentinel() -> None:
-    """A killed session's transcript may still contain a sentinel it wrote before it died. What
-    happened to it is that it left the smart zone."""
-    t = telemetry(killed="ceiling", impasse_report=impasse())
-    assert classify_implementer(t, suite(green=False)) is Outcome.CEILING_EXCEEDED
 
 
 def test_a_declared_impasse_that_committed_nothing_is_an_impasse() -> None:
@@ -99,10 +85,23 @@ def test_the_implementer_never_classifies_integration_failed() -> None:
     for t, s in [
         (telemetry(), suite(green=True)),
         (telemetry(commits=0), suite(green=False)),
-        (telemetry(killed="ceiling"), suite(green=False)),
+        (telemetry(killed="wall-clock"), suite(green=False)),
         (telemetry(impasse_report=impasse()), suite(green=False)),
     ]:
         assert classify_implementer(t, s) is not Outcome.INTEGRATION_FAILED
+
+
+def test_neither_classifier_can_produce_the_retired_ceiling_outcome() -> None:
+    produced = {
+        classify_implementer(telemetry(), suite(green=True)).value,
+        classify_implementer(telemetry(commits=0), suite(green=False)).value,
+        classify_implementer(telemetry(killed="wall-clock"), suite(green=False)).value,
+        classify_editor(telemetry(), verdict()).value,
+        classify_editor(telemetry(exit_code=0), None).value,
+        classify_editor(telemetry(killed="wall-clock"), None).value,
+    }
+
+    assert "ceiling-exceeded" not in produced
 
 
 # --- classify_editor ----------------------------------------------------------------------------
@@ -115,11 +114,6 @@ def test_editor_success_is_a_verdict_returned() -> None:
 def test_an_editor_that_returned_no_verdict_is_infra_failed() -> None:
     """Whatever it exited with. An Editor's product is its verdict; no verdict, no session."""
     assert classify_editor(telemetry(exit_code=0), None) is Outcome.INFRA_FAILED
-
-
-def test_a_ceiling_killed_editor_is_ceiling_exceeded() -> None:
-    t = telemetry(killed="ceiling", peak_context_tokens=125_000)
-    assert classify_editor(t, None) is Outcome.CEILING_EXCEEDED
 
 
 def test_a_wall_clocked_editor_is_infra_failed() -> None:
@@ -136,7 +130,6 @@ def test_classify_editor_cannot_return_impasse_for_any_input() -> None:
         telemetry(),
         telemetry(exit_code=1, commits=0),
         telemetry(exit_code=124, killed="wall-clock"),
-        telemetry(killed="ceiling"),
         telemetry(commits=7, impasse_report=impasse()),  # an Editor that committed and whinged
     ]
     verdicts: list[EditorVerdict | None] = [None, *(verdict(v) for v in Verdict)]
@@ -162,15 +155,10 @@ def test_the_diagnosable_failures_go_to_the_editor(outcome: Outcome) -> None:
     assert route(Actor.IMPLEMENTER, outcome) is Destination.EDITOR
 
 
-@pytest.mark.parametrize("outcome", [Outcome.CEILING_EXCEEDED, Outcome.INFRA_FAILED])
-def test_the_two_outcomes_the_editor_never_sees_go_to_the_human_from_either_actor(
-    outcome: Outcome,
-) -> None:
-    """Exhaustive over Actor on purpose: an Editor that exceeded the ceiling must not be handed
-    to an Editor."""
+def test_infra_failures_go_to_the_human_from_either_actor() -> None:
     for actor in Actor:
-        assert route(actor, outcome) is Destination.HUMAN
-        assert route(actor, outcome) is not Destination.EDITOR
+        assert route(actor, Outcome.INFRA_FAILED) is Destination.HUMAN
+        assert route(actor, Outcome.INFRA_FAILED) is not Destination.EDITOR
 
 
 def test_no_route_returns_a_retry_and_route_is_total() -> None:
@@ -307,7 +295,7 @@ def test_a_session_that_emitted_no_sentinel_gets_no_claim() -> None:
 
 
 def test_the_report_carries_the_claim_and_the_contradicting_facts_together() -> None:
-    """An agent that says "all tests pass" beside a red suite produces a report carrying both. The
+    """An Implementer that says "all tests pass" beside a red suite produces a report carrying both. The
     two disagreeing is the signal, and a report that dropped either half would hide it."""
     claimed_green = telemetry(session_output="All tests pass!", impasse_report=impasse())
 
@@ -347,8 +335,7 @@ def test_the_outcome_decides_what_kind_of_ten_minutes_you_are_about_to_spend() -
     """Infra first — it means the harness itself broke, and nothing else this run says is
     trustworthy. Then the outcomes that send you to a brief, then the ones that send you to a diff.
     """
-    assert ATTENTION_ORDER[Outcome.INFRA_FAILED] < ATTENTION_ORDER[Outcome.CEILING_EXCEEDED]
-    assert ATTENTION_ORDER[Outcome.CEILING_EXCEEDED] < ATTENTION_ORDER[Outcome.IMPASSE]
+    assert ATTENTION_ORDER[Outcome.INFRA_FAILED] < ATTENTION_ORDER[Outcome.IMPASSE]
     assert ATTENTION_ORDER[Outcome.IMPASSE] < ATTENTION_ORDER[Outcome.INTEGRATION_FAILED]
     assert Outcome.SUCCESS not in ATTENTION_ORDER  # a success does not escalate
 

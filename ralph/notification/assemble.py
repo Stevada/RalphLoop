@@ -13,19 +13,16 @@ ATTENTION_ORDER: Mapping[Outcome, int] = {
     # The harness or the environment broke. Nothing else this run says is trustworthy until you
     # know why, so it does not matter what else is in the list.
     Outcome.INFRA_FAILED: 0,
-    # The sub-issue was too big to reason about inside the smart zone. Re-cut it — a Planner's job,
-    # and no amount of reading the diff will tell you that.
-    Outcome.CEILING_EXCEEDED: 1,
     # The model declared an impasse and explained itself: an acceptance criterion it believes cannot
     # be satisfied. If it is right, you are rewriting a brief, not a function.
-    Outcome.IMPASSE: 2,
+    Outcome.IMPASSE: 1,
     # Green alone, red together. The defect is in how the work was cut across sub-issues, so the
     # diff to read is the *pair* of them.
-    Outcome.INTEGRATION_FAILED: 3,
+    Outcome.INTEGRATION_FAILED: 2,
 }
 
 # An undeclared impasse: no brief to reconsider, just a diff to read, so it is opened last.
-_UNDECLARED_IMPASSE = 4
+_UNDECLARED_IMPASSE = 3
 
 
 def notify(

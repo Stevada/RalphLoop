@@ -1,7 +1,7 @@
 """The real Editor: what it is allowed to do, what it must return, and how it is stopped.
 
 No test here calls the Anthropic API. The SDK sits behind one seam — `OpenSession` — and everything
-this ticket actually builds is on this side of it: the permit, the prompt, the verdict, both bounds.
+this module owns is on this side of it: the permit, the prompt, and the verdict.
 A test that needed Opus to prove a mutating tool call is denied would be testing Opus's obedience,
 which is precisely the thing the harness refuses to rely on.
 """
@@ -19,6 +19,7 @@ from ralph.adapters.editor import (
     VERDICT_CLOSE,
     VERDICT_OPEN,
     EditorSession,
+    TokenUsage,
     Turn,
     parse_verdict,
     read_only,
@@ -33,16 +34,16 @@ from ralph.harness import (
 )
 from ralph.issues import Brief, Findings
 from ralph.ports import Budget, SessionContext, Worktree
-from tests.builders import impasse, observation, suite, telemetry
+from tests.builders import impasse, suite, telemetry
 
 SUITE: Sequence[str] = ("python", "-m", "pytest", "-q")
 BRIEF = Brief(body="# 01 — make it add\n\n## Acceptance criteria\n\n- [ ] `add(1, 2) == 3`")
 FINDINGS = Findings(body="")
 WORKTREE = Worktree(path=Path("/w/01"), branch="ralph/01", base="integration")
-SMART_ZONE = Budget(max_context_tokens=120_000, wall_clock_s=10.0)
+GENEROUS = Budget(wall_clock_s=10.0)
 
 
-def session_context(budget: Budget = SMART_ZONE) -> SessionContext:
+def session_context(budget: Budget = GENEROUS) -> SessionContext:
     return SessionContext(brief=BRIEF, findings=FINDINGS, worktree=WORKTREE, budget=budget)
 
 FAILURE = failure_report(
@@ -261,7 +262,7 @@ class StubSession:
 
 
 async def adjudicate(
-    session: EditorSession, *, must_be_terminal: bool = False, budget: Budget = SMART_ZONE
+    session: EditorSession, *, must_be_terminal: bool = False, budget: Budget = GENEROUS
 ) -> tuple[SessionTelemetry, EditorVerdict | None]:
     editor = ClaudeCodeEditor(open_session=lambda ask: session, suite=SUITE)
     return await editor.adjudicate(session_context(budget), FAILURE, must_be_terminal)
@@ -305,7 +306,7 @@ async def test_the_editor_returns_its_verdict_and_the_harnesss_facts() -> None:
     session = StubSession(
         [
             "Looking at the worktree.",
-            observation(30_000, consumed=31_000),
+            TokenUsage(consumed_tokens=31_000),
             verdict_json("revise", revised_brief="# 01 — use the API that exists"),
         ]
     )
@@ -313,7 +314,7 @@ async def test_the_editor_returns_its_verdict_and_the_harnesss_facts() -> None:
     t, v = await adjudicate(session)
 
     assert v is not None
-    assert t.peak_context_tokens == 0
+    assert not hasattr(t, "peak_context_tokens")
     assert t.consumed_tokens == 31_000
     assert t.commits == 0  # by construction: it was denied every tool that could make one
     assert t.diffstat == ""
@@ -321,11 +322,11 @@ async def test_the_editor_returns_its_verdict_and_the_harnesss_facts() -> None:
     assert classify_editor(t, v) is Outcome.SUCCESS
 
 
-async def test_an_editor_that_leaves_the_old_smart_zone_runs_to_completion() -> None:
+async def test_an_editor_runs_to_completion_with_usage_turns() -> None:
     never_answers = StubSession(
         [
-            observation(60_000),
-            observation(130_000),
+            TokenUsage(consumed_tokens=60_000),
+            TokenUsage(consumed_tokens=130_000),
             "still thinking...",
             verdict_json("revise", revised_brief="# 01 — try again"),
         ],
@@ -335,17 +336,10 @@ async def test_an_editor_that_leaves_the_old_smart_zone_runs_to_completion() -> 
     t, v = await adjudicate(never_answers)
 
     assert t.killed is None
-    assert t.peak_context_tokens == 0
+    assert not hasattr(t, "peak_context_tokens")
     assert v is not None
     assert classify_editor(t, v) is Outcome.SUCCESS
     assert not never_answers.killed
-
-
-async def test_a_ceiling_killed_editor_pages_a_human_and_does_not_route_back() -> None:
-    from ralph.harness import Actor, Destination, route
-
-    assert route(Actor.EDITOR, Outcome.CEILING_EXCEEDED) is Destination.HUMAN
-
 
 # ── and the two facts the prompt must carry ──────────────────────────────────────────────────
 
@@ -414,12 +408,12 @@ async def test_the_prompt_hands_over_the_claim_and_the_facts_to_check_it_against
     assert "Reproduce. Do not infer." in prompt  # and what to do about the gap
 
 
-async def test_the_run_of_a_session_is_metered_even_when_it_answers() -> None:
-    session = StubSession([observation(50_000, consumed=55_000), verdict_json("planning-defect")])
+async def test_the_run_of_a_session_records_usage_even_when_it_answers() -> None:
+    session = StubSession([TokenUsage(consumed_tokens=55_000), verdict_json("planning-defect")])
 
     t, v = await adjudicate(session)
 
-    assert t.peak_context_tokens == 0
+    assert not hasattr(t, "peak_context_tokens")
     assert t.consumed_tokens == 55_000
     assert v is not None
     assert v.verdict is Verdict.PLANNING_DEFECT

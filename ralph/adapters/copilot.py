@@ -5,52 +5,26 @@ Editor should not be the same model on the same failure, because an Editor adjud
 declared by *itself* is the least independent sensor the system could have. `cli.py` picks; this
 module is picked.
 
-**The context signal is in the debug log, and only there.** Copilot *does* have an event stream
-(`--output-format json`) — the contract used to say it did not — but that stream publishes
-`outputTokens`, the completion count, and never once mentions the prompt. It is precisely the one
-number the ceiling does not want. The number the ceiling *does* want is in the `--log-dir` log, in
-a pretty-printed `usage` block, and only at `--log-level debug`.
-
-Three things follow, and each one is a way the ceiling silently stops working:
-
-- **`--log-level debug` is required.** At the default level there are no `usage` blocks at all —
-  verified against thirty-five logs on this machine, not one of which had one. A session that
-  publishes no observation is not a cheap session; it is an unmetered one, and this adapter raises
-  rather than let it run to the wall clock unwatched.
-- **The log is pretty-printed JSON inside a timestamped text log**, not JSONL, so it needs a
-  brace-matched block extractor. And the block must be *parsed* before it is trusted: the same log
-  carries a model-capabilities block containing `max_prompt_tokens: 200000`, so a parser that went
-  looking for the string `prompt_tokens` would read the model's context *limit* as its context
-  *usage* and kill every session before its first turn.
-- **Copilot loads the world into the prompt before it reads the brief.** Measured here: **56.5k**
-  of context to answer the word "pong" — 47% of the smart zone, gone at turn zero. MCP servers are
-  most of it. With MCP disabled: **25.9k**. With the tool list also cut to what an Editor may hold:
-  **8.4k**. So the harness disables MCP on every Copilot run, because a ceiling that fires on work
-  which never had room to begin with is not a quality bound, it is a tax.
-
-Unlike Codex, a Copilot session has no thread id to announce and no shared directory to find itself
-in: it is *given* a private `--log-dir`. There is nothing to disambiguate, so there is no stdout
-handshake here.
+Copilot's debug log contains completed usage blocks. The harness reads those at session end for
+token-consumption telemetry.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import shutil
 import subprocess
 from collections.abc import AsyncGenerator, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
-from ralph.adapters.context import tail
 from ralph.adapters.editor import READ_ONLY_COMMANDS, READ_ONLY_GIT, editor_telemetry, verdict_of
 from ralph.adapters.prompt import editor_prompt, implementer_prompt
-from ralph.adapters.session import Session, SubprocessImplementer, Transcript, run_session
+from ralph.adapters.session import Session, SubprocessImplementer, run_session
 from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry
 from ralph.issues import Brief, Findings
-from ralph.ports import Observation, SessionContext, Worktree
+from ralph.ports import SessionContext, Worktree
 
 log = logging.getLogger(__name__)
 
@@ -71,12 +45,7 @@ a real session's wire request, where they were simply not there."""
 
 
 class CopilotLogError(RuntimeError):
-    """A Copilot session published no context signal.
-
-    Loud, and it must stay loud. The tempting reading is "that session was cheap"; the true one is
-    that nothing was watching the ceiling. Almost always the cause is a log written without
-    `--log-level debug` — which is exactly the failure the ceiling cannot detect for itself.
-    """
+    """A Copilot log whose usage payload the harness cannot read."""
 
 
 # ── the invocation, shared by both roles ─────────────────────────────────────────────────────
@@ -149,7 +118,7 @@ def copilot_argv(
         "--log-dir",
         str(log_dir),
         "--log-level",
-        "debug",  # without this there are no usage blocks and the ceiling is blind
+        "debug",
         "--no-color",
         "--disable-builtin-mcps",
     ]
@@ -247,7 +216,7 @@ def usage_of(block: dict[str, object]) -> tuple[int, int] | None:
 
     `usage` is read from the **parsed** object, at the top level. That is what keeps the
     model-capabilities block — which contains `capabilities.limits.max_prompt_tokens: 200000` —
-    from being mistaken for a session that has already blown twice through the ceiling.
+    from being mistaken for a real usage block.
     """
     usage = block.get(USAGE)
     if not isinstance(usage, dict):
@@ -274,59 +243,6 @@ async def final_log_consumed_tokens(log_dir: Path) -> int | None:
 async def _file_lines(path: Path) -> AsyncGenerator[str, None]:
     for line in path.read_text().splitlines():
         yield line
-
-
-@dataclass(slots=True)
-class CopilotContextSource:
-    """Tails the one log in the session's own log directory, an observation per model call.
-
-    `consumed_tokens` is **accumulated here**, and that is not a detail. Codex reports a running
-    total; Copilot reports `total_tokens` for the call in hand (25,885 + 4 = 25,889, and the next
-    call starts over). The port's contract is cumulative spend, so the adapter holding the per-call
-    number is the one that has to add it up — otherwise `ContextMeter`, which takes a `max()` over
-    what it is handed, would report the largest single call as the whole session's cost.
-    """
-
-    transcript: Transcript
-    log_dir: Path
-    poll_s: float = POLL_S
-    _spent: int = field(default=0, init=False)
-
-    async def observations(self) -> AsyncGenerator[Observation, None]:
-        path = await self._log()
-        if path is None:
-            raise CopilotLogError(f"copilot wrote no log to {self.log_dir}. It ran unmetered.")
-
-        seen = 0
-        lines = tail(path, until=self.transcript.closed, poll_s=self.poll_s)
-        async for block in json_blocks(lines):
-            usage = usage_of(block)
-            if usage is None:
-                continue
-            context, spent = usage
-            self._spent += spent
-            seen += 1
-            yield Observation(
-                context_tokens=context,
-                consumed_tokens=self._spent,
-                rate_limit_used_percent=None,  # copilot publishes none
-            )
-
-        if seen == 0:
-            raise CopilotLogError(
-                f"{path} carries no usage block, so nothing metered this session's context. "
-                "The usual cause is a log written without `--log-level debug`."
-            )
-
-    async def _log(self) -> Path | None:
-        """The session owns its log directory, so the only question is *when* the file turns up."""
-        while True:
-            found = sorted(self.log_dir.glob("*.log"))
-            if found:
-                return found[0]
-            if self.transcript.closed.is_set():
-                return None
-            await asyncio.sleep(self.poll_s)
 
 
 # ── the two actors ───────────────────────────────────────────────────────────────────────────
@@ -391,7 +307,6 @@ class CopilotEditor:
             ),
             worktree.path,  # the failed worktree, exactly as the Implementer left it
             context.budget,
-            lambda transcript: CopilotContextSource(transcript=transcript, log_dir=log_dir),
         )
         telemetry = editor_telemetry(
             bound=session.bound,

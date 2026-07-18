@@ -27,7 +27,6 @@ from ralph.issues import Brief, Findings, IssueGraph, SubIssue, SubIssueState
 from ralph.issues.store import IssueStore
 from ralph.ports import (
     Budget,
-    ContextSource,
     Editor,
     Git,
     Implementer,
@@ -38,7 +37,6 @@ from ralph.ports import (
 )
 from tests.builders import graph_of
 from tests.fakes import (
-    FakeContextSource,
     FakeEditor,
     FakeGit,
     FakeImplementer,
@@ -69,7 +67,6 @@ def test_the_outcome_taxonomy_is_exactly_four_failures_and_one_success() -> None
         "success",
         "impasse",
         "integration-failed",
-        "ceiling-exceeded",
         "infra-failed",
     }
 
@@ -93,15 +90,15 @@ def test_the_suite_result_field_is_green() -> None:
     assert names.isdisjoint({"verified", "trusted", "passing"})
 
 
-def test_the_ceiling_is_on_context_and_defaults_to_the_smart_zone() -> None:
-    assert Budget().max_context_tokens == 120_000
+def test_budget_is_only_the_wall_clock_bound() -> None:
+    assert [f.name for f in dataclasses.fields(Budget)] == ["wall_clock_s"]
     assert Budget().wall_clock_s == 1800.0
-    assert not any("retry" in f.name for f in dataclasses.fields(Budget))
 
 
-def test_session_telemetry_carries_context_and_consumption_separately() -> None:
+def test_session_telemetry_carries_consumption_but_no_context_peak() -> None:
     names = {f.name for f in dataclasses.fields(SessionTelemetry)}
-    assert {"peak_context_tokens", "consumed_tokens"} <= names
+    assert "consumed_tokens" in names
+    assert "peak_context_tokens" not in names
 
 
 def test_revise_is_the_only_non_terminal_verdict() -> None:
@@ -126,7 +123,6 @@ def test_every_port_has_a_fake_that_satisfies_it() -> None:
     log: RunLog = FakeRunLog()
     runner: TestRunner = FakeTestRunner()
     git: Git = FakeGit()
-    context: ContextSource = FakeContextSource()
 
     assert isinstance(implementer, Implementer)
     assert isinstance(editor, Editor)
@@ -134,7 +130,6 @@ def test_every_port_has_a_fake_that_satisfies_it() -> None:
     assert isinstance(log, RunLog)
     assert isinstance(runner, TestRunner)
     assert isinstance(git, Git)
-    assert isinstance(context, ContextSource)
 
 
 def test_the_worktree_knows_where_it_came_from() -> None:

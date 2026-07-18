@@ -135,15 +135,14 @@ Pure functions over frozen dataclasses. Tested with no subprocess, no git, no mo
 
 | Type | Module | What it is |
 |---|---|---|
-| `Actor`, `Outcome`, `SessionTelemetry`, `SuiteResult` | [session.py](../ralph/harness/model/session.py) | The classification vocabulary. `SessionTelemetry` is *what the harness observed* — the ceiling reads `peak_context_tokens`; `consumed_tokens` is telemetry only, gated on nothing. `SuiteResult.green` is deliberately not `verified`: a suite the harness runs is inside the **blast radius**; only CI on a clean checkout is **honest** (`docs/design.md` §6). |
+| `Actor`, `Outcome`, `SessionTelemetry`, `SuiteResult` | [session.py](../ralph/harness/model/session.py) | The classification vocabulary. `SessionTelemetry` is *what the harness observed* — `consumed_tokens` is telemetry only, gated on nothing. `SuiteResult.green` is deliberately not `verified`: a suite the harness runs is inside the **blast radius**; only CI on a clean checkout is **honest** (`docs/design.md` §6). |
 | `Approach`, `ImpasseReport` | [impasse.py](../ralph/harness/model/impasse.py) | The model's narration — a leaf that knows nothing about how it was classified. |
 | `FailureReport` | [failure.py](../ralph/harness/model/failure.py) | The claim beside the harness's facts. It sits downstream of `session.py` (which imports `impasse.py`); splitting them is what breaks the import cycle. The Editor's job is to check one against the other — *their disagreeing is itself a signal*. |
 
 `classify_implementer` / `classify_editor` ([classify.py](../ralph/harness/rules/classify.py)) turn
-telemetry + suite into an `Outcome`. Two facts to know without reading the bodies: **precedence is
-load-bearing** (a ceiling kill and a crash both exit non-zero and are only separated by checking
-`killed` first), and **zero commits is never a benign skip** — it is an `impasse`. `INTEGRATION_FAILED`
-is unreachable from either classifier; only the merge queue raises it.
+telemetry + suite into an `Outcome`. Two facts to know without reading the bodies: **zero commits
+is never a benign skip** — it is an `impasse`; and `INTEGRATION_FAILED` is unreachable from either
+classifier — only the merge queue raises it.
 
 ### Routing — the taxonomy, executable
 
@@ -153,10 +152,7 @@ taxonomy table with one test per row. Four destinations — `MERGE_QUEUE`, `ACT_
 asserts no row returns anything else).
 
 Only `SUCCESS` needs to know who is asking (Implementer → merge queue, Editor → act on verdict).
-`CEILING_EXCEEDED` and `INFRA_FAILED` route to the **human** from either actor, never to the Editor,
-and spend no cycle; they keep separate identities despite the shared destination because they hand
-the human different diagnoses (*cut too large* vs *environment broken*). The reasoning is
-`docs/design.md` §5.
+`INFRA_FAILED` routes to the **human** from either actor, never to the Editor, and spends no cycle.
 
 ### Verdicts, the cycle cap, and lifecycle
 
@@ -176,16 +172,12 @@ needs a real model, network, or `codex` binary is in the wrong layer.
 | Protocol | The seam | Notes that don't show in the signature |
 |---|---|---|
 | `Implementer` | writes code from a brief → `SessionTelemetry` | Either Codex or Copilot. |
-| `Editor` | adjudicates a failure → `(SessionTelemetry, EditorVerdict \| None)` | Bounded exactly like an Implementer — same `Budget`, same telemetry, can come back `ceiling-exceeded`. Takes `must_be_terminal`; takes **no** `RunLog` or `IssueStore`, so every *consequence* of a verdict happens in the scheduler. |
+| `Editor` | adjudicates a failure → `(SessionTelemetry, EditorVerdict \| None)` | Bounded exactly like an Implementer — same `Budget`, same telemetry. Takes `must_be_terminal`; takes **no** `RunLog` or `IssueStore`, so every *consequence* of a verdict happens in the scheduler. |
 | `RunLog` | the harness's **authoritative** record | A Protocol, not the JSONL adapter, because the merge queue and scheduler both take one and orchestration may not name an adapter. |
 | `TestRunner` | a suite run → `SuiteResult` | The harness runs the tests; the model's exit code is only its opinion. |
 | `Git` | worktree / rebase / ff plumbing | `discard_worktree` destroys the checkout **and the branch** — the next cycle re-cuts `ralph/<id>` from integration, and `git worktree add -b` refuses an existing branch. |
-| `ContextSource` | one `Observation` per model call, live | An `AsyncGenerator`, not merely an iterator: **closing is part of the contract** (a source tailing a file holds a handle open, and the ceiling kill breaks the loop mid-stream). See §3. |
 
-`Budget` ([ports.py](../ralph/ports.py)) carries the two bounds that catch different failures:
-`max_context_tokens` (120k — the smart zone, a *quality* bound, one number for both actors) and
-`wall_clock_s` (the backstop that catches a *stuck* session, whose context stays flat while it spins).
-Neither substitutes for the other.
+`Budget` ([ports.py](../ralph/ports.py)) carries the wall-clock backstop for an actor session.
 
 **Revisions are stored alongside the Planner's original, never over it.** The revision number is the
 *store's* to assign — an Editor choosing its own could overwrite an earlier one, and only the store
@@ -220,34 +212,23 @@ A portfolio decision, not a hedge: the Implementer and Editor should not be the 
 same failure — an Editor adjudicating an impasse it declared *itself* is the least independent sensor
 the system could have.
 
-### The ceiling seam
+### The wall-clock bound and token usage
 
-The smart-zone kill is identical for every adapter; only the *publishing* of the context signal
-differs per CLI. So the kill logic lives once, behind `ContextSource`:
+`run_bounded(proc, budget)` ([context.py](../ralph/adapters/context.py)) is the kill loop every
+adapter's `run`/`adjudicate` reduces to. It takes a `Killable` rather than a subprocess, because the
+SDK Editor is a conversation, not a process.
 
-- `ContextMeter` ([context.py](../ralph/adapters/context.py)) — watches context (not consumption),
-  records the high-water mark, trips when the smart zone is left. `exceeded` reads the **peak**, not
-  the last observation: a model that touched 130k then compacted to 90k has already done its bad
-  thinking, and compaction must not hide the crossing.
-- `run_bounded(proc, source, budget)` — the kill loop every adapter's `run`/`adjudicate` reduces to.
-  Consumes the source under `aclosing`, kills on `exceeded` or `TimeoutError`. Takes a `Killable`
-  rather than a subprocess, because the SDK Editor is a conversation, not a process.
-- `source=None` is **not** "unbounded" — it is *a session publishing no context signal* (the scripted
-  stand-in agent the tests inject): bounded on the clock alone, peak honestly reported as zero.
-
-**Per-CLI empirics — the rollout-file format, the debug-log gotchas, the 56.5k→8.4k measurements —
-live in [`docs/cli-metering.md`](cli-metering.md).** They are external to our code and change on the
-vendors' schedule, not ours. What matters at *this* layer: the three numbers (`context_tokens`,
-`consumed_tokens`, `rate_limit`) travel together in one `Observation` because that is how they
-arrive — adjacent, alike-named — and a ceiling on the wrong one is *inverted*.
+Per-CLI usage details live in [`docs/cli-metering.md`](cli-metering.md). They are external to our
+code and change on the vendors' schedule, not ours. What matters at this layer: token consumption is
+telemetry, and no harness decision gates on it.
 
 ### An Implementer is an argv and telemetry sources
 
 That is the whole of `SubprocessImplementer` ([session.py](../ralph/adapters/session.py)), and it is
-why `codex.py` is a hundred lines. Everything that makes a session a session — both bounds, counting
+why `codex.py` is small. Everything that makes a session a session — bounding on the clock, counting
 commits, reading the diffstat, finding the `<impasse>` sentinel — lives once in `session.py`; each
-CLI adapter is an argv plus a `ContextSource`, and may also read `consumed_tokens` from the CLI's
-completed usage payload. [prompt.py](../ralph/adapters/prompt.py) is the one place a `Brief` becomes
+CLI adapter is an argv and may also read `consumed_tokens` from the CLI's completed usage payload.
+[prompt.py](../ralph/adapters/prompt.py) is the one place a `Brief` becomes
 text a model reads, shared by Codex and Copilot so their failures stay comparable; findings go in as
 a **separate section**, never folded into the brief.
 
@@ -385,7 +366,7 @@ asks, never by a second topological sort that is free to disagree.
 |---|---|
 | Merge queue | [mergequeue.py](../ralph/mergequeue.py) |
 | Failure taxonomy + base-green | [classify.py](../ralph/harness/rules/classify.py), [routing.py](../ralph/harness/rules/routing.py), [runlog/](../ralph/runlog/), `Scheduler._refuse_a_red_base` |
-| Context ceiling and timeout | `Budget`, [context.py](../ralph/adapters/context.py) + per-CLI `ContextSource` ([cli-metering.md](cli-metering.md)) |
+| Wall-clock bound and usage telemetry | `Budget`, [context.py](../ralph/adapters/context.py), per-CLI usage parsing ([cli-metering.md](cli-metering.md)) |
 | Impasse report format | [impasse.py](../ralph/harness/model/impasse.py), [failure.py](../ralph/harness/model/failure.py) |
 | The Editor | [claude_editor.py](../ralph/adapters/claude_editor.py), [copilot.py](../ralph/adapters/copilot.py), `CycleLedger` |
 | Linear sync | `issues/linear/` behind the existing `IssueStore` Protocol |

@@ -7,9 +7,8 @@ Terms in **bold** are canonical. Anything in the "Aliases to avoid" column is ba
 prose, prompts, state names, and code identifiers.
 
 **This file defines terms; it does not argue the design.** A definition here is a sentence or two,
-not a justification — the reasoning behind a term (why the ceiling is on context, why nothing is
-ever retried) is recorded in the design rationale, not here. This file points at nothing: it is
-where the vocabulary bottoms out.
+not a justification — the reasoning behind a term is recorded in the design rationale, not here.
+This file points at nothing: it is where the vocabulary bottoms out.
 
 ## Actors
 
@@ -23,18 +22,14 @@ where the vocabulary bottoms out.
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Session** | One bounded invocation of one actor: one process, one 120k-token **context** ceiling, one wall-clock backstop. | round, run, invocation |
-| **Smart zone** | The context range in which a model's judgment is reliable — 120k tokens. The **ceiling** exists to keep every session inside it. | context limit, budget, quota |
+| **Session** | One wall-clock-bounded invocation of one actor. | round, run, invocation |
 | **Cycle** | One Implementer session and the Editor session that follows it. At most three per sub-issue. | round, iteration, attempt |
 | **Run** | One pass over the issue graph — read once at start, never re-read — from base-green check to the single closing notification. | job, execution |
 
 Two bounds and one guide, kept distinct. The terms name them:
 
 - **The session bound** is hard, enforced from outside the model: the session is killed at the
-  120k **context** ceiling or the wall-clock backstop. The ceiling reads **context**, never
-  **consumption**, and measures the **smart zone** rather than cost — one number for both
-  actors, whichever model runs. The wall-clock backstop is what catches a *stuck* session,
-  whose context stays flat while it spins.
+  wall-clock backstop.
 - **The cycle bound** is hard: no fourth Implementer session, whatever the Editor says.
 - **"About three tries"** is soft — advisory, uncounted guidance in the prompt about behaviour
   *within* a session. It is not a bound.
@@ -90,19 +85,15 @@ state; the harness's word for everything the model cannot observe about itself.
 | `success` | Implementer: green commit, suite verified by the harness. Editor: a verdict returned. | Merge queue / act on verdict |
 | `impasse` | The Implementer did not deliver: the `<impasse>` sentinel, no commits, or a red suite (Implementer only) | Editor |
 | `integration-failed` | Prospective merge conflicts or goes red after rebase onto the integration head (merge queue, not a session) | Editor |
-| `ceiling-exceeded` | Context crossed the 120k **smart zone**; session killed | Human — from either actor |
 | `infra-failed` | Setup failure, wall-clock timeout, rate limit, OOM (either actor) | Human — from either actor. Never the Editor. |
 
 `impasse` can only come from an Implementer session — an Editor cannot fail to deliver a brief
-it was never given. `ceiling-exceeded` and `infra-failed` can come from either actor.
-`integration-failed` is not a session outcome at all: the Implementer session succeeded green
-in isolation, and the merge queue raises it when that tree will not integrate with a sibling
-that landed first. It routes to the Editor on the first failure and counts as a **cycle** like
-any other.
+it was never given. `infra-failed` can come from either actor. `integration-failed` is not a
+session outcome at all: the Implementer session succeeded green in isolation, and the merge queue
+raises it when that tree will not integrate with a sibling that landed first. It routes to the
+Editor on the first failure and counts as a **cycle** like any other.
 
-`ceiling-exceeded` and `infra-failed` route identically — **human, no retry, no cycle, never
-the Editor** — and differ only in what they tell the human: *the sub-issue was cut too large*
-versus *your environment is broken*.
+`infra-failed` routes to the human — **no retry, no cycle, never the Editor**.
 
 ## Artifacts and decisions
 
@@ -170,7 +161,7 @@ implied; every green result is produced inside the blast radius of the thing bei
 - A **Parent issue** contains many **Sub-issues** and produces exactly one PR.
 - A **Sub-issue** has one **Brief** and one **Findings**.
 - A **Cycle** is one Implementer **Session** plus one Editor **Session**; at most three.
-- Every **Session** is bounded at 120k tokens; the harness also bounds cycles at three.
+- Every **Session** is bounded by wall clock; the harness also bounds cycles at three.
 - An Implementer **Session** ends in a green delivery or an **Impasse**.
 - An **Impasse** produces the report that is the Editor's only sensor.
 - An Editor **Session** produces one **Revision** and one **Verdict**.

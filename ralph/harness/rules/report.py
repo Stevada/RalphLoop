@@ -1,12 +1,11 @@
 """Building the failure report — and, more importantly, refusing to build part of it.
 
-**The harness never fabricates an impasse report.** A session that was killed on the ceiling or the
-clock authored nothing; an undeclared impasse authored nothing because the model did not believe it
-had failed; an `integration-failed` session authored nothing because it had already succeeded when
-the merge queue rejected it. Synthesising a plausible-sounding narrative from a partial transcript
-would
-be the least honest artifact this system could produce — a story with no author, handed to the
-Editor as though a model had stood behind it.
+**The harness never fabricates an impasse report.** A session killed by the clock authored nothing;
+an undeclared impasse authored nothing because the model did not believe it had failed; an
+`integration-failed` session authored nothing because it had already succeeded when the merge queue
+rejected it. Synthesising a plausible-sounding narrative from a partial transcript would be the
+least honest artifact this system could produce — a story with no author, handed to the Editor as
+though a model had stood behind it.
 
 So there is exactly one place `claim` can come from: `telemetry.impasse_report`, which is `None`
 unless the model really emitted the sentinel. This is a four-line function because that is the
@@ -28,10 +27,10 @@ def failure_report(
 ) -> FailureReport:
     """The model's story, checked against the harness's facts.
 
-    `telemetry` and `suite` are the facts: commits, diffstat, wall-clock, peak context, the suite's
-    own output. They are collected independently of the model's narration, so an agent that claims
-    "all tests pass" alongside a red suite produces a report carrying **both** — and the two
-    disagreeing is itself a signal worth surfacing.
+    `telemetry` and `suite` are the facts: commits, diffstat, wall-clock, token consumption, and
+    the suite's own output. They are collected independently of the model's narration, so an
+    Implementer that claims "all tests pass" alongside a red suite produces a report carrying
+    **both** — and the two disagreeing is itself a signal worth surfacing.
     """
     return FailureReport(
         outcome=outcome,

@@ -14,7 +14,7 @@ above, which have no business knowing what git is.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,7 +25,7 @@ from ralph.harness import (
     SuiteResult,
 )
 from ralph.issues import Brief, Findings, IssueGraph, SubIssueId, SubIssueState
-from ralph.ports import Observation, SessionContext, Worktree
+from ralph.ports import SessionContext, Worktree
 from ralph.runlog import Event
 from tests.builders import telemetry
 
@@ -168,14 +168,3 @@ class FakeGit:
 
     def head_branch(self) -> str:
         return self.head
-
-
-@dataclass(slots=True)
-class FakeContextSource:
-    """Replays a canned sequence of observations, as if tailing a rollout file."""
-
-    scripted: Iterable[Observation] = field(default_factory=list)
-
-    async def observations(self) -> AsyncGenerator[Observation, None]:
-        for o in self.scripted:
-            yield o

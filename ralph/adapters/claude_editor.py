@@ -22,13 +22,14 @@ from ralph.adapters.editor import (
     READ_ONLY_TOOLS,
     EditorSession,
     Permission,
+    TokenUsage,
     Turn,
     read_only,
     run_editor,
 )
 from ralph.adapters.prompt import editor_prompt
 from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry
-from ralph.ports import Observation, SessionContext
+from ralph.ports import SessionContext
 
 MODEL = "claude-opus-4-8"
 """The Editor is the expensive one on purpose. It runs at most three times per sub-issue and it is
@@ -88,9 +89,7 @@ class ClaudeCodeEditor:
 
 class _SdkSession:
     """The SDK's stream, reshaped into the two things the harness wants from it: what the model
-    said, and what each call cost. Killable, because the ceiling has to be able to stop it — and a
-    kill *ends* the stream rather than raising, so it surfaces as `ceiling-exceeded` and not as an
-    `infra-failed` `CancelledError` three layers up.
+    said, and what each call cost.
     """
 
     def __init__(self, ask: Ask) -> None:
@@ -128,7 +127,7 @@ class _SdkSession:
                     self._turns.put_nowait(turn)
             self._code = 0
         except asyncio.CancelledError:
-            self._code = -9  # the ceiling, or the clock. Not an error — a decision.
+            self._code = -9
         finally:
             self._turns.put_nowait(None)
 
@@ -168,24 +167,19 @@ def _turns_of(message: object) -> list[Turn]:
     return turns
 
 
-def _observed(usage: object) -> Observation:
-    """`input_tokens` (plus what was cached) is the **context** the model reasoned over — the
-    ceiling is on this. `output_tokens` is consumption, and nothing is gated on it."""
+def _observed(usage: object) -> TokenUsage:
+    """Token consumption from one SDK usage payload."""
 
     def count(name: str) -> int:
         value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, 0)
         return value if isinstance(value, int) else 0
 
-    context = (
+    prompt = (
         count("input_tokens")
         + count("cache_read_input_tokens")
         + count("cache_creation_input_tokens")
     )
-    return Observation(
-        context_tokens=context,
-        consumed_tokens=context + count("output_tokens"),
-        rate_limit_used_percent=None,  # the SDK does not publish one
-    )
+    return TokenUsage(consumed_tokens=prompt + count("output_tokens"))
 
 
 def claude_sdk_session(ask: Ask) -> EditorSession:

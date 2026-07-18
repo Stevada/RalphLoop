@@ -14,30 +14,18 @@ from ralph.harness import (
     Approach,
     EditorVerdict,
     ImpasseReport,
-    SessionTelemetry,
     Killed,
+    SessionTelemetry,
     SuiteResult,
     Verdict,
 )
 from ralph.issues import Brief, Findings, IssueGraph, SubIssue, SubIssueId
-from ralph.ports import Observation
-
-
-def observation(
-    context: int = 20_000, *, consumed: int = 50_000, rate_limit: float | None = None
-) -> Observation:
-    """One model call. `context` is the only number the ceiling reads, so it is the positional one
-    — a test that says `observation(130_000)` is saying the thing it means."""
-    return Observation(
-        context_tokens=context, consumed_tokens=consumed, rate_limit_used_percent=rate_limit
-    )
 
 
 def telemetry(
     *,
     exit_code: int = 0,
     killed: Killed | None = None,
-    peak_context_tokens: int = 20_000,
     consumed_tokens: int = 50_000,
     wall_clock_s: float = 60.0,
     commits: int = 1,
@@ -49,7 +37,6 @@ def telemetry(
     return SessionTelemetry(
         exit_code=exit_code,
         killed=killed,
-        peak_context_tokens=peak_context_tokens,
         consumed_tokens=consumed_tokens,
         wall_clock_s=wall_clock_s,
         commits=commits,

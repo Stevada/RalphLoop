@@ -7,20 +7,20 @@ graph TD
     baseGreen -->|red| abort(["No agent starts"])
     baseGreen -->|green| dispatch["Dispatch eligible sub-issues<br/>concurrently, each in<br/>its own worktree"]
 
-    dispatch --> impl["Implementer session<br/>TDD · 120k context ceiling<br/>wall-clock backstop"]
+    dispatch --> impl["Implementer session<br/>TDD · wall-clock backstop"]
     impl --> outcome{"Session outcome"}
 
     outcome -->|success| mergeQ["Merge queue:<br/>acquire merge lock · rebase ·<br/>re-run suite"]
     outcome -->|"impasse · silent-red"| editor
-    outcome -->|"ceiling-exceeded · infra-failed<br/>never retried · no cycle spent<br/>the Editor never sees these"| quarantine
+    outcome -->|"infra-failed<br/>never retried · no cycle spent<br/>the Editor never sees it"| quarantine
 
     mergeQ --> mergeCheck{"Green on the<br/>prospective merge?"}
     mergeCheck -->|yes| ff["Fast-forward merge ·<br/>write 'landed' · release lock"]
     mergeCheck -->|"conflict or red · release lock<br/>(integration-failed)"| editor
     ff --> landed(["Sub-issue landed"])
 
-    editor["Editor session<br/>read worktree · reproduce ·<br/>120k context ceiling"] --> edOutcome{"Editor session<br/>completed?"}
-    edOutcome -->|"ceiling-exceeded<br/>or infra-failed"| quarantine
+    editor["Editor session<br/>read worktree · reproduce ·<br/>wall-clock backstop"] --> edOutcome{"Editor session<br/>completed?"}
+    edOutcome -->|"infra-failed"| quarantine
     edOutcome -->|verdict| verdict{"Verdict"}
 
     verdict -->|revise| cycle{"Third cycle<br/>already?"}
