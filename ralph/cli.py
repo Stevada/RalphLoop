@@ -4,8 +4,7 @@ Nothing downstream of here knows whether the Implementer is Codex, Copilot, or a
 that does not think at all — which is exactly why the stand-in can prove the whole system works
 with no model in the loop.
 
-An Implementer, at this layer, is an **argv**. `RALPH_AGENT_CMD` is that argv; Codex and Copilot
-(#08, #10) become two more of them, chosen by `RALPH_IMPLEMENTER`.
+An Implementer, at this layer, is an **argv**. Codex and Copilot are chosen here from CLI arguments.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -24,7 +23,6 @@ from ralph.adapters.copilot import copilot_editor, copilot_implementer
 from ralph.adapters.git import GitCli, run_git
 from ralph.adapters.suite import SubprocessTestRunner, install_once
 from ralph.config import (
-    CONFIG_FILE,
     ENV_FILE,
     LINEAR_API_KEY,
     PRE_COMMIT_CONFIGS,
@@ -63,6 +61,11 @@ COPILOT = "copilot"
 FILESYSTEM = "filesystem"
 LINEAR = "linear"
 
+DEFAULT_ISSUE_MODE = FILESYSTEM
+DEFAULT_IMPLEMENTER = CODEX
+DEFAULT_EDITOR = CLAUDE
+DEFAULT_PROTECTED = ("main", "master")
+
 
 class _NoEditorOverride:
     pass
@@ -76,7 +79,7 @@ DEFAULT_LOG_LEVEL = "WARNING"
 
 
 class NoAgent(RuntimeError):
-    """`ralph.yaml` named an Implementer or Editor the harness does not know. The harness will not
+    """The CLI named an Implementer or Editor the harness does not know. The harness will not
     invent one."""
 
 
@@ -90,17 +93,70 @@ class IssueSourceError(ValueError):
     """The CLI was not given a coherent issue source."""
 
 
+def _config_for(
+    repo: Path,
+    env: Mapping[str, str] | None = None,
+    *,
+    issue_mode: str = DEFAULT_ISSUE_MODE,
+    implementer: str = DEFAULT_IMPLEMENTER,
+    editor: str = DEFAULT_EDITOR,
+    protected: Sequence[str] = DEFAULT_PROTECTED,
+) -> Config:
+    if env is None:
+        return Config.resolve(
+            repo,
+            issue_mode=issue_mode,
+            implementer=implementer,
+            editor=editor,
+            protected=frozenset(protected),
+        )
+    return Config.resolve(
+        repo,
+        env,
+        issue_mode=issue_mode,
+        implementer=implementer,
+        editor=editor,
+        protected=frozenset(protected),
+    )
+
+
+def _add_config_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--issue-mode",
+        choices=(FILESYSTEM, LINEAR),
+        default=DEFAULT_ISSUE_MODE,
+        help=f"how to interpret issue_source. Defaults to {DEFAULT_ISSUE_MODE}.",
+    )
+    parser.add_argument(
+        "--implementer",
+        choices=(CODEX, COPILOT),
+        default=DEFAULT_IMPLEMENTER,
+        help=f"the CLI that writes code. Defaults to {DEFAULT_IMPLEMENTER}.",
+    )
+    parser.add_argument(
+        "--editor",
+        choices=(CLAUDE, COPILOT),
+        default=DEFAULT_EDITOR,
+        help=f"the CLI that diagnoses failures. Defaults to {DEFAULT_EDITOR}.",
+    )
+    parser.add_argument(
+        "--protected",
+        action="append",
+        default=None,
+        metavar="BRANCH",
+        help="branch a run refuses to start from. Repeat for more. Defaults to main and master.",
+    )
+
+
 def validate_agents(config: Config) -> None:
-    """`ralph.yaml` must name actors this harness knows, without constructing their adapters."""
+    """The CLI must name actors this harness knows, without constructing their adapters."""
     if config.implementer not in {CODEX, COPILOT}:
         raise NoAgent(
-            f"implementer: {config.implementer!r} in {CONFIG_FILE} names no Implementer. "
-            f"Known: {CODEX}, {COPILOT}."
+            f"implementer: {config.implementer!r} names no Implementer. Known: {CODEX}, {COPILOT}."
         )
     if config.editor not in {CLAUDE, COPILOT}:
         raise NoAgent(
-            f"editor: {config.editor!r} in {CONFIG_FILE} names no Editor. "
-            f"Known: {CLAUDE}, {COPILOT}."
+            f"editor: {config.editor!r} names no Editor. Known: {CLAUDE}, {COPILOT}."
         )
 
 
@@ -167,7 +223,7 @@ def issue_store(repo: Path, issue_source: str | None, config: Config) -> IssueSt
             states=LinearStateMap(),
         )
     raise IssueSourceError(
-        f"issue_mode: {config.issue_mode!r} in {CONFIG_FILE} is not {FILESYSTEM} or {LINEAR}."
+        f"issue_mode: {config.issue_mode!r} is not {FILESYSTEM} or {LINEAR}."
     )
 
 
@@ -225,7 +281,7 @@ def validate(
     issue_source: str | None = None,
     config: Config | None = None,
 ) -> tuple[Refusal, ...]:
-    config = config or Config.resolve(repo)
+    config = config or _config_for(repo)
     validate_agents(config)
     return refusals(facts_about(repo.resolve(), issue_source, config))
 
@@ -248,7 +304,7 @@ def render_plan(
     The cheapest possible dogfood — it parses every sub-issue, resolves every edge, and proves the
     graph is acyclic, and it costs nothing to run because no session is ever opened.
     """
-    config = config or Config.resolve(repo)
+    config = config or _config_for(repo)
     validate_agents(config)
     graph, states = _read_graph(repo.resolve(), issue_source, config)
     edges = sum(len(sub.blocked_by) for sub in graph.sub_issues.values())
@@ -276,11 +332,11 @@ async def run(
     editor: Editor | _NoEditorOverride = _NO_EDITOR_OVERRIDE,
     config: Config | None = None,
 ) -> RunReport:
-    """Explicit `implementer`/`editor` override the ones `ralph.yaml` names — those are the seams
+    """Explicit `implementer`/`editor` override the ones the resolved config names — those are the seams
     the tests inject the scripted stand-in and a stub Editor through, and the reason no test in the
     suite calls a model."""
     repo = repo.resolve()
-    config = config or Config.resolve(repo)
+    config = config or _config_for(repo)
     validate_agents(config)
 
     # The same checks `ralph validate` runs, and they are not advisory. A run that starts on `main`
@@ -392,6 +448,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=DEFAULT_LOG_LEVEL,
         help="the harness's diagnostic verbosity: DEBUG / INFO / WARNING / ERROR.",
     )
+    _add_config_flags(runner)
 
     checker = sub.add_parser("validate", help="refuse a run this repo is not ready for")
     checker.add_argument("repo", type=Path)
@@ -406,13 +463,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=DEFAULT_LOG_LEVEL,
         help="the harness's diagnostic verbosity: DEBUG / INFO / WARNING / ERROR.",
     )
+    _add_config_flags(checker)
 
     args = parser.parse_args(argv)
     level = args.log_level.upper()
     logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
     _load_env(args.repo)
     try:
-        config = Config.resolve(args.repo)
+        config = _config_for(
+            args.repo,
+            issue_mode=args.issue_mode,
+            implementer=args.implementer,
+            editor=args.editor,
+            protected=args.protected or DEFAULT_PROTECTED,
+        )
         validate_agents(config)
     except (ConfigError, NoAgent) as exc:
         print(exc)

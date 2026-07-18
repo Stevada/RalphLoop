@@ -207,8 +207,8 @@ Brief and findings are separate files because a revision may change one and leav
 
 ## 4. Adapters — `ralph/adapters/`
 
-Two CLIs, and **either can back either actor**. Chosen in `cli.py` from `ralph.yaml`'s
-`implementer` / `editor`; nothing else knows which is running.
+Two CLIs, and **either can back either actor**. Chosen in `cli.py` from CLI arguments; nothing else
+knows which is running.
 
 |  | Implementer | Editor |
 |---|---|---|
@@ -318,8 +318,8 @@ sub-issue and `await asyncio.wait(..., FIRST_COMPLETED)`.
   be exceeded where it matters. `_cycle` returning `None` means `revise` — go round again, clean.
 - A cycle is **spent when the Editor half begins**, not when it ends: `must_be_terminal` must already
   count this cycle, or a killed Editor would cost nothing and buy its sub-issue infinite Implementers.
-- **The `editor` is always an `Editor`.** `ralph.yaml` names a concrete Editor, `cli.py` resolves
-  it before the scheduler starts, and any unknown name is a loud configuration failure. A failed
+- **The `editor` is always an `Editor`.** The CLI names a concrete Editor, `cli.py` resolves it
+  before the scheduler starts, and any unknown name is a loud configuration failure. A failed
   Implementer session that routes to adjudication always reaches the Editor loop.
 
 When a sub-issue escalates the run does **not** stop: everything transitively blocked by it never

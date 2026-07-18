@@ -1,7 +1,7 @@
 """The suite runner, the installer, and the run log.
 
 Three small adapters, and one shared theme: each of them has a failure mode whose *silent* version
-would be catastrophic. The suite command and install command are required `ralph.yaml` arguments —
+would be catastrophic. The suite command and install command are required `ralph.yaml` commands —
 the harness detects nothing — so an install that failed must not be shrugged at, and a log line
 that cannot be parsed must not be skipped.
 """

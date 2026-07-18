@@ -31,7 +31,7 @@ from ralph.ports import Implementer, Worktree
 # interpreter — the same one the harness itself will detect and run.
 TEST_CMD: tuple[str, ...] = (sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider")
 
-# Nothing to install; a real command that exits 0, since `install_cmd` is a required argument.
+# Nothing to install; a real command that exits 0, since `install_cmd` is required.
 INSTALL_CMD: tuple[str, ...] = (sys.executable, "-c", "")
 
 BRANCH_PREFIX = "ralph/"
@@ -185,17 +185,11 @@ class TargetRepo:
         self.git("commit", "-m", "a graph of the test's own shape")
 
 
-def write_ralph_yaml(root: Path, *, issue_mode: str = "filesystem", editor: str = "claude") -> None:
-    """The `ralph.yaml` a throwaway repo runs on. `implementer: codex` is a placeholder — every test
-    injects the scripted stand-in through `run(implementer=…)`. Failure-path tests inject a stub
-    Editor through `run(editor=...)`, so no orchestration test calls a model."""
+def write_ralph_yaml(root: Path) -> None:
+    """The `ralph.yaml` a throwaway repo runs on. Actors and issue mode are CLI arguments."""
     (root / "ralph.yaml").write_text(
         yaml.safe_dump(
             {
-                "issue_mode": issue_mode,
-                "implementer": "codex",
-                "editor": editor,
-                "protected": ["main", "master"],
                 "test_cmd": list(TEST_CMD),
                 "install_cmd": list(INSTALL_CMD),
             },

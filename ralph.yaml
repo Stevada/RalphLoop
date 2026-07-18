@@ -1,16 +1,5 @@
-# Ralph's arguments for running the harness on this repo — how the harness behaves. Read by
-# `Config.resolve`. Every argument here is required; the one secret (LINEAR_API_KEY) lives in .env
-# alone, and no setting appears in both files.
-
-# Where the sub-issue graph comes from: filesystem (.scratch/<phase>/issues) or linear.
-issue_mode: filesystem
-
-# The real actors for an end-to-end run: Codex writes the code, Claude Code diagnoses failures.
-implementer: codex
-editor: claude
-
-# Branches a run refuses to start from.
-protected: [main, master]
+# Ralph's repo-local commands. Run arguments like issue mode, actors, and protected branches live on
+# the CLI. The one secret (LINEAR_API_KEY) lives in .env alone.
 
 # This repo's suite and install. A string is split into an argv; a list is taken verbatim.
 test_cmd: uv run pytest -q

@@ -22,7 +22,7 @@ even import `ralph.harness`. `uv run` resolves the interpreter from `requires-py
 
 ```bash
 uv sync                         # set up .venv from uv.lock
-uv sync --extra editor          # + Claude Agent SDK, for editor: claude in ralph.yaml
+uv sync --extra editor          # + Claude Agent SDK, for --editor claude
 uv run pytest -q                # the suite — green before every commit
 uv run pytest tests/harness/test_scheduler.py::test_name   # a single test
 uv run mypy                     # strict; covers ralph/ AND tests/
@@ -91,6 +91,6 @@ load-bearing facts:
 - Target repos stay agnostic — Ralph reads `.scratch/`, a repo-level context file (`CLAUDE.md` for
   Copilot; `AGENTS.md` then `CLAUDE.md` for Codex), and its own `ralph.yaml`/`.env` at the repo root,
   and modifies nothing else.
-- A run's configuration is two disjoint files at the repo root: `ralph.yaml` (arguments — how the
-  harness behaves, **every one required**) and `.env` (the one secret, `LINEAR_API_KEY`). No setting
-  lives in both. The argument list and the failure taxonomy are in [`README.md`](README.md).
+- A run's configuration comes from CLI arguments, `ralph.yaml` (suite/install commands), and `.env`
+  (the one secret, `LINEAR_API_KEY`). The argument list and the failure taxonomy are in
+  [`README.md`](README.md).

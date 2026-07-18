@@ -13,10 +13,10 @@ from tests.testbed import StandInAgent, TargetRepo, make_stand_in_agent, make_ta
 def no_model_in_the_loop() -> None:
     """**No test in this suite calls a model.**
 
-    The Implementer and Editor are chosen in `ralph.yaml`, which the throwaway repos never write, so
-    every test falls to the stand-in agent by construction — a developer's ambient environment
-    cannot reach into a run to bill Opus. The guarantee is structural, not a fixture that has to be
-    remembered; this one only names it.
+    The Implementer and Editor default to local CLI choices, and orchestration tests inject the
+    stand-in agent explicitly — a developer's ambient environment cannot reach into a run to bill
+    Opus. The guarantee is structural, not a fixture that has to be remembered; this one only names
+    it.
     """
 
 

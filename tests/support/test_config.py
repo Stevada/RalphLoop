@@ -1,12 +1,4 @@
-"""`Config.resolve` is the one place a run reads its two files — `ralph.yaml` and `.env`.
-
-The value of a single reader is that the rest of the harness never has to ask what a raw file key
-or env string means: it means whatever the resolver parsed it into, once. So the parsing is what
-these tests pin — that every argument is required (a missing one is a loud error, never a default),
-that a command string becomes an argv, that the two files stay disjoint, and that the one secret is
-never echoed by the summary meant for a log. A last test pins that `.env` is loaded wholesale: no
-key is policed by name, so a target repo's own variables load beside Ralph's.
-"""
+"""`Config.resolve` reads `ralph.yaml` commands and the one secret."""
 
 from __future__ import annotations
 
@@ -15,14 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from ralph.cli import NoAgent, _load_env, editor_of
+from ralph.cli import _load_env
 from ralph.config import CONFIG_FILE, ENV_FILE, Config, ConfigError
 
 FULL = (
-    "issue_mode: filesystem\n"
-    "implementer: codex\n"
-    "editor: claude\n"
-    "protected: [main, master]\n"
     "test_cmd: uv run pytest -q\n"
     "install_cmd: [uv, sync]\n"
 )
@@ -33,76 +21,70 @@ def _write(repo: Path, body: str) -> Path:
     return repo
 
 
-def test_the_file_supplies_every_argument(tmp_path: Path) -> None:
-    config = Config.resolve(_write(tmp_path, FULL), {})
+def _resolve(
+    repo: Path,
+    env: dict[str, str] | None = None,
+    *,
+    issue_mode: str = "filesystem",
+    implementer: str = "codex",
+    editor: str = "claude",
+    protected: frozenset[str] = frozenset({"main", "master"}),
+) -> Config:
+    return Config.resolve(
+        repo,
+        env or {},
+        issue_mode=issue_mode,
+        implementer=implementer,
+        editor=editor,
+        protected=protected,
+    )
 
-    assert config.issue_mode == "filesystem"
-    assert config.implementer == "codex"
-    assert config.editor == "claude"
-    assert config.protected == frozenset({"main", "master"})
+
+def test_the_file_supplies_commands_and_the_cli_supplies_run_arguments(tmp_path: Path) -> None:
+    config = _resolve(
+        _write(tmp_path, FULL),
+        issue_mode="linear",
+        implementer="copilot",
+        editor="copilot",
+        protected=frozenset({"integration"}),
+    )
+
+    assert config.issue_mode == "linear"
+    assert config.implementer == "copilot"
+    assert config.editor == "copilot"
+    assert config.protected == frozenset({"integration"})
     assert config.test_cmd == ("uv", "run", "pytest", "-q")  # a string is split into an argv
     assert config.install_cmd == ("uv", "sync")  # a list is taken verbatim
 
 
 def test_a_missing_file_is_a_loud_error(tmp_path: Path) -> None:
-    """No `ralph.yaml` is not "all defaults" — there are no defaults. Every run needs the file."""
     with pytest.raises(ConfigError, match=CONFIG_FILE):
-        Config.resolve(tmp_path, {})
+        _resolve(tmp_path)
 
 
 @pytest.mark.parametrize(
     "line",
     [
-        "issue_mode: filesystem\n",
-        "implementer: codex\n",
-        "editor: claude\n",
-        "protected: [main, master]\n",
         "test_cmd: uv run pytest -q\n",
         "install_cmd: [uv, sync]\n",
     ],
 )
-def test_a_missing_argument_is_a_loud_error(tmp_path: Path, line: str) -> None:
-    """A configurable argument is required: dropping one fails the run rather than guessing a value.
-    This is the old "no test suite detected" refusal, moved to where the argument is read."""
+def test_a_missing_command_is_a_loud_error(tmp_path: Path, line: str) -> None:
     repo = _write(tmp_path, FULL.replace(line, ""))
     key = line.split(":", 1)[0]
 
-    with pytest.raises(ConfigError, match=f"{key} is a required argument"):
-        Config.resolve(repo, {})
+    with pytest.raises(ConfigError, match=f"{key} is a required command"):
+        _resolve(repo)
 
 
 def test_the_environment_supplies_the_one_secret(tmp_path: Path) -> None:
-    config = Config.resolve(_write(tmp_path, FULL), {"LINEAR_API_KEY": "lin_secret"})
+    config = _resolve(_write(tmp_path, FULL), {"LINEAR_API_KEY": "lin_secret"})
 
     assert config.linear_api_key == "lin_secret"
 
 
-def test_the_sources_are_disjoint_the_file_never_reads_an_env_argument(tmp_path: Path) -> None:
-    """`implementer` is a `ralph.yaml` argument, full stop — there is no env var for it, so an
-    ambient `RALPH_IMPLEMENTER` cannot reach into the run."""
-    config = Config.resolve(_write(tmp_path, FULL), {"RALPH_IMPLEMENTER": "copilot"})
-
-    assert config.implementer == "codex"
-
-
-def test_a_malformed_argument_is_a_loud_error(tmp_path: Path) -> None:
-    repo = _write(tmp_path, FULL.replace("protected: [main, master]\n", "protected: main\n"))
-
-    with pytest.raises(ConfigError, match="protected"):
-        Config.resolve(repo, {})
-
-
-def test_editor_none_names_no_editor(tmp_path: Path) -> None:
-    config = Config.resolve(_write(tmp_path, FULL.replace("editor: claude\n", "editor: none\n")), {})
-
-    with pytest.raises(NoAgent, match="Known: claude, copilot"):
-        editor_of(config)
-
-
 def test_the_loggable_summary_never_echoes_the_api_key(tmp_path: Path) -> None:
-    """The summary is printed at run start; the API key is the one field that must not appear in a
-    log, so it is reported only as set or unset."""
-    summary = Config.resolve(_write(tmp_path, FULL), {"LINEAR_API_KEY": "lin_api_secret"}).loggable()
+    summary = _resolve(_write(tmp_path, FULL), {"LINEAR_API_KEY": "lin_api_secret"}).loggable()
 
     assert "lin_api_secret" not in summary
     assert "linear_api_key=set" in summary
@@ -111,9 +93,6 @@ def test_the_loggable_summary_never_echoes_the_api_key(tmp_path: Path) -> None:
 def test_a_dotenv_is_loaded_wholesale_without_policing_keys(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No key is validated by name: a target repo's own variable loads for its suite, and even a
-    Ralph-looking typo is accepted rather than rejected — the one secret is checked where it is
-    used, only on an `issue_mode: linear` run, not by filtering the file."""
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("LINEAR_API_KYE", raising=False)
     (tmp_path / ENV_FILE).write_text("DATABASE_URL=postgres://x\nLINEAR_API_KYE=oops\n")

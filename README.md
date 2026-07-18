@@ -23,7 +23,7 @@ The project is managed with [uv](https://docs.astral.sh/uv/). One command, from 
 
 ```bash
 uv sync                        # creates .venv on the right Python, from uv.lock
-uv sync --extra editor         # ...and the Claude Agent SDK, if you want editor: claude in ralph.yaml
+uv sync --extra editor         # ...and the Claude Agent SDK, if you use --editor claude
 ```
 
 uv fetches the interpreter itself — `.python-version` pins the project to 3.12, the floor of
@@ -114,11 +114,11 @@ session as design context.
 
 ## Linear issue source
 
-Filesystem issues remain discoverable when `issue_source` is omitted. To run from Linear, set
-`issue_mode: linear`, pass the parent issue identifier as `issue_source`, and set `LINEAR_API_KEY`:
+Filesystem issues remain discoverable when `issue_source` is omitted. To run from Linear, pass
+`--issue-mode linear`, pass the parent issue identifier as `issue_source`, and set `LINEAR_API_KEY`:
 
 ```bash
-LINEAR_API_KEY=lin_api_... uv run ralph run --dry-run <repo> ENG-123
+LINEAR_API_KEY=lin_api_... uv run ralph run --dry-run --issue-mode linear <repo> ENG-123
 ```
 
 The Linear parent issue's sub-issues are Ralph's sub-issues. Linear's native issue relation
@@ -156,29 +156,30 @@ unaffected still lands. The human is paged **once**, at the end. The run never s
 
 ## Configuration
 
-A run reads its settings from two files at the target repo's root, and **no setting lives in both**.
-`ralph.yaml` holds the **arguments** — how the harness behaves — and **every one is required**:
-there are no defaults to drift and nothing is detected, so a value the harness would otherwise guess
-is a value you state. `.env` holds the one **secret** a run reads (`LINEAR_API_KEY`) — gitignored;
-copy `.env.example`. Ralph loads the whole `.env` so its suite inherits the target repo's own
-variables (`DATABASE_URL`, …) too, and reads only `LINEAR_API_KEY` for itself. A missing argument,
-or a `.env` typo that leaves the required secret absent, fails loudly.
+A run reads repo-local commands from `ralph.yaml`, run arguments from the CLI, and the one secret
+from `.env`. Ralph loads the whole `.env` so its suite inherits the target repo's own variables
+(`DATABASE_URL`, …) too, and reads only `LINEAR_API_KEY` for itself.
 
-### `ralph.yaml` — arguments (all required)
+The CLI defaults match Ralph's current common path:
+
+```bash
+--issue-mode filesystem
+--implementer codex
+--editor claude
+--protected main
+--protected master
+```
+
+### `ralph.yaml` — commands
 
 ```yaml
 # <repo>/ralph.yaml
-issue_mode: filesystem      # filesystem | linear — how to interpret issue_source
-implementer: codex          # codex | copilot — writes the code and the tests
-editor: claude              # claude | copilot — diagnoses failures
-protected: [main, master]   # branches a run refuses to start from
 test_cmd: uv run pytest -q  # a string is split into an argv; a list is taken verbatim
 install_cmd: uv sync        # runs once, in the base checkout; a failure aborts the run
 ```
 
-Omitting any of these is a loud, fatal error — including `editor`. How `codex`/`copilot` is driven,
-and the four Linear state names, are **not** arguments: they are hardcoded in the adapter that owns
-them.
+Omitting either command is a loud, fatal error. How `codex`/`copilot` is driven, and the four Linear
+state names, are hardcoded in the adapter that owns them.
 
 ### `.env` — the one secret
 

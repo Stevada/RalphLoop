@@ -3,7 +3,7 @@
 **The suite result, not the exit code, is the outcome.** This is the module that makes that true:
 the harness runs the tests itself, in the worktree, and does not ask the model how it went.
 
-`test_cmd` and `install_cmd` are required `ralph.yaml` arguments — the harness detects nothing and
+`test_cmd` and `install_cmd` are required `ralph.yaml` commands — the harness detects nothing and
 guesses nothing. A repo that does not name how to run its suite cannot be run, and that is a config
 parse error upstream, before this module is reached.
 """
