@@ -169,7 +169,10 @@ async def test_a_hanging_session_is_killed_and_does_not_land(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     report = await run(
-        repo.path, None, Budget(wall_clock_s=1.0), implementer=stand_in(agent, Behaviour.HANG)
+        repo.path,
+        None,
+        budget=Budget(wall_clock_s=1.0),
+        implementer=stand_in(agent, Behaviour.HANG),
     )
 
     assert report.failed == {SubIssueId("01"): Outcome.INFRA_FAILED}

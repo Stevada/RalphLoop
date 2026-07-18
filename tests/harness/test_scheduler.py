@@ -50,7 +50,6 @@ def scheduler_over(
         merge_queue=MergeQueue(git=git, runner=runner, integration="integration"),
         integration="integration",
         budget=Budget(),
-        concurrency=2,
     )
 
 

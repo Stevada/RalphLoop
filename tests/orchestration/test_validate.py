@@ -175,13 +175,13 @@ def test_a_cyclic_graph_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
 
 def test_an_incoherent_issue_source_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
     """`invalid-issue-source`, not `invalid-issue-graph`: the harness never got as far as reading a
-    graph. Under `source: linear`, also passing an issues directory is a contradiction the run
-    cannot resolve, and it is the invocation to fix, not the graph."""
-    config = make_config(source="linear", linear_api_key="lin_x")
-    (refused,) = validate(repo.path, issues=repo.issues_dir, linear="ENG-1", config=config)
+    graph. Under `issue_mode: linear`, omitting the Linear parent is an invocation problem, not a
+    graph problem."""
+    config = make_config(issue_mode="linear", linear_api_key="lin_x")
+    (refused,) = validate(repo.path, config=config)
 
     assert refused.check is Check.INVALID_ISSUE_SOURCE
-    assert "not both" in refused.reason
+    assert "issue_source" in refused.reason
 
 
 def test_a_sub_issue_with_no_acceptance_criteria_is_refused(repo: TargetRepo) -> None:
@@ -236,6 +236,16 @@ def test_the_dry_run_reports_the_build_order(repo: TargetRepo) -> None:
     assert "wave 1: 01" in plan
     assert "wave 2: 02, 03" in plan
     assert "wave 3: 04" in plan
+
+
+def test_the_dry_run_accepts_an_explicit_filesystem_issue_source(repo: TargetRepo) -> None:
+    repo.write_graph({"01": [], "02": ["01"]})
+
+    plan = render_plan(repo.path, str(repo.issues_dir))
+
+    assert "2 sub-issues, 1 edges, no cycle." in plan
+    assert "wave 1: 01" in plan
+    assert "wave 2: 02" in plan
 
 
 def test_the_dry_run_opens_no_session_and_touches_no_branch(

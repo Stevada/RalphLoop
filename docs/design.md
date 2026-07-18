@@ -114,8 +114,8 @@ the system — reasons from a baseline it cannot verify.
 ### 4.3 Dispatch
 
 A sub-issue is **eligible** when every sub-issue it is blocked by has `landed`. Eligible
-sub-issues are dispatched concurrently, up to a concurrency cap, each into its own git
-worktree branched from the current integration head.
+sub-issues are dispatched concurrently, each into its own git worktree branched from the current
+integration head.
 
 There is **no wave barrier.** Waves are an artifact of dependencies, not of merging. A
 fast sub-issue lands in three minutes rather than waiting for its slowest sibling.

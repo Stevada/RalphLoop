@@ -41,10 +41,9 @@ uv run ruff check
 ## Usage
 
 ```bash
-uv run ralph validate <repo> [issues-dir]    # refuses a run this repo is not ready for
+uv run ralph validate <repo> [issue-source]  # refuses a run this repo is not ready for
 uv run ralph run --dry-run <repo>            # the build order, without opening a session
-uv run ralph run [-j N] <repo> [issues-dir]  # run the graph to completion
-uv run ralph run <repo> --linear-parent ENG-123  # read the graph from Linear sub-issues
+uv run ralph run <repo> [issue-source]       # run the graph to completion
 ```
 
 `validate` refuses; it does not warn. A protected branch, a dirty tree, a suite it cannot find, a
@@ -115,11 +114,11 @@ session as design context.
 
 ## Linear issue source
 
-Filesystem issues remain the default. To run from Linear, pass the parent issue identifier and set
-`LINEAR_API_KEY`:
+Filesystem issues remain discoverable when `issue_source` is omitted. To run from Linear, set
+`issue_mode: linear`, pass the parent issue identifier as `issue_source`, and set `LINEAR_API_KEY`:
 
 ```bash
-LINEAR_API_KEY=lin_api_... uv run ralph run --dry-run <repo> --linear-parent ENG-123
+LINEAR_API_KEY=lin_api_... uv run ralph run --dry-run <repo> ENG-123
 ```
 
 The Linear parent issue's sub-issues are Ralph's sub-issues. Linear's native issue relation
@@ -169,7 +168,7 @@ or a `.env` typo that leaves the required secret absent, fails loudly.
 
 ```yaml
 # <repo>/ralph.yaml
-source: filesystem          # filesystem | linear — where the sub-issue graph comes from
+issue_mode: filesystem      # filesystem | linear — how to interpret issue_source
 implementer: codex          # codex | copilot — writes the code and the tests
 editor: claude              # claude | copilot — diagnoses failures
 protected: [main, master]   # branches a run refuses to start from
@@ -185,10 +184,10 @@ them.
 
 | Variable | Description |
 |---|---|
-| `LINEAR_API_KEY` | Linear API key. Required only when `source: linear` (with `--linear-parent`). |
+| `LINEAR_API_KEY` | Linear API key. Required only when `issue_mode: linear`. |
 
-Operational verbosity is the `--log-level` flag, not configuration; the Linear parent is the
-`--linear-parent` per-run argument. Neither is a secret, so neither lives here.
+Operational verbosity is the `--log-level` flag, not configuration; `issue_source` is the per-run
+argument. Neither is a secret, so neither lives here.
 
 ## Design principles
 

@@ -57,7 +57,7 @@ async def test_every_sub_issue_lands_and_the_history_is_linear(
 ) -> None:
     repo.write_graph(PHASE)
 
-    report = await run(repo.path, None, concurrency=4, implementer=stand_in(agent, Behaviour.SUCCEED))
+    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED))
 
     assert sorted(report.landed) == ["01", "02", "03", "04"]
     assert report.clean
@@ -87,7 +87,7 @@ async def test_the_run_log_tells_the_true_story_in_order(
     """
     repo.write_graph(PHASE)
 
-    await run(repo.path, None, concurrency=4, implementer=stand_in(agent, Behaviour.SUCCEED))
+    await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED))
 
     lines = story(repo)
     at = lines.index
@@ -127,7 +127,6 @@ async def test_the_run_log_carries_no_spend_no_diffstat_and_no_test_output(
     await run(
         repo.path,
         None,
-        concurrency=4,
         implementer=stand_in(agent, spec),
         editor=terminal_editor(),
     )
@@ -149,7 +148,6 @@ async def test_one_failure_strands_its_dependents_and_nothing_else(
     report = await run(
         repo.path,
         None,
-        concurrency=4,
         implementer=stand_in(agent, spec),
         editor=terminal_editor(),
     )
@@ -197,7 +195,6 @@ async def test_a_semantic_conflict_surfaces_on_the_second_to_land(
     report = await run(
         repo.path,
         None,
-        concurrency=2,
         implementer=stand_in(agent, spec),
         editor=terminal_editor(),
     )

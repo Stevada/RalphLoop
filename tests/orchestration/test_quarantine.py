@@ -55,7 +55,6 @@ async def test_a_failure_quarantines_and_the_run_drains_around_it(
     report = await run(
         repo.path,
         None,
-        concurrency=3,
         implementer=stand_in(agent, spec),
         editor=terminal_editor(),
     )
@@ -108,7 +107,12 @@ async def test_a_killed_session_yields_a_report_built_from_harness_facts_only(
     """
     repo.write_graph({"01": []})
 
-    report = await run(repo.path, None, Budget(wall_clock_s=1.0), implementer=stand_in(agent, Behaviour.HANG))
+    report = await run(
+        repo.path,
+        None,
+        budget=Budget(wall_clock_s=1.0),
+        implementer=stand_in(agent, Behaviour.HANG),
+    )
 
     escalation = report.notification.escalations[0]
     assert escalation.outcome is Outcome.INFRA_FAILED
@@ -169,7 +173,12 @@ async def test_nothing_is_ever_retried(
     repo.write_graph({"01": [], "02": []})
     spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.HANG})
 
-    report = await run(repo.path, None, Budget(wall_clock_s=1.0), concurrency=2, implementer=stand_in(agent, spec))
+    report = await run(
+        repo.path,
+        None,
+        budget=Budget(wall_clock_s=1.0),
+        implementer=stand_in(agent, spec),
+    )
 
     assert report.failed == {SubIssueId("01"): Outcome.INFRA_FAILED}
     opened = [(id, kind) for id, kind, _ in story(repo) if kind == "session-started"]
@@ -193,7 +202,6 @@ async def test_one_notification_says_which_to_open_first(
     report = await run(
         repo.path,
         None,
-        concurrency=2,
         implementer=stand_in(agent, spec),
         editor=terminal_editor(),
     )

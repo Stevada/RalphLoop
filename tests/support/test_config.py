@@ -19,7 +19,7 @@ from ralph.cli import NoAgent, _load_env, editor_of
 from ralph.config import CONFIG_FILE, ENV_FILE, Config, ConfigError
 
 FULL = (
-    "source: filesystem\n"
+    "issue_mode: filesystem\n"
     "implementer: codex\n"
     "editor: claude\n"
     "protected: [main, master]\n"
@@ -36,7 +36,7 @@ def _write(repo: Path, body: str) -> Path:
 def test_the_file_supplies_every_argument(tmp_path: Path) -> None:
     config = Config.resolve(_write(tmp_path, FULL), {})
 
-    assert config.source == "filesystem"
+    assert config.issue_mode == "filesystem"
     assert config.implementer == "codex"
     assert config.editor == "claude"
     assert config.protected == frozenset({"main", "master"})
@@ -53,7 +53,7 @@ def test_a_missing_file_is_a_loud_error(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "line",
     [
-        "source: filesystem\n",
+        "issue_mode: filesystem\n",
         "implementer: codex\n",
         "editor: claude\n",
         "protected: [main, master]\n",
@@ -113,7 +113,7 @@ def test_a_dotenv_is_loaded_wholesale_without_policing_keys(
 ) -> None:
     """No key is validated by name: a target repo's own variable loads for its suite, and even a
     Ralph-looking typo is accepted rather than rejected — the one secret is checked where it is
-    used, only on a `source: linear` run, not by filtering the file."""
+    used, only on an `issue_mode: linear` run, not by filtering the file."""
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("LINEAR_API_KYE", raising=False)
     (tmp_path / ENV_FILE).write_text("DATABASE_URL=postgres://x\nLINEAR_API_KYE=oops\n")

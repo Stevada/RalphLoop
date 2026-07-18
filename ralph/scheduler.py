@@ -1,6 +1,6 @@
 """The run: read the graph, refuse a red base, dispatch on eligibility, quarantine, drain, notify.
 
-Sub-issues run in parallel (the semaphore here) but land one at a time (the merge queue's lock).
+Sub-issues run in parallel but land one at a time (the merge queue's lock).
 There is no wave barrier: the dispatch loop re-derives eligibility on every completion, so a
 sub-issue starts the moment its blockers land. A failure is quarantined and drained around, never
 retried — the loop below is a *cycle* loop, not a retry loop, and that distinction, quarantine-and-
@@ -48,8 +48,6 @@ from ralph.ports import (
     Worktree,
 )
 from ralph.runlog import EventKind, event
-
-DEFAULT_CONCURRENCY = 4
 
 log = logging.getLogger("ralph")
 
@@ -113,7 +111,6 @@ class Scheduler:
         integration: str,
         budget: Budget,
         editor: Editor,
-        concurrency: int = DEFAULT_CONCURRENCY,
     ) -> None:
         self._repo = repo
         self._git = git
@@ -125,7 +122,6 @@ class Scheduler:
         self._merge_queue = merge_queue
         self._integration = integration
         self._budget = budget
-        self._concurrency = concurrency
         self._ledger = CycleLedger()
 
     async def run(self) -> RunReport:
@@ -135,7 +131,6 @@ class Scheduler:
         landed: list[SubIssueId] = []
         failures: dict[SubIssueId, FailureReport] = {}
 
-        capacity = asyncio.Semaphore(self._concurrency)
         running: set[asyncio.Task[_Closed]] = set()
 
         try:
@@ -146,7 +141,7 @@ class Scheduler:
                     # updated in the same breath as the dispatch — not inside the task, which does
                     # not start running until the next suspension point.
                     states[id] = SubIssueState.IN_PROGRESS
-                    running.add(asyncio.create_task(self._pipeline(graph.sub_issues[id], capacity)))
+                    running.add(asyncio.create_task(self._pipeline(graph.sub_issues[id])))
 
                 if not running:
                     return RunReport(notify(graph, states, landed, failures))
@@ -182,22 +177,20 @@ class Scheduler:
                 f"No agent will be dispatched into a broken base.\n\n{base.output}"
             )
 
-    async def _pipeline(self, sub: SubIssue, capacity: asyncio.Semaphore) -> _Closed:
+    async def _pipeline(self, sub: SubIssue) -> _Closed:
         """One sub-issue, to a terminal state — however many cycles that takes.
 
-        The semaphore is held for the whole pipeline, every cycle and the landing included: a
-        sub-issue is not finished until it is on the integration branch, and counting it as free
-        while it waits for the merge lock would let the cap be exceeded in the only place it matters.
+        A sub-issue is not finished until it is on the integration branch. The merge queue, not the
+        scheduler, serializes the landing step.
         """
-        async with capacity:
-            while True:
-                closed = await self._cycle(sub)
-                if closed is not None:
-                    return closed
-                # `revise`: the work is discarded and the sub-issue restarts clean against the
-                # rewritten brief. This cannot spin — `_cycle` returns None only after spending a
-                # cycle, and the third spend makes `must_be_terminal` true, which no longer lets a
-                # `revise` through.
+        while True:
+            closed = await self._cycle(sub)
+            if closed is not None:
+                return closed
+            # `revise`: the work is discarded and the sub-issue restarts clean against the
+            # rewritten brief. This cannot spin — `_cycle` returns None only after spending a
+            # cycle, and the third spend makes `must_be_terminal` true, which no longer lets a
+            # `revise` through.
 
     async def _cycle(self, sub: SubIssue) -> _Closed | None:
         """One Implementer session, plus the Editor session that follows it if it failed.

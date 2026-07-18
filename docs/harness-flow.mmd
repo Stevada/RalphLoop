@@ -5,7 +5,7 @@ graph TD
     start(["Run starts"]) --> readGraph["Read the issue graph once"]
     readGraph --> baseGreen{"Base-green check:<br/>suite green on<br/>integration head?"}
     baseGreen -->|red| abort(["No agent starts"])
-    baseGreen -->|green| dispatch["Dispatch eligible sub-issues<br/>concurrency-capped, each in<br/>its own worktree"]
+    baseGreen -->|green| dispatch["Dispatch eligible sub-issues<br/>concurrently, each in<br/>its own worktree"]
 
     dispatch --> impl["Implementer session<br/>TDD · 120k context ceiling<br/>wall-clock backstop"]
     impl --> outcome{"Session outcome"}

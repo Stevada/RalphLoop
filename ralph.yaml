@@ -3,7 +3,7 @@
 # alone, and no setting appears in both files.
 
 # Where the sub-issue graph comes from: filesystem (.scratch/<phase>/issues) or linear.
-source: filesystem
+issue_mode: filesystem
 
 # The real actors for an end-to-end run: Codex writes the code, Claude Code diagnoses failures.
 implementer: codex

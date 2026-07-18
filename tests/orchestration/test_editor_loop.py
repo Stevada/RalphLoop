@@ -86,7 +86,6 @@ async def run_with(
         merge_queue=MergeQueue(git=git, runner=runner, integration="integration"),
         integration="integration",
         budget=Budget(),
-        concurrency=2,
     ).run()
 
 

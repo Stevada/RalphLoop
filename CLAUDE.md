@@ -41,9 +41,9 @@ uv run ralph …                  # the CLI
 The CLI:
 
 ```bash
-uv run ralph validate <repo> [issues-dir]    # refuses a run this repo is not ready for
+uv run ralph validate <repo> [issue-source]  # refuses a run this repo is not ready for
 uv run ralph run --dry-run <repo>            # the build order, without opening a session
-uv run ralph run [-j N] <repo> [issues-dir]  # run the graph to completion (default -j 4)
+uv run ralph run <repo> [issue-source]       # run the graph to completion
 ```
 
 ## Architecture

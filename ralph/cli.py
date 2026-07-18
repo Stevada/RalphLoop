@@ -52,7 +52,7 @@ from ralph.mergequeue import MergeQueue
 from ralph.notification import Notification
 from ralph.ports import Budget, Editor, Implementer
 from ralph.runlog import JsonlRunLog
-from ralph.scheduler import DEFAULT_CONCURRENCY, RunReport, Scheduler
+from ralph.scheduler import RunReport, Scheduler
 
 log = logging.getLogger("ralph")
 
@@ -149,25 +149,25 @@ def find_issues_dir(repo: Path, given: Path | None) -> Path:
     return candidates[0]
 
 
-def issue_store(repo: Path, issues: Path | None, linear: str | None, config: Config) -> IssueStore:
-    """The store `config.source` names. `LinearStateMap()` is unconfigured on purpose: the four
+def issue_store(repo: Path, issue_source: str | None, config: Config) -> IssueStore:
+    """The store `config.issue_mode` names. `LinearStateMap()` is unconfigured on purpose: the four
     Linear state names are Ralph's canonical sub-issue states, hardcoded, not a per-run argument."""
-    if config.source == FILESYSTEM:
-        return FilesystemIssueStore(issues_dir=find_issues_dir(repo, issues))
-    if config.source == LINEAR:
-        if linear is None:
-            raise IssueSourceError(f"source: {LINEAR} needs a parent issue — pass --linear-parent")
-        if issues is not None:
-            raise IssueSourceError("pass either an issues directory or --linear-parent, not both")
+    if config.issue_mode == FILESYSTEM:
+        return FilesystemIssueStore(
+            issues_dir=find_issues_dir(repo, Path(issue_source) if issue_source is not None else None)
+        )
+    if config.issue_mode == LINEAR:
+        if issue_source is None:
+            raise IssueSourceError(f"issue_mode: {LINEAR} needs an issue_source")
         if not config.linear_api_key:
-            raise IssueSourceError(f"set {LINEAR_API_KEY} to use source: {LINEAR}")
+            raise IssueSourceError(f"set {LINEAR_API_KEY} to use issue_mode: {LINEAR}")
         return LinearIssueStore(
-            parent_identifier=linear,
+            parent_identifier=issue_source,
             client=LinearGraphQLClient(api_key=config.linear_api_key),
             states=LinearStateMap(),
         )
     raise IssueSourceError(
-        f"source: {config.source!r} in {CONFIG_FILE} is not {FILESYSTEM} or {LINEAR}."
+        f"issue_mode: {config.issue_mode!r} in {CONFIG_FILE} is not {FILESYSTEM} or {LINEAR}."
     )
 
 
@@ -185,12 +185,12 @@ def _pre_commit(repo: Path) -> tuple[str | None, bool]:
 
 
 def _read_graph(
-    repo: Path, issues: Path | None, linear: str | None, config: Config
+    repo: Path, issue_source: str | None, config: Config
 ) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]:
-    return issue_store(repo, issues, linear, config).read_graph()
+    return issue_store(repo, issue_source, config).read_graph()
 
 
-def facts_about(repo: Path, issues: Path | None, linear: str | None, config: Config) -> RepoFacts:
+def facts_about(repo: Path, issue_source: str | None, config: Config) -> RepoFacts:
     """Ask the world the five questions, and hand the answers to a rule that cannot ask anything.
 
     Each `except` is narrow and each keeps the raiser's own message: `IssueParseError` already says
@@ -203,7 +203,7 @@ def facts_about(repo: Path, issues: Path | None, linear: str | None, config: Con
     source_error: str | None = None
     graph_error: str | None = None
     try:
-        _read_graph(repo, issues, linear, config)
+        _read_graph(repo, issue_source, config)
     except (IssueParseError, GraphError, LinearIssueStoreError) as exc:
         graph_error = str(exc)
     except (FileNotFoundError, IssueSourceError, LinearApiError) as exc:
@@ -222,13 +222,12 @@ def facts_about(repo: Path, issues: Path | None, linear: str | None, config: Con
 
 def validate(
     repo: Path,
-    issues: Path | None = None,
-    linear: str | None = None,
+    issue_source: str | None = None,
     config: Config | None = None,
 ) -> tuple[Refusal, ...]:
     config = config or Config.resolve(repo)
     validate_agents(config)
-    return refusals(facts_about(repo.resolve(), issues, linear, config))
+    return refusals(facts_about(repo.resolve(), issue_source, config))
 
 
 def render_refusals(found: tuple[Refusal, ...]) -> str:
@@ -241,8 +240,7 @@ def render_refusals(found: tuple[Refusal, ...]) -> str:
 
 def render_plan(
     repo: Path,
-    issues: Path | None,
-    linear: str | None = None,
+    issue_source: str | None = None,
     config: Config | None = None,
 ) -> str:
     """What `--dry-run` prints: the graph as the harness reads it, and the order it would work in.
@@ -252,7 +250,7 @@ def render_plan(
     """
     config = config or Config.resolve(repo)
     validate_agents(config)
-    graph, states = _read_graph(repo.resolve(), issues, linear, config)
+    graph, states = _read_graph(repo.resolve(), issue_source, config)
     edges = sum(len(sub.blocked_by) for sub in graph.sub_issues.values())
     lines = [f"{len(graph.sub_issues)} sub-issues, {edges} edges, no cycle."]
 
@@ -271,12 +269,11 @@ def render_plan(
 
 async def run(
     repo: Path,
-    issues: Path | None,
+    issue_source: str | None = None,
+    *,
     budget: Budget | None = None,
-    concurrency: int = DEFAULT_CONCURRENCY,
     implementer: Implementer | None = None,
     editor: Editor | _NoEditorOverride = _NO_EDITOR_OVERRIDE,
-    linear: str | None = None,
     config: Config | None = None,
 ) -> RunReport:
     """Explicit `implementer`/`editor` override the ones `ralph.yaml` names — those are the seams
@@ -288,7 +285,7 @@ async def run(
 
     # The same checks `ralph validate` runs, and they are not advisory. A run that starts on `main`
     # has already done the damage by the time anybody reads the warning it printed.
-    found = validate(repo, issues, linear, config)
+    found = validate(repo, issue_source, config)
     if found:
         raise Refused(render_refusals(found))
 
@@ -300,7 +297,7 @@ async def run(
     runner = SubprocessTestRunner(cmd=config.test_cmd)
     await install_once(repo, config.install_cmd)
 
-    store = issue_store(repo, issues, linear, config)
+    store = issue_store(repo, issue_source, config)
     selected_implementer = implementer if implementer is not None else implementer_of(config)
     selected_editor = editor_of(config) if isinstance(editor, _NoEditorOverride) else editor
     scheduler = Scheduler(
@@ -314,7 +311,6 @@ async def run(
         merge_queue=MergeQueue(git=git, runner=runner, integration=integration),
         integration=integration,
         budget=budget or Budget(),
-        concurrency=concurrency,
     )
     report = await scheduler.run()
     notification = render(report.notification)
@@ -368,7 +364,7 @@ def _load_env(repo: Path) -> None:
     """Load `<repo>/.env` into the environment — the one secret Ralph reads (`LINEAR_API_KEY`) and
     the target repo's own variables alike, for the subprocesses that inherit it. A real export still
     wins: the file is the default, the ambient environment the override. Nothing here is policed by
-    name; the one secret is absent-checked where it is used, only on a `source: linear` run."""
+    name; the one secret is absent-checked where it is used, only on an `issue_mode: linear` run."""
     env_file = repo / ENV_FILE
     if env_file.exists():
         load_dotenv(env_file)
@@ -380,18 +376,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     runner = sub.add_parser("run", help="run the issue graph to completion")
     runner.add_argument("repo", type=Path)
-    runner.add_argument("issues", type=Path, nargs="?", default=None)
     runner.add_argument(
-        "--linear-parent",
+        "issue_source",
+        nargs="?",
         default=None,
-        help="read sub-issues from this Linear parent issue instead of .scratch/<phase>/issues",
-    )
-    runner.add_argument(
-        "-j",
-        "--parallel",
-        type=int,
-        default=DEFAULT_CONCURRENCY,
-        help="how many sub-issues may run at once. They still land one at a time.",
+        help="issues directory when issue_mode is filesystem; Linear parent issue when linear",
     )
     runner.add_argument(
         "--dry-run",
@@ -406,11 +395,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     checker = sub.add_parser("validate", help="refuse a run this repo is not ready for")
     checker.add_argument("repo", type=Path)
-    checker.add_argument("issues", type=Path, nargs="?", default=None)
     checker.add_argument(
-        "--linear-parent",
+        "issue_source",
+        nargs="?",
         default=None,
-        help="read sub-issues from this Linear parent issue instead of .scratch/<phase>/issues",
+        help="issues directory when issue_mode is filesystem; Linear parent issue when linear",
     )
     checker.add_argument(
         "--log-level",
@@ -430,21 +419,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     if args.command == "validate":
-        found = validate(args.repo, args.issues, args.linear_parent, config)
+        found = validate(args.repo, args.issue_source, config)
         print(render_refusals(found))
         return 1 if found else 0
 
     if args.dry_run:
-        print(render_plan(args.repo, args.issues, args.linear_parent, config))
+        print(render_plan(args.repo, args.issue_source, config))
         return 0
 
     print(f"configuration: {config.loggable()} log_level={level}")
     report = asyncio.run(
         run(
             args.repo,
-            args.issues,
-            concurrency=args.parallel,
-            linear=args.linear_parent,
+            args.issue_source,
             config=config,
         )
     )

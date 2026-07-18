@@ -1,16 +1,16 @@
 """The run's configuration, resolved once into one value.
 
 `ralph.yaml` at the target repo's root holds the **arguments** — how the harness behaves: the issue
-source, which actors, which branches, which suite. **Every argument is required**: a value the
+mode, which actors, which branches, which suite. **Every argument is required**: a value the
 harness would otherwise guess is a value the human must state, so there are no defaults to drift and
 nothing to detect. `.env` beside it holds the one **secret** a run reads, `LINEAR_API_KEY`, and the
 target repo's own variables, which the suite inherits. No setting lives in both file and env, so
 each has exactly one name and there is nothing to merge. `Config.resolve` is the only reader of
 either.
 
-Two things are deliberately *not* arguments here: the Linear parent is a per-run command-line
-value, and operational verbosity is a command-line flag. Anything a run does not vary — how `codex`
-or `copilot` is driven, the four Linear state names — is not an argument at all but hardcoded in the
+Two things are deliberately *not* arguments here: the issue source is a per-run command-line value,
+and operational verbosity is a command-line flag. Anything a run does not vary — how `codex` or
+`copilot` is driven, the four Linear state names — is not an argument at all but hardcoded in the
 adapter that owns it.
 """
 
@@ -51,10 +51,10 @@ class Config:
 
     Every field but the secret is required — `resolve` raises rather than default any of them. The
     secret is `None` when `.env` set no `LINEAR_API_KEY`; that is checked where it is used, only on
-    a run whose `source` is `linear`.
+    a run whose `issue_mode` is `linear`.
     """
 
-    source: str
+    issue_mode: str
     implementer: str
     editor: str
     protected: frozenset[str]
@@ -68,7 +68,7 @@ class Config:
         path = repo / CONFIG_FILE
         raw = _load_mapping(path)
         return cls(
-            source=_str(raw, "source", path),
+            issue_mode=_str(raw, "issue_mode", path),
             implementer=_str(raw, "implementer", path),
             editor=_str(raw, "editor", path),
             protected=_strset(raw, "protected", path),
@@ -80,7 +80,7 @@ class Config:
     def loggable(self) -> str:
         """A one-line summary safe to print. The API key is reported as set/unset, never echoed."""
         return (
-            f"source={self.source} "
+            f"issue_mode={self.issue_mode} "
             f"implementer={self.implementer} "
             f"editor={self.editor} "
             f"protected={{{', '.join(sorted(self.protected))}}} "

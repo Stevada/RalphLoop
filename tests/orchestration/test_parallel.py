@@ -47,38 +47,23 @@ def with_ledger(monkeypatch: pytest.MonkeyPatch, repo: TargetRepo) -> Path:
     return ledger
 
 
-async def test_sessions_run_concurrently_and_never_exceed_the_cap(
+async def test_all_currently_eligible_sub_issues_run_concurrently(
     repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Four independent sub-issues, a cap of three.
+    """Four independent sub-issues.
 
-    `peak == 3` is two claims at once. Real parallelism happened — three agents were alive
-    simultaneously, which a sequential run could never produce. And the cap held: the fourth waited.
+    `peak == 4` is the scheduler's promise now: every currently eligible sibling is dispatched.
 
     It also settles a question no other test can. The merge lock is **never held while an agent
-    runs**: if it were, these three could not have overlapped at all.
+    runs**: if it were, these four could not have overlapped at all.
     """
     repo.write_graph({"01": [], "02": [], "03": [], "04": []})
     ledger = with_ledger(monkeypatch, repo)
 
-    report = await run(repo.path, None, concurrency=3, implementer=stand_in(agent, Behaviour.SLOW))
+    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.SLOW))
 
     assert sorted(report.landed) == ["01", "02", "03", "04"]
-    assert peak_concurrency(ledger) == 3
-
-
-async def test_the_cap_of_one_really_is_sequential(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The control. Without it, the test above proves only that the ledger counts to three — it
-    would pass just as happily against a harness that ignored the cap entirely."""
-    repo.write_graph({"01": [], "02": [], "03": []})
-    ledger = with_ledger(monkeypatch, repo)
-
-    report = await run(repo.path, None, concurrency=1, implementer=stand_in(agent, Behaviour.SLOW))
-
-    assert len(report.landed) == 3
-    assert peak_concurrency(ledger) == 1
+    assert peak_concurrency(ledger) == 4
 
 
 async def test_a_fast_sub_issue_lands_without_waiting_for_a_slower_sibling(
@@ -94,7 +79,7 @@ async def test_a_fast_sub_issue_lands_without_waiting_for_a_slower_sibling(
     repo.write_graph({"01": [], "02": []})
     spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.SLOW})
 
-    report = await run(repo.path, None, concurrency=2, implementer=stand_in(agent, spec))
+    report = await run(repo.path, None, implementer=stand_in(agent, spec))
 
     assert report.landed == (SubIssueId("02"), SubIssueId("01"))
 
@@ -106,7 +91,7 @@ async def test_concurrent_sub_issues_serialize_into_a_linear_history(
     integration branch grows by fast-forward and there is not a merge commit in it."""
     repo.write_graph({"01": [], "02": [], "03": []})
 
-    report = await run(repo.path, None, concurrency=3, implementer=stand_in(agent, Behaviour.SUCCEED))
+    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED))
 
     assert report.clean
     assert repo.commit_count("integration") == 5  # initial + the graph + three sub-issues
@@ -130,7 +115,6 @@ async def test_a_rebase_conflict_does_not_stall_the_queue_for_its_siblings(
     report = await run(
         repo.path,
         None,
-        concurrency=3,
         implementer=stand_in(agent, spec),
         editor=terminal_editor(),
     )
@@ -166,7 +150,7 @@ async def test_a_sub_issue_is_dispatched_the_moment_its_blockers_land(
     spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.SLOW})
     ledger = with_ledger(monkeypatch, repo)
 
-    report = await run(repo.path, None, concurrency=4, implementer=stand_in(agent, spec))
+    report = await run(repo.path, None, implementer=stand_in(agent, spec))
 
     assert report.clean
     assert report.landed[-1] == SubIssueId("01")  # the slow one finished last, blocking nobody

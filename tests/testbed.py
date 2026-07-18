@@ -185,14 +185,14 @@ class TargetRepo:
         self.git("commit", "-m", "a graph of the test's own shape")
 
 
-def write_ralph_yaml(root: Path, *, source: str = "filesystem", editor: str = "claude") -> None:
+def write_ralph_yaml(root: Path, *, issue_mode: str = "filesystem", editor: str = "claude") -> None:
     """The `ralph.yaml` a throwaway repo runs on. `implementer: codex` is a placeholder — every test
     injects the scripted stand-in through `run(implementer=…)`. Failure-path tests inject a stub
     Editor through `run(editor=...)`, so no orchestration test calls a model."""
     (root / "ralph.yaml").write_text(
         yaml.safe_dump(
             {
-                "source": source,
+                "issue_mode": issue_mode,
                 "implementer": "codex",
                 "editor": editor,
                 "protected": ["main", "master"],
@@ -206,9 +206,9 @@ def write_ralph_yaml(root: Path, *, source: str = "filesystem", editor: str = "c
 
 def make_config(**overrides: object) -> Config:
     """A resolved `Config` a test can inject through `run(config=…)`, bypassing the file — the seam
-    for exercising a custom `install_cmd`, `protected`, or `source` without dirtying the tree."""
+    for exercising a custom `install_cmd`, `protected`, or `issue_mode` without dirtying the tree."""
     base: dict[str, object] = {
-        "source": "filesystem",
+        "issue_mode": "filesystem",
         "implementer": "codex",
         "editor": "claude",
         "protected": frozenset({"main", "master"}),
