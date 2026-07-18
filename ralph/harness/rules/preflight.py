@@ -50,9 +50,6 @@ def refusals(facts: RepoFacts) -> tuple[Refusal, ...]:
             )
         )
 
-    if facts.suite_error is not None:
-        found.append(Refusal(Check.NO_TEST_RUNNER, facts.suite_error))
-
     if facts.pre_commit_config is not None and not facts.pre_commit_installed:
         found.append(
             Refusal(

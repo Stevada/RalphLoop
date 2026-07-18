@@ -207,8 +207,8 @@ Brief and findings are separate files because a revision may change one and leav
 
 ## 4. Adapters — `ralph/adapters/`
 
-Two CLIs, and **either can back either actor**. Chosen in `cli.py` from `RALPH_IMPLEMENTER` /
-`RALPH_EDITOR`; nothing else knows which is running.
+Two CLIs, and **either can back either actor**. Chosen in `cli.py` from `ralph.yaml`'s
+`implementer` / `editor`; nothing else knows which is running.
 
 |  | Implementer | Editor |
 |---|---|---|
@@ -232,8 +232,8 @@ differs per CLI. So the kill logic lives once, behind `ContextSource`:
 - `run_bounded(proc, source, budget)` — the kill loop every adapter's `run`/`adjudicate` reduces to.
   Consumes the source under `aclosing`, kills on `exceeded` or `TimeoutError`. Takes a `Killable`
   rather than a subprocess, because the SDK Editor is a conversation, not a process.
-- `source=None` is **not** "unbounded" — it is *a session publishing no context signal* (the stand-in
-  agent, or a bare `RALPH_AGENT_CMD`): bounded on the clock alone, peak honestly reported as zero.
+- `source=None` is **not** "unbounded" — it is *a session publishing no context signal* (the scripted
+  stand-in agent the tests inject): bounded on the clock alone, peak honestly reported as zero.
 
 **Per-CLI empirics — the rollout-file format, the debug-log gotchas, the 56.5k→8.4k measurements —
 live in [`docs/cli-metering.md`](cli-metering.md).** They are external to our code and change on the
@@ -358,14 +358,13 @@ different durability. A cycle's worth reads as a story with two characters:
 
 ### The pre-flight — [preflight.py](../ralph/harness/rules/preflight.py), gathered in `cli.py`
 
-**It refuses; it does not warn.** Six checks, each describing a repo the harness would otherwise
+**It refuses; it does not warn.** Five checks, each describing a repo the harness would otherwise
 damage or misjudge:
 
 | Check | What it would otherwise do |
 |---|---|
 | `protected-branch` | Fast-forward `main`. Ralph lands onto the branch it is run from. |
 | `uncommitted-changes` | Fight the merge queue's fast-forwards over uncommitted work, and lose. |
-| `no-test-runner` | Call every session green — an undeclared `impasse` becomes **unreachable**, the most expensive miss of the six. |
 | `uninstalled-pre-commit-hooks` | Land commits that skipped the checks the repo believes it enforces. |
 | `invalid-issue-source` | Start against an issue source it cannot reach or was misconfigured to find. |
 | `graph` | Read a source that read fine but holds a graph it cannot use. |

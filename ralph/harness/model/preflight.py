@@ -11,7 +11,7 @@ from enum import StrEnum
 
 
 class Check(StrEnum):
-    """The six things the harness refuses to start without.
+    """The five things the harness refuses to start without.
 
     Named, and not merely counted, because a refusal that cannot say *which* check failed is a
     refusal a human has to reproduce to understand — and the whole point of a pre-flight is that
@@ -23,7 +23,6 @@ class Check(StrEnum):
 
     PROTECTED_BRANCH = "protected-branch"
     UNCOMMITTED_CHANGES = "uncommitted-changes"
-    NO_TEST_RUNNER = "no-test-runner"
     UNINSTALLED_PRE_COMMIT_HOOKS = "uninstalled-pre-commit-hooks"
     INVALID_ISSUE_SOURCE = "invalid-issue-source"
     INVALID_ISSUE_GRAPH = "invalid-issue-graph"
@@ -46,7 +45,7 @@ class Refusal:
 class RepoFacts:
     """Everything the pre-flight is allowed to know. Nothing here is looked up; it is all told.
 
-    The four `... _error` fields carry the message from whatever raised, verbatim, rather than a
+    The `... _error` fields carry the message from whatever raised, verbatim, rather than a
     re-derived summary of it. The graph's own parser already says exactly what is wrong with the
     graph — restating it here would be a second, worse copy of a message that is already right.
     """
@@ -56,7 +55,6 @@ class RepoFacts:
     dirty: tuple[str, ...]
     """Paths with uncommitted changes, as git reports them. Empty is clean."""
 
-    suite_error: str | None
     source_error: str | None
     """The message from a source that could not be read at all. `None` means it was read; whether
     what it held was a valid graph is `graph_error`'s question."""

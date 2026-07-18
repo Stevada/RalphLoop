@@ -13,21 +13,18 @@ simply never eligible. That is the thing being tested.
 from __future__ import annotations
 
 import json
-import sys
-
-import pytest
 
 from ralph.cli import render, run
 from ralph.harness import Outcome
 from ralph.issues import SubIssueId
 from ralph.ports import Budget
-from tests.testbed import Behaviour, StandInAgent, TargetRepo, behaviour_spec
-
-
-def script_the_agent(
-    monkeypatch: pytest.MonkeyPatch, agent: StandInAgent, spec: Behaviour | str
-) -> None:
-    monkeypatch.setenv("RALPH_AGENT_CMD", f"{sys.executable} {agent.script} {spec} {{sub_issue}}")
+from tests.testbed import (
+    Behaviour,
+    StandInAgent,
+    TargetRepo,
+    behaviour_spec,
+    stand_in_implementer as stand_in,
+)
 
 
 def story(repo: TargetRepo) -> list[tuple[str, str, str]]:
@@ -36,7 +33,7 @@ def story(repo: TargetRepo) -> list[tuple[str, str, str]]:
 
 
 async def test_a_failure_quarantines_and_the_run_drains_around_it(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """01 declares an impasse. 03 stands behind it. 02 and 04 have nothing to do with either.
 
@@ -45,9 +42,9 @@ async def test_a_failure_quarantines_and_the_run_drains_around_it(
     independent sub-issue in the graph.
     """
     repo.write_graph({"01": [], "02": [], "03": ["01"], "04": ["02"]})
-    script_the_agent(monkeypatch, agent, behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.IMPASSE}))
+    spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.IMPASSE})
 
-    report = await run(repo.path, None, concurrency=3)
+    report = await run(repo.path, None, concurrency=3, implementer=stand_in(agent, spec))
 
     assert sorted(report.landed) == ["02", "04"]  # every unaffected sub-issue still landed
     assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
@@ -66,14 +63,13 @@ async def test_a_failure_quarantines_and_the_run_drains_around_it(
 
 
 async def test_the_quarantined_worktree_is_preserved_as_evidence(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """The worktree is what a human reads to decide whether the model was right. Preserved, and
     moved somewhere they will find it — `.worktrees/failed/` is where the notification says it is."""
     repo.write_graph({"01": []})
-    script_the_agent(monkeypatch, agent, Behaviour.RED_SUITE)
 
-    await run(repo.path, None)
+    await run(repo.path, None, implementer=stand_in(agent, Behaviour.RED_SUITE))
 
     failed = repo.path / ".worktrees" / "failed" / "01"
     assert failed.is_dir()
@@ -82,7 +78,7 @@ async def test_the_quarantined_worktree_is_preserved_as_evidence(
 
 
 async def test_a_killed_session_yields_a_report_built_from_harness_facts_only(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """**The harness never fabricates an impasse report.**
 
@@ -92,9 +88,8 @@ async def test_a_killed_session_yields_a_report_built_from_harness_facts_only(
     and what remains is what the harness observed for itself.
     """
     repo.write_graph({"01": []})
-    script_the_agent(monkeypatch, agent, Behaviour.HANG)
 
-    report = await run(repo.path, None, Budget(wall_clock_s=1.0))
+    report = await run(repo.path, None, Budget(wall_clock_s=1.0), implementer=stand_in(agent, Behaviour.HANG))
 
     escalation = report.notification.escalations[0]
     assert escalation.outcome is Outcome.INFRA_FAILED
@@ -104,7 +99,7 @@ async def test_a_killed_session_yields_a_report_built_from_harness_facts_only(
 
 
 async def test_a_report_carries_both_the_models_claim_and_the_harnesss_facts(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """The agent says, in as many words, "All tests pass." The suite is red.
 
@@ -113,9 +108,8 @@ async def test_a_report_carries_both_the_models_claim_and_the_harnesss_facts(
     claim would be hiding the most interesting thing in it.
     """
     repo.write_graph({"01": []})
-    script_the_agent(monkeypatch, agent, Behaviour.RED_SUITE)
 
-    report = await run(repo.path, None)
+    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.RED_SUITE))
 
     escalation = report.notification.escalations[0]
     assert escalation.outcome is Outcome.IMPASSE
@@ -125,29 +119,28 @@ async def test_a_report_carries_both_the_models_claim_and_the_harnesss_facts(
 
 
 async def test_zero_commits_is_an_impasse_never_a_benign_skip(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """It exits 0 and says the code was already fine. The prototype called that a skip and moved on
     — which is how a graph of ten sub-issues finishes in four minutes having done nothing at all."""
     repo.write_graph({"01": []})
-    script_the_agent(monkeypatch, agent, Behaviour.COMMIT_NOTHING)
 
-    report = await run(repo.path, None)
+    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.COMMIT_NOTHING))
 
     assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
     assert report.notification.escalations[0].report.telemetry.commits == 0
 
 
 async def test_nothing_is_ever_retried(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """An `infra-failed` session results in exactly **one** session for that sub-issue, and it
     quarantines. Not once more, not with backoff. Retrying burns the budget, delays the
     notification, and produces a second failure report nobody wanted."""
     repo.write_graph({"01": [], "02": []})
-    script_the_agent(monkeypatch, agent, behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.HANG}))
+    spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.HANG})
 
-    report = await run(repo.path, None, Budget(wall_clock_s=1.0), concurrency=2)
+    report = await run(repo.path, None, Budget(wall_clock_s=1.0), concurrency=2, implementer=stand_in(agent, spec))
 
     assert report.failed == {SubIssueId("01"): Outcome.INFRA_FAILED}
     opened = [(id, kind) for id, kind, _ in story(repo) if kind == "session-started"]
@@ -156,7 +149,7 @@ async def test_nothing_is_ever_retried(
 
 
 async def test_one_notification_says_which_to_open_first(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """The bar: *if you cannot tell from it alone whether to spend your first ten minutes reading a
     diff or rewriting a PRD, the notification has failed.*
@@ -166,13 +159,9 @@ async def test_one_notification_says_which_to_open_first(
     impasse comes first, and the notification says why, in the model's own words.
     """
     repo.write_graph({"01": [], "02": [], "03": ["01"], "04": ["03"]})
-    script_the_agent(
-        monkeypatch,
-        agent,
-        behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.IMPASSE, "02": Behaviour.RED_SUITE}),
-    )
+    spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.IMPASSE, "02": Behaviour.RED_SUITE})
 
-    report = await run(repo.path, None, concurrency=2)
+    report = await run(repo.path, None, concurrency=2, implementer=stand_in(agent, spec))
     n = report.notification
 
     assert [e.sub_issue for e in n.escalations] == ["01", "02"]

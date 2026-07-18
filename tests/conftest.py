@@ -10,16 +10,14 @@ from tests.testbed import StandInAgent, TargetRepo, make_stand_in_agent, make_ta
 
 
 @pytest.fixture(autouse=True)
-def no_model_in_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+def no_model_in_the_loop() -> None:
     """**No test in this suite calls a model.**
 
-    `RALPH_IMPLEMENTER` and `RALPH_EDITOR` are read from the environment by `cli.py`, which means a
-    developer who has `RALPH_EDITOR=claude` exported for their own runs would silently have the whole
-    end-to-end suite billing Opus. Cleared here for every test, once, rather than remembered in each
-    one — a safety property that depends on being remembered is not one.
+    The Implementer and Editor are chosen in `ralph.yaml`, which the throwaway repos never write, so
+    every test falls to the stand-in agent by construction — a developer's ambient environment
+    cannot reach into a run to bill Opus. The guarantee is structural, not a fixture that has to be
+    remembered; this one only names it.
     """
-    monkeypatch.delenv("RALPH_IMPLEMENTER", raising=False)
-    monkeypatch.delenv("RALPH_EDITOR", raising=False)
 
 
 @pytest.fixture

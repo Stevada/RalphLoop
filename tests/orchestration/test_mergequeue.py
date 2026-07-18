@@ -15,12 +15,12 @@ from pathlib import Path
 from dataclasses import dataclass, field
 
 from ralph.adapters.git import GitCli
-from ralph.adapters.suite import SubprocessTestRunner, detect_test_cmd
+from ralph.adapters.suite import SubprocessTestRunner
 from ralph.harness import SuiteResult
 from ralph.mergequeue import Land, LandResult, MergeQueue
 from ralph.ports import Worktree
 from tests.fakes import FakeGit, FakeTestRunner
-from tests.testbed import Behaviour, StandInAgent, TargetRepo
+from tests.testbed import TEST_CMD, Behaviour, StandInAgent, TargetRepo
 
 
 @dataclass(slots=True)
@@ -47,7 +47,7 @@ class OverlapWatchingRunner:
 
 def real_queue(repo: TargetRepo) -> tuple[MergeQueue, GitCli]:
     git = GitCli(repo=repo.path)
-    runner = SubprocessTestRunner(cmd=detect_test_cmd(repo.path))
+    runner = SubprocessTestRunner(cmd=TEST_CMD)
     return MergeQueue(git=git, runner=runner, integration="integration"), git
 
 

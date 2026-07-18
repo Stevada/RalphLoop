@@ -12,7 +12,6 @@ high-water mark off it. Nothing else can tell the difference.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
@@ -27,13 +26,8 @@ from tests.testbed import (
     TargetRepo,
     behaviour_spec,
     peak_concurrency,
+    stand_in_implementer as stand_in,
 )
-
-
-def script_the_agent(
-    monkeypatch: pytest.MonkeyPatch, agent: StandInAgent, spec: Behaviour | str
-) -> None:
-    monkeypatch.setenv("RALPH_AGENT_CMD", f"{sys.executable} {agent.script} {spec} {{sub_issue}}")
 
 
 def with_ledger(monkeypatch: pytest.MonkeyPatch, repo: TargetRepo) -> Path:
@@ -57,10 +51,9 @@ async def test_sessions_run_concurrently_and_never_exceed_the_cap(
     runs**: if it were, these three could not have overlapped at all.
     """
     repo.write_graph({"01": [], "02": [], "03": [], "04": []})
-    script_the_agent(monkeypatch, agent, Behaviour.SLOW)
     ledger = with_ledger(monkeypatch, repo)
 
-    report = await run(repo.path, None, concurrency=3)
+    report = await run(repo.path, None, concurrency=3, implementer=stand_in(agent, Behaviour.SLOW))
 
     assert sorted(report.landed) == ["01", "02", "03", "04"]
     assert peak_concurrency(ledger) == 3
@@ -72,17 +65,16 @@ async def test_the_cap_of_one_really_is_sequential(
     """The control. Without it, the test above proves only that the ledger counts to three — it
     would pass just as happily against a harness that ignored the cap entirely."""
     repo.write_graph({"01": [], "02": [], "03": []})
-    script_the_agent(monkeypatch, agent, Behaviour.SLOW)
     ledger = with_ledger(monkeypatch, repo)
 
-    report = await run(repo.path, None, concurrency=1)
+    report = await run(repo.path, None, concurrency=1, implementer=stand_in(agent, Behaviour.SLOW))
 
     assert len(report.landed) == 3
     assert peak_concurrency(ledger) == 1
 
 
 async def test_a_fast_sub_issue_lands_without_waiting_for_a_slower_sibling(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """**No wave barrier.** Waves are an artifact of dependencies, not of merging.
 
@@ -92,22 +84,21 @@ async def test_a_fast_sub_issue_lands_without_waiting_for_a_slower_sibling(
     the slowest thing in its wave.
     """
     repo.write_graph({"01": [], "02": []})
-    script_the_agent(monkeypatch, agent, behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.SLOW}))
+    spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.SLOW})
 
-    report = await run(repo.path, None, concurrency=2)
+    report = await run(repo.path, None, concurrency=2, implementer=stand_in(agent, spec))
 
     assert report.landed == (SubIssueId("02"), SubIssueId("01"))
 
 
 async def test_concurrent_sub_issues_serialize_into_a_linear_history(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """Three at once, landing one at a time. Each rebases onto whatever the last one landed, so the
     integration branch grows by fast-forward and there is not a merge commit in it."""
     repo.write_graph({"01": [], "02": [], "03": []})
-    script_the_agent(monkeypatch, agent, Behaviour.SUCCEED)
 
-    report = await run(repo.path, None, concurrency=3)
+    report = await run(repo.path, None, concurrency=3, implementer=stand_in(agent, Behaviour.SUCCEED))
 
     assert report.clean
     assert repo.commit_count("integration") == 5  # initial + the graph + three sub-issues
@@ -117,7 +108,7 @@ async def test_concurrent_sub_issues_serialize_into_a_linear_history(
 
 
 async def test_a_rebase_conflict_does_not_stall_the_queue_for_its_siblings(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """01 and 02 both rewrite the same line; 03 is minding its own business.
 
@@ -126,13 +117,9 @@ async def test_a_rebase_conflict_does_not_stall_the_queue_for_its_siblings(
     is released, nothing is retried, and 03 lands regardless.
     """
     repo.write_graph({"01": [], "02": [], "03": []})
-    script_the_agent(
-        monkeypatch,
-        agent,
-        behaviour_spec(Behaviour.CONFLICT, {"03": Behaviour.SUCCEED}),
-    )
+    spec = behaviour_spec(Behaviour.CONFLICT, {"03": Behaviour.SUCCEED})
 
-    report = await run(repo.path, None, concurrency=3)
+    report = await run(repo.path, None, concurrency=3, implementer=stand_in(agent, spec))
 
     assert SubIssueId("03") in report.landed
     losers = [id for id, o in report.failed.items() if o is Outcome.INTEGRATION_FAILED]
@@ -160,10 +147,10 @@ async def test_a_sub_issue_is_dispatched_the_moment_its_blockers_land(
     a sub-issue it does not depend on.
     """
     repo.write_graph({"01": [], "02": [], "03": [], "04": ["02", "03"]})
-    script_the_agent(monkeypatch, agent, behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.SLOW}))
+    spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.SLOW})
     ledger = with_ledger(monkeypatch, repo)
 
-    report = await run(repo.path, None, concurrency=4)
+    report = await run(repo.path, None, concurrency=4, implementer=stand_in(agent, spec))
 
     assert report.clean
     assert report.landed[-1] == SubIssueId("01")  # the slow one finished last, blocking nobody

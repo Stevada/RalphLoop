@@ -1,8 +1,9 @@
 """The suite runner, the installer, and the run log.
 
 Three small adapters, and one shared theme: each of them has a failure mode whose *silent* version
-would be catastrophic. A suite that cannot be found must not be green. An install that failed must
-not be shrugged at. A log line that cannot be parsed must not be skipped.
+would be catastrophic. The suite command and install command are required `ralph.yaml` arguments —
+the harness detects nothing — so an install that failed must not be shrugged at, and a log line
+that cannot be parsed must not be skipped.
 """
 
 from __future__ import annotations
@@ -13,62 +14,17 @@ from pathlib import Path
 
 import pytest
 
-from ralph.adapters.suite import (
-    InstallFailed,
-    NoSuiteFound,
-    SubprocessTestRunner,
-    detect_install_cmd,
-    detect_test_cmd,
-    install_once,
-)
+from ralph.adapters.suite import InstallFailed, SubprocessTestRunner, install_once
 from ralph.harness import Actor, Outcome
 from ralph.issues import SubIssueId, SubIssueState
 from ralph.runlog import EventKind, JsonlRunLog, RunLogError, event
-from tests.testbed import TargetRepo
-
-# --- detection ----------------------------------------------------------------------------------
-
-
-def test_npm_is_detected(tmp_path: Path) -> None:
-    (tmp_path / "package.json").write_text("{}")
-    assert detect_test_cmd(tmp_path) == ("npm", "test")
-
-
-def test_pytest_is_detected(tmp_path: Path) -> None:
-    (tmp_path / "test_thing.py").write_text("def test_x() -> None: ...\n")
-    assert detect_test_cmd(tmp_path)[-3:] == ("-m", "pytest", "-q")
-
-
-def test_make_is_detected(tmp_path: Path) -> None:
-    (tmp_path / "Makefile").write_text("test:\n\t@echo ok\n")
-    assert detect_test_cmd(tmp_path) == ("make", "test")
-
-
-def test_a_makefile_with_no_test_target_is_not_a_suite(tmp_path: Path) -> None:
-    (tmp_path / "Makefile").write_text("build:\n\t@echo ok\n")
-    with pytest.raises(NoSuiteFound):
-        detect_test_cmd(tmp_path)
-
-
-def test_the_override_beats_every_detector(tmp_path: Path) -> None:
-    (tmp_path / "package.json").write_text("{}")
-
-    assert detect_test_cmd(tmp_path, ("cargo", "test", "--all")) == ("cargo", "test", "--all")
-
-
-def test_a_repo_with_no_suite_and_no_override_is_a_loud_fatal_error(tmp_path: Path) -> None:
-    """Never a green `SuiteResult`. A repo whose tests the harness cannot run would make every
-    classification downstream a lie — and an undeclared impasse (a red suite believed green) would
-    become unreachable."""
-    with pytest.raises(NoSuiteFound, match="no test suite detected"):
-        detect_test_cmd(tmp_path)
-
+from tests.testbed import TEST_CMD, TargetRepo
 
 # --- running ------------------------------------------------------------------------------------
 
 
 async def test_the_runner_reports_a_real_green_suite(repo: TargetRepo) -> None:
-    runner = SubprocessTestRunner(cmd=detect_test_cmd(repo.path))
+    runner = SubprocessTestRunner(cmd=TEST_CMD)
 
     result = await runner.run(repo.path)
 
@@ -78,7 +34,7 @@ async def test_the_runner_reports_a_real_green_suite(repo: TargetRepo) -> None:
 
 async def test_the_runner_reports_a_real_red_suite_with_its_output(repo: TargetRepo) -> None:
     (repo.path / "calculator.py").write_text("def add(a: int, b: int) -> int:\n    return a * b\n")
-    runner = SubprocessTestRunner(cmd=detect_test_cmd(repo.path))
+    runner = SubprocessTestRunner(cmd=TEST_CMD)
 
     result = await runner.run(repo.path)
 
@@ -87,10 +43,6 @@ async def test_the_runner_reports_a_real_red_suite_with_its_output(repo: TargetR
 
 
 # --- installing ---------------------------------------------------------------------------------
-
-
-def test_nothing_to_install_is_a_fact_not_a_failure(tmp_path: Path) -> None:
-    assert detect_install_cmd(tmp_path) is None
 
 
 async def test_a_failed_install_aborts_the_run_loudly(tmp_path: Path) -> None:

@@ -3,27 +3,20 @@
 **The suite result, not the exit code, is the outcome.** This is the module that makes that true:
 the harness runs the tests itself, in the worktree, and does not ask the model how it went.
 
-A repo with no detectable suite is a **loud, fatal error**. Returning a green `SuiteResult` for a
-repo whose tests we could not find would make every classification downstream a lie, and it would
-be the most expensive lie in the system: an undeclared impasse would become unreachable, every red
-suite waved through as success.
+`test_cmd` and `install_cmd` are required `ralph.yaml` arguments — the harness detects nothing and
+guesses nothing. A repo that does not name how to run its suite cannot be run, and that is a config
+parse error upstream, before this module is reached.
 """
 
 from __future__ import annotations
 
 import asyncio
-import sys
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ralph.config import TEST_CMD_ENV
 from ralph.harness import SuiteResult
-
-
-class NoSuiteFound(RuntimeError):
-    """No test command could be detected and none was given. Fatal, before any session starts."""
 
 
 class InstallFailed(RuntimeError):
@@ -35,43 +28,6 @@ class InstallFailed(RuntimeError):
     """
 
 
-def detect_test_cmd(repo: Path, override: tuple[str, ...] | None = None) -> tuple[str, ...]:
-    """`RALPH_TEST_CMD` wins; then npm, pytest, make. No detection means no run.
-
-    The override is resolved from the environment upstream, in `Config`; this function only decides
-    what to detect when there is none.
-    """
-    if override:
-        return override
-    if (repo / "package.json").exists():
-        return ("npm", "test")
-    if (
-        (repo / "pyproject.toml").exists()
-        or any(repo.glob("test_*.py"))
-        or (repo / "tests").is_dir()
-    ):
-        # `sys.executable`, not `python`: the interpreter running the harness is the one we know
-        # exists. A bare `python` is a coin flip on which environment answers.
-        return (sys.executable, "-m", "pytest", "-q")
-    if (repo / "Makefile").exists() and "test:" in (repo / "Makefile").read_text():
-        return ("make", "test")
-    raise NoSuiteFound(
-        f"no test suite detected in {repo} and no {TEST_CMD_ENV} set. "
-        "The harness will not run a repo whose tests it cannot run."
-    )
-
-
-def detect_install_cmd(
-    repo: Path, override: tuple[str, ...] | None = None
-) -> tuple[str, ...] | None:
-    """`None` means nothing to install — which is a fact, not a failure."""
-    if override:
-        return override
-    if (repo / "package.json").exists():
-        return ("npm", "ci")
-    return None
-
-
 async def _run(cmd: Sequence[str], cwd: Path) -> tuple[int, str]:
     proc = await asyncio.create_subprocess_exec(
         *cmd, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
@@ -80,12 +36,9 @@ async def _run(cmd: Sequence[str], cwd: Path) -> tuple[int, str]:
     return proc.returncode or 0, out.decode(errors="replace")
 
 
-async def install_once(repo: Path, override: tuple[str, ...] | None = None) -> None:
+async def install_once(repo: Path, cmd: tuple[str, ...]) -> None:
     """In the base checkout, once per run. Never per worktree — N worktrees would mean N installs
     of the same tree, and the first failure would be discovered N times."""
-    cmd = detect_install_cmd(repo, override)
-    if cmd is None:
-        return
     code, output = await _run(cmd, repo)
     if code != 0:
         raise InstallFailed(f"`{' '.join(cmd)}` exited {code} in {repo}:\n{output}")
@@ -93,7 +46,7 @@ async def install_once(repo: Path, override: tuple[str, ...] | None = None) -> N
 
 @dataclass(frozen=True, slots=True)
 class SubprocessTestRunner:
-    """Detected once, in the base checkout; run many times, in worktrees."""
+    """The suite command, from `ralph.yaml`; run many times, in worktrees."""
 
     cmd: tuple[str, ...]
 

@@ -4,6 +4,9 @@ ralph-output.txt
 timings.txt
 .scratch/
 
+# Secrets and per-run values — .env.example is the tracked template
+.env
+
 # Python
 *.pyc
 __pycache__/

@@ -23,7 +23,7 @@ The project is managed with [uv](https://docs.astral.sh/uv/). One command, from 
 
 ```bash
 uv sync                        # creates .venv on the right Python, from uv.lock
-uv sync --extra editor         # ...and the Claude Agent SDK, if you want RALPH_EDITOR=claude
+uv sync --extra editor         # ...and the Claude Agent SDK, if you want editor: claude in ralph.yaml
 ```
 
 uv fetches the interpreter itself — `.python-version` pins the project to 3.12, the floor of
@@ -155,33 +155,46 @@ Four outcomes, and each one routes somewhere specific:
 `needs-human`, worktree preserved, its dependents never become eligible — and everything
 unaffected still lands. The human is paged **once**, at the end. The run never stops early.
 
-## Environment variables
+## Configuration
 
-| Variable | Default | Description |
-|---|---|---|
-| `RALPH_IMPLEMENTER` | *unset* | `codex` or `copilot`. **Unset is not a default** — it means the argv in `RALPH_AGENT_CMD`, bounded on the clock alone |
-| `RALPH_EDITOR` | *unset* | `claude` or `copilot`. **Unset means there is no Editor in this run** — quarantine-and-drain, failures escalating on the Implementer's own outcome |
-| `RALPH_AGENT_CMD` | — | The Implementer's argv when `RALPH_IMPLEMENTER` is unset. `{sub_issue}` is substituted |
-| `LINEAR_API_KEY` | — | Linear API key, required when `--linear-parent` or `RALPH_LINEAR_PARENT` is used |
-| `RALPH_LINEAR_PARENT` | — | Linear parent issue identifier to use when `--linear-parent` is not passed |
-| `RALPH_LINEAR_STATE_READY` | `ready` | Linear workflow state name mapped to Ralph `ready` |
-| `RALPH_LINEAR_STATE_IN_PROGRESS` | `in-progress` | Linear workflow state name mapped to Ralph `in-progress` |
-| `RALPH_LINEAR_STATE_LANDED` | `landed` | Linear workflow state name mapped to Ralph `landed` |
-| `RALPH_LINEAR_STATE_NEEDS_HUMAN` | `needs-human` | Linear workflow state name mapped to Ralph `needs-human` |
-| `RALPH_TEST_CMD` | autodetected | Overrides suite detection. A repo with no detectable suite is refused |
-| `RALPH_INSTALL_CMD` | autodetected | Runs **once**, in the base checkout. A failure aborts the run |
-| `RALPH_PROTECTED_BRANCHES` | `main master` | Branches Ralph refuses to run on |
-| `CODEX_MODEL` | `gpt-5.3-codex` | Model passed to `codex exec --model` |
-| `CODEX_SANDBOX` | `workspace-write` | Sandbox passed to `codex exec --sandbox` |
-| `CODEX_APPROVAL` | `never` | Approval policy passed to `codex exec --ask-for-approval` |
-| `RALPH_CODEX_UNSANDBOXED` | `0` | `1` bypasses Codex approvals and sandbox |
-| `COPILOT_MODEL` | `gpt-5.3-codex` | Model passed to `copilot --model` |
+A run reads its settings from two files at the target repo's root, and **no setting lives in both**.
+`ralph.yaml` holds the **arguments** — how the harness behaves — and **every one is required**:
+there are no defaults to drift and nothing is detected, so a value the harness would otherwise guess
+is a value you state. `.env` holds the one **secret** a run reads (`LINEAR_API_KEY`) — gitignored;
+copy `.env.example`. Ralph loads the whole `.env` so its suite inherits the target repo's own
+variables (`DATABASE_URL`, …) too, and reads only `LINEAR_API_KEY` for itself. A missing argument,
+or a `.env` typo that leaves the required secret absent, fails loudly.
+
+### `ralph.yaml` — arguments (all required)
+
+```yaml
+# <repo>/ralph.yaml
+source: filesystem          # filesystem | linear — where the sub-issue graph comes from
+implementer: codex          # codex | copilot — writes the code and the tests
+editor: claude              # claude | copilot | none — diagnoses failures; none is quarantine-and-drain
+protected: [main, master]   # branches a run refuses to start from
+test_cmd: uv run pytest -q  # a string is split into an argv; a list is taken verbatim
+install_cmd: uv sync        # runs once, in the base checkout; a failure aborts the run
+```
+
+Omitting any of these is a loud, fatal error — including `editor`, whose "no Editor" mode is the
+explicit value `none`, not an absence. How `codex`/`copilot` is driven, and the four Linear state
+names, are **not** arguments: they are hardcoded in the adapter that owns them.
+
+### `.env` — the one secret
+
+| Variable | Description |
+|---|---|
+| `LINEAR_API_KEY` | Linear API key. Required only when `source: linear` (with `--linear-parent`). |
+
+Operational verbosity is the `--log-level` flag, not configuration; the Linear parent is the
+`--linear-parent` per-run argument. Neither is a secret, so neither lives here.
 
 ## Design principles
 
 1. **Target repos stay agnostic** — Ralph never modifies target repo structure. It reads
-   `.scratch/` for issues and a repo-level agent context file (`CLAUDE.md` for Copilot,
-   `AGENTS.md` or `CLAUDE.md` for Codex).
+   `.scratch/` for issues, a repo-level agent context file (`CLAUDE.md` for Copilot,
+   `AGENTS.md` or `CLAUDE.md` for Codex), and its own `ralph.yaml`/`.env` at the repo root.
 2. **Single-repo scope** — intra-repo dependencies only. Cross-repo sequencing is the user's.
 3. **Skills as references** — the prompt invokes `/tdd` by name. Skills are installed at user
    level, never bundled here.

@@ -19,24 +19,21 @@ branch, and the run log tells the truth about what happened in what order.
 from __future__ import annotations
 
 import json
-import sys
-
-import pytest
 
 from ralph.cli import render, run
 from ralph.harness import Outcome
 from ralph.issues import SubIssueId
-from tests.testbed import Behaviour, StandInAgent, TargetRepo, behaviour_spec
+from tests.testbed import (
+    Behaviour,
+    StandInAgent,
+    TargetRepo,
+    behaviour_spec,
+    stand_in_implementer as stand_in,
+)
 
 # A contract, two in parallel behind it, one integrating both. The smallest graph in which
 # "in parallel" and "in order" are both claims, and can therefore both be wrong.
 PHASE = {"01": [], "02": ["01"], "03": ["01"], "04": ["02", "03"]}
-
-
-def script_the_agent(
-    monkeypatch: pytest.MonkeyPatch, agent: StandInAgent, spec: Behaviour | str
-) -> None:
-    monkeypatch.setenv("RALPH_AGENT_CMD", f"{sys.executable} {agent.script} {spec} {{sub_issue}}")
 
 
 def events(repo: TargetRepo) -> list[dict[str, str]]:
@@ -49,12 +46,11 @@ def story(repo: TargetRepo) -> list[tuple[str, str, str]]:
 
 
 async def test_every_sub_issue_lands_and_the_history_is_linear(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     repo.write_graph(PHASE)
-    script_the_agent(monkeypatch, agent, Behaviour.SUCCEED)
 
-    report = await run(repo.path, None, concurrency=4)
+    report = await run(repo.path, None, concurrency=4, implementer=stand_in(agent, Behaviour.SUCCEED))
 
     assert sorted(report.landed) == ["01", "02", "03", "04"]
     assert report.clean
@@ -73,7 +69,7 @@ async def test_every_sub_issue_lands_and_the_history_is_linear(
 
 
 async def test_the_run_log_tells_the_true_story_in_order(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """*In order* is the whole claim, and it is not the same claim as *complete*.
 
@@ -83,9 +79,8 @@ async def test_the_run_log_tells_the_true_story_in_order(
     landed would be describing a run that never happened.
     """
     repo.write_graph(PHASE)
-    script_the_agent(monkeypatch, agent, Behaviour.SUCCEED)
 
-    await run(repo.path, None, concurrency=4)
+    await run(repo.path, None, concurrency=4, implementer=stand_in(agent, Behaviour.SUCCEED))
 
     lines = story(repo)
     at = lines.index
@@ -114,15 +109,15 @@ async def test_the_run_log_tells_the_true_story_in_order(
 
 
 async def test_the_run_log_carries_no_spend_no_diffstat_and_no_test_output(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """The run log answers *what happened, in what order*, and a reader who has to skim past a
     40-line pytest dump to find the next event is not being told a story. Those facts exist — they
     are in the failure report, which has a different reader."""
     repo.write_graph(PHASE)
-    script_the_agent(monkeypatch, agent, behaviour_spec(Behaviour.SUCCEED, {"02": Behaviour.RED_SUITE}))
+    spec = behaviour_spec(Behaviour.SUCCEED, {"02": Behaviour.RED_SUITE})
 
-    await run(repo.path, None, concurrency=4)
+    await run(repo.path, None, concurrency=4, implementer=stand_in(agent, spec))
 
     raw = (repo.path / ".scratch" / "run.jsonl").read_text()
     assert all(set(e) == {"ts", "sub_issue", "actor", "kind", "details"} for e in events(repo))
@@ -131,14 +126,14 @@ async def test_the_run_log_carries_no_spend_no_diffstat_and_no_test_output(
 
 
 async def test_one_failure_strands_its_dependents_and_nothing_else(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """02 declares an impasse. 03 has nothing to do with it and lands; 04 stands behind both and
     never gets a turn. One notification comes out at the end, and it names the one thing to open."""
     repo.write_graph(PHASE)
-    script_the_agent(monkeypatch, agent, behaviour_spec(Behaviour.SUCCEED, {"02": Behaviour.IMPASSE}))
+    spec = behaviour_spec(Behaviour.SUCCEED, {"02": Behaviour.IMPASSE})
 
-    report = await run(repo.path, None, concurrency=4)
+    report = await run(repo.path, None, concurrency=4, implementer=stand_in(agent, spec))
 
     assert sorted(report.landed) == ["01", "03"]
     assert report.failed == {SubIssueId("02"): Outcome.IMPASSE}
@@ -163,7 +158,7 @@ async def test_one_failure_strands_its_dependents_and_nothing_else(
 
 
 async def test_a_semantic_conflict_surfaces_on_the_second_to_land(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """**The one a green integration branch would have hidden.**
 
@@ -178,13 +173,9 @@ async def test_a_semantic_conflict_surfaces_on_the_second_to_land(
     at the end rather than green-looking.
     """
     repo.write_graph({"01": [], "02": []})
-    script_the_agent(
-        monkeypatch,
-        agent,
-        behaviour_spec(Behaviour.RENAMES_THE_API, {"02": Behaviour.CALLS_THE_API}),
-    )
+    spec = behaviour_spec(Behaviour.RENAMES_THE_API, {"02": Behaviour.CALLS_THE_API})
 
-    report = await run(repo.path, None, concurrency=2)
+    report = await run(repo.path, None, concurrency=2, implementer=stand_in(agent, spec))
 
     assert len(report.landed) == 1
     assert list(report.failed.values()) == [Outcome.INTEGRATION_FAILED]

@@ -41,15 +41,13 @@ from ralph.ports import Observation, Worktree
 
 log = logging.getLogger(__name__)
 
-MODEL_ENV = "CODEX_MODEL"
-SANDBOX_ENV = "CODEX_SANDBOX"
-APPROVAL_ENV = "CODEX_APPROVAL"
-UNSANDBOXED_ENV = "RALPH_CODEX_UNSANDBOXED"
+# Codex's own variable, honoured here only to *locate* its sessions dir — not a Ralph tuning knob.
+# Ralph does not drive Codex any other way: how `codex exec` runs is fixed below, not configured.
 HOME_ENV = "CODEX_HOME"
 
-DEFAULT_MODEL = "gpt-5.3-codex"
-DEFAULT_SANDBOX = "workspace-write"
-DEFAULT_APPROVAL = "never"
+MODEL = "gpt-5.3-codex"
+SANDBOX = "workspace-write"
+APPROVAL = "never"
 
 THREAD_STARTED = "thread.started"
 TOKEN_COUNT = "token_count"
@@ -73,23 +71,12 @@ def codex_argv(brief: Brief, findings: Findings, worktree: Worktree) -> Sequence
     """`--json` is not optional: it is how the session announces the thread id that finds its
     rollout file. Without it there is nothing to meter."""
     argv = [
-        "codex",
-        "exec",
-        "--json",
-        "--model",
-        os.environ.get(MODEL_ENV) or DEFAULT_MODEL,
+        "codex", "exec", "--json",
+        "--model", MODEL,
+        "--sandbox", SANDBOX,
+        "--ask-for-approval", APPROVAL,
+        implementer_prompt(brief, findings),
     ]
-    if os.environ.get(UNSANDBOXED_ENV) == "1":
-        # Mutually exclusive with --sandbox/--ask-for-approval; Codex rejects them together.
-        argv.append("--dangerously-bypass-approvals-and-sandbox")
-    else:
-        argv += [
-            "--sandbox",
-            os.environ.get(SANDBOX_ENV) or DEFAULT_SANDBOX,
-            "--ask-for-approval",
-            os.environ.get(APPROVAL_ENV) or DEFAULT_APPROVAL,
-        ]
-    argv.append(implementer_prompt(brief, findings))
     return argv
 
 

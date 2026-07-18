@@ -3,7 +3,10 @@ name = "ralph"
 version = "0.1.0"
 description = "Harnessed engineering for coding agents"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "python-dotenv>=1.2.2",
+    "pyyaml>=6.0.3",
+]
 
 [project.optional-dependencies]
 # An extra, not a dev dependency: `RALPH_EDITOR=claude` is a *runtime* capability a user opts into,
@@ -22,6 +25,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "mypy>=1.13",
     "ruff>=0.8",
+    "types-pyyaml>=6.0.12.20260518",
 ]
 
 [build-system]

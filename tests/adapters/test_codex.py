@@ -77,17 +77,15 @@ def rollout(dir: Path, id: str, *events: str) -> Path:
 # ── the argv ─────────────────────────────────────────────────────────────────────────────────
 
 
-def test_the_session_is_asked_for_json(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_session_is_asked_for_json() -> None:
     """Not a preference. `--json` is how the session announces the `thread_id` that finds its
     rollout file — and without that file there is no context signal and no ceiling at all."""
-    monkeypatch.delenv("RALPH_CODEX_UNSANDBOXED", raising=False)
     argv = codex_argv(BRIEF, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="main"))
 
     assert argv[:3] == ["codex", "exec", "--json"]
 
 
-def test_the_brief_and_the_findings_both_reach_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("RALPH_CODEX_UNSANDBOXED", raising=False)
+def test_the_brief_and_the_findings_both_reach_the_model() -> None:
     prompt = codex_argv(BRIEF, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"))[-1]
 
     assert "`add(1, 2) == 3`" in prompt  # the brief
@@ -95,25 +93,15 @@ def test_the_brief_and_the_findings_both_reach_the_model(monkeypatch: pytest.Mon
     assert "<impasse>" in prompt  # and how to say it cannot be done
 
 
-def test_the_sandbox_and_the_bypass_are_never_passed_together(
-    monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Codex rejects them together, and the rejection is a non-zero exit with no commits — which
-    the harness would faithfully classify as an (undeclared) impasse and route to an Editor, to
-    adjudicate a failure that was entirely ours."""
-    monkeypatch.setenv("RALPH_CODEX_UNSANDBOXED", "1")
+def test_how_codex_is_driven_is_fixed_not_configured() -> None:
+    """How `codex exec` runs is hardcoded, not a tuning surface: the sandbox and approval flags are
+    always passed — never the bypass, which Codex rejects alongside them — and the model is fixed."""
     argv = codex_argv(BRIEF, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"))
 
-    assert "--dangerously-bypass-approvals-and-sandbox" in argv
-    assert "--sandbox" not in argv
-    assert "--ask-for-approval" not in argv
-
-
-def test_the_model_comes_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CODEX_MODEL", "gpt-5.3-codex-mini")
-    argv = codex_argv(BRIEF, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"))
-
-    assert "gpt-5.3-codex-mini" in argv
+    assert "--sandbox" in argv and "workspace-write" in argv
+    assert "--ask-for-approval" in argv and "never" in argv
+    assert "--dangerously-bypass-approvals-and-sandbox" not in argv
+    assert "gpt-5.3-codex" in argv
 
 
 def test_the_sessions_dir_follows_codex_home(monkeypatch: pytest.MonkeyPatch) -> None:

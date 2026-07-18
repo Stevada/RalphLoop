@@ -38,7 +38,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import shutil
 import subprocess
 from collections.abc import AsyncGenerator, Callable, Sequence
@@ -56,8 +55,7 @@ from ralph.ports import Observation, SessionContext, Worktree
 log = logging.getLogger(__name__)
 
 COPILOT = "copilot"
-MODEL_ENV = "COPILOT_MODEL"
-DEFAULT_MODEL = "gpt-5.3-codex"
+MODEL = "gpt-5.3-codex"
 POLL_S = 0.05
 
 USAGE = "usage"
@@ -147,7 +145,7 @@ def copilot_argv(
         "-p",
         prompt,
         "--model",
-        os.environ.get(MODEL_ENV) or DEFAULT_MODEL,
+        MODEL,
         "--log-dir",
         str(log_dir),
         "--log-level",

@@ -16,7 +16,6 @@ involved, and #09 swaps in the real one without touching a line of it.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
@@ -44,7 +43,13 @@ from tests.fakes import (
     FakeRunLog,
     FakeTestRunner,
 )
-from tests.testbed import LEDGER_ENV, Behaviour, StandInAgent, TargetRepo
+from tests.testbed import (
+    LEDGER_ENV,
+    Behaviour,
+    StandInAgent,
+    TargetRepo,
+    stand_in_implementer as stand_in,
+)
 
 REPO = Path("/repo")
 ONE = SubIssueId("01")
@@ -422,7 +427,7 @@ async def test_a_sub_issue_in_its_second_cycle_does_not_stall_its_siblings() -> 
 
 
 async def test_a_revise_really_discards_the_work_and_the_sub_issue_really_lands(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """Real git, real worktrees, a real agent subprocess, a real suite — and a stub Editor, which is
     the only thing here that is not real, because no Editor adapter exists until #09.
@@ -434,10 +439,6 @@ async def test_a_revise_really_discards_the_work_and_the_sub_issue_really_lands(
     passes every fake-level test in this file and fails this one.
     """
     repo.write_graph({"01": []})
-    monkeypatch.setenv(
-        "RALPH_AGENT_CMD",
-        f"{sys.executable} {agent.script} {Behaviour.IMPASSE_ONCE.value} {{sub_issue}}",
-    )
     editor = FakeEditor(
         scripted=[
             (
@@ -447,7 +448,9 @@ async def test_a_revise_really_discards_the_work_and_the_sub_issue_really_lands(
         ]
     )
 
-    report = await run(repo.path, None, editor=editor)
+    report = await run(
+        repo.path, None, implementer=stand_in(agent, Behaviour.IMPASSE_ONCE), editor=editor
+    )
 
     assert report.landed == (ONE,)
     assert report.clean
@@ -469,21 +472,17 @@ async def test_a_revise_really_discards_the_work_and_the_sub_issue_really_lands(
 
 
 async def test_the_planners_original_survives_a_real_run(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+    repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """After the run, revision 0 is still on disk and still says what the Planner said — even though
     the live `.md` file has had its `Status:` line rewritten underneath it."""
     repo.write_graph({"01": []})
-    monkeypatch.setenv(
-        "RALPH_AGENT_CMD",
-        f"{sys.executable} {agent.script} {Behaviour.IMPASSE_ONCE.value} {{sub_issue}}",
-    )
     original = (repo.issues_dir / "01-sub.md").read_text()
     editor = FakeEditor(
         scripted=[(telemetry(commits=0), verdict(Verdict.REVISE, brief="a clearer bar"))]
     )
 
-    await run(repo.path, None, editor=editor)
+    await run(repo.path, None, implementer=stand_in(agent, Behaviour.IMPASSE_ONCE), editor=editor)
 
     revisions = repo.issues_dir / "revisions" / "01"
     assert (revisions / "0-brief.md").read_text() == original
@@ -499,16 +498,14 @@ async def test_a_real_run_dispatches_no_fourth_implementer_session(
     """An agent that always fails, and an Editor that always says try again. Three sessions, then a
     human — proven against a real repo, where "a session" means a real subprocess really ran."""
     repo.write_graph({"01": []})
-    monkeypatch.setenv(
-        "RALPH_AGENT_CMD",
-        f"{sys.executable} {agent.script} {Behaviour.IMPASSE.value} {{sub_issue}}",
-    )
     ledger = repo.path.parent / "ledger"
     ledger.write_text("")
     monkeypatch.setenv(LEDGER_ENV, str(ledger))
     editor = FakeEditor(scripted=[(telemetry(commits=0), verdict(Verdict.REVISE))])
 
-    report = await run(repo.path, None, editor=editor)
+    report = await run(
+        repo.path, None, implementer=stand_in(agent, Behaviour.IMPASSE), editor=editor
+    )
 
     # The agent itself counted three starts. Not the harness's word for it.
     assert ledger.read_text().count("+01") == CycleLedger.MAX_CYCLES == 3

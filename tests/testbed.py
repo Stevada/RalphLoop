@@ -20,9 +20,21 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+import yaml
+
+from ralph.adapters.session import SubprocessImplementer
+from ralph.config import Config
+from ralph.issues import Brief, Findings
+from ralph.ports import Implementer, Worktree
+
 # The suite the throwaway repo ships with. Real pytest, run as a real subprocess, in the venv
 # interpreter — the same one the harness itself will detect and run.
 TEST_CMD: tuple[str, ...] = (sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider")
+
+# Nothing to install; a real command that exits 0, since `install_cmd` is a required argument.
+INSTALL_CMD: tuple[str, ...] = (sys.executable, "-c", "")
+
+BRANCH_PREFIX = "ralph/"
 
 IMPASSE_OPEN, IMPASSE_CLOSE = "<impasse>", "</impasse>"
 """The sentinel the Implementer emits when it cannot proceed. The body between the tags is JSON
@@ -173,6 +185,51 @@ class TargetRepo:
         self.git("commit", "-m", "a graph of the test's own shape")
 
 
+def write_ralph_yaml(root: Path, *, source: str = "filesystem", editor: str = "none") -> None:
+    """The `ralph.yaml` a throwaway repo runs on. `implementer: codex` is a placeholder — every test
+    injects the scripted stand-in through `run(implementer=…)` — and `editor: none` is the default
+    because most orchestration tests want quarantine-and-drain, not a model in the loop."""
+    (root / "ralph.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "source": source,
+                "implementer": "codex",
+                "editor": editor,
+                "protected": ["main", "master"],
+                "test_cmd": list(TEST_CMD),
+                "install_cmd": list(INSTALL_CMD),
+            },
+            sort_keys=False,
+        )
+    )
+
+
+def make_config(**overrides: object) -> Config:
+    """A resolved `Config` a test can inject through `run(config=…)`, bypassing the file — the seam
+    for exercising a custom `install_cmd`, `protected`, or `source` without dirtying the tree."""
+    base: dict[str, object] = {
+        "source": "filesystem",
+        "implementer": "codex",
+        "editor": "none",
+        "protected": frozenset({"main", "master"}),
+        "test_cmd": TEST_CMD,
+        "install_cmd": INSTALL_CMD,
+        "linear_api_key": None,
+    }
+    return Config(**{**base, **overrides})  # type: ignore[arg-type]
+
+
+def stand_in_implementer(agent: StandInAgent, behaviour: Behaviour | str) -> Implementer:
+    """The scripted stand-in as an `Implementer`, for `run(implementer=…)`. The sub-issue id is on
+    the worktree's branch — the harness put it there — so that is the only channel the agent needs."""
+
+    def build_argv(brief: Brief, findings: Findings, worktree: Worktree) -> Sequence[str]:
+        tag = worktree.branch.removeprefix(BRANCH_PREFIX)
+        return agent.argv(behaviour, tag)
+
+    return SubprocessImplementer(build_argv=build_argv)
+
+
 def make_target_repo(root: Path) -> TargetRepo:
     """Build the throwaway repo. Torn down with its tmp dir; nothing to clean up by hand."""
     repo = TargetRepo(path=root)
@@ -191,6 +248,7 @@ def make_target_repo(root: Path) -> TargetRepo:
     # than both adding it — a plain content conflict, the kind a real rebase actually hits.
     (root / "shared.py").write_text('MARKER = "base"\n')
     (root / ".gitignore").write_text(".worktrees/\n.pytest_cache/\n__pycache__/\n")
+    write_ralph_yaml(root)
 
     repo.issues_dir.mkdir(parents=True)
     (repo.issues_dir / "01-first.md").write_text(

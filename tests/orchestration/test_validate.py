@@ -17,7 +17,6 @@ exist.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -32,7 +31,7 @@ from ralph.harness import (
     refusals,
 )
 from ralph.issues import IssueGraph, SubIssue, SubIssueId, SubIssueState
-from tests.testbed import Behaviour, StandInAgent, TargetRepo
+from tests.testbed import TargetRepo, make_config
 
 BUILD_HARNESS = Path(__file__).parents[2] / ".scratch" / "build_harness" / "issues"
 
@@ -40,18 +39,11 @@ CLEAN = RepoFacts(
     head_branch="feature/x",
     protected=frozenset({"main", "master"}),
     dirty=(),
-    suite_error=None,
     source_error=None,
     graph_error=None,
     pre_commit_config=None,
     pre_commit_installed=False,
 )
-
-
-def script_the_agent(
-    monkeypatch: pytest.MonkeyPatch, agent: StandInAgent, spec: Behaviour | str
-) -> None:
-    monkeypatch.setenv("RALPH_AGENT_CMD", f"{sys.executable} {agent.script} {spec} {{sub_issue}}")
 
 
 # ── the rule ─────────────────────────────────────────────────────────────────────────────────
@@ -62,7 +54,7 @@ def test_a_clean_repo_is_not_refused() -> None:
 
 
 def test_each_refusal_says_which_morning_it_is() -> None:
-    """The one property the whole pre-flight exists for. Six different repositories, six different
+    """The one property the whole pre-flight exists for. Five different repositories, five different
     sentences — and none of them is "validation failed"."""
     said = {
         r.check: r.reason
@@ -71,7 +63,6 @@ def test_each_refusal_says_which_morning_it_is() -> None:
                 head_branch="main",
                 protected=frozenset({"main", "master"}),
                 dirty=("src/app.py",),
-                suite_error="no test suite detected in /repo",
                 source_error="Linear issue 'ENG-1' was not found",
                 graph_error="03-sub.md has no `## Acceptance criteria`",
                 pre_commit_config=".pre-commit-config.yaml",
@@ -80,12 +71,11 @@ def test_each_refusal_says_which_morning_it_is() -> None:
         )
     }
 
-    assert set(said) == set(Check)  # all six fire, and all six are reported
-    assert len(set(said.values())) == 6  # and no two of them say the same thing
+    assert set(said) == set(Check)  # all five fire, and all five are reported
+    assert len(set(said.values())) == 5  # and no two of them say the same thing
 
     assert "main" in said[Check.PROTECTED_BRANCH]
     assert "src/app.py" in said[Check.UNCOMMITTED_CHANGES]
-    assert "no test suite detected" in said[Check.NO_TEST_RUNNER]
     assert "pre-commit install" in said[Check.UNINSTALLED_PRE_COMMIT_HOOKS]
     assert "ENG-1" in said[Check.INVALID_ISSUE_SOURCE]
     assert "no `## Acceptance criteria`" in said[Check.INVALID_ISSUE_GRAPH]
@@ -148,12 +138,10 @@ def test_a_protected_branch_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
     assert "'main'" in refused.reason
 
 
-def test_the_protected_list_is_the_humans_to_set(
-    repo: TargetRepo, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("RALPH_PROTECTED_BRANCHES", "integration trunk")
+def test_the_protected_list_is_the_humans_to_set(repo: TargetRepo) -> None:
+    config = make_config(protected=frozenset({"integration", "trunk"}))
 
-    (refused,) = validate(repo.path)
+    (refused,) = validate(repo.path, config=config)
 
     assert refused.check is Check.PROTECTED_BRANCH  # `integration` is the fixture's HEAD, and now protected
 
@@ -187,9 +175,10 @@ def test_a_cyclic_graph_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
 
 def test_an_incoherent_issue_source_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
     """`invalid-issue-source`, not `invalid-issue-graph`: the harness never got as far as reading a
-    graph. Asking for both an issues directory and a Linear parent is a contradiction the run cannot
-    resolve, and it is the invocation to fix, not the graph."""
-    (refused,) = validate(repo.path, issues=repo.issues_dir, linear="ENG-1")
+    graph. Under `source: linear`, also passing an issues directory is a contradiction the run
+    cannot resolve, and it is the invocation to fix, not the graph."""
+    config = make_config(source="linear", linear_api_key="lin_x")
+    (refused,) = validate(repo.path, issues=repo.issues_dir, linear="ENG-1", config=config)
 
     assert refused.check is Check.INVALID_ISSUE_SOURCE
     assert "not both" in refused.reason
@@ -207,22 +196,6 @@ def test_a_sub_issue_with_no_acceptance_criteria_is_refused(repo: TargetRepo) ->
     assert "Acceptance criteria" in refused.reason
 
 
-def test_a_repo_with_no_detectable_suite_is_refused(
-    repo: TargetRepo, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The most dangerous of the five to let through: a repo whose tests the harness cannot find is
-    a repo where every session is `success` and an undeclared impasse is unreachable."""
-    (repo.path / "test_calculator.py").unlink()
-    (repo.path / "calculator.py").unlink()
-    (repo.path / "shared.py").unlink()
-    repo.git("commit", "-am", "no suite here")
-
-    (refused,) = validate(repo.path)
-
-    assert refused.check is Check.NO_TEST_RUNNER
-    assert "will not run a repo whose tests it cannot run" in refused.reason
-
-
 def test_the_fixture_repo_is_ready_to_run(repo: TargetRepo) -> None:
     """The guard that stops every test above from passing vacuously: the same five checks, against
     the repo they are all built on, say nothing at all."""
@@ -233,12 +206,10 @@ def test_the_fixture_repo_is_ready_to_run(repo: TargetRepo) -> None:
 # ── and the run runs them too ────────────────────────────────────────────────────────────────
 
 
-async def test_the_run_refuses_what_validate_refuses(
-    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_the_run_refuses_what_validate_refuses(repo: TargetRepo) -> None:
     """A check that only fires when a human remembers to ask for it is a check the run does not
-    have. `ralph run` on `main` would fast-forward `main`."""
-    script_the_agent(monkeypatch, agent, Behaviour.SUCCEED)
+    have. `ralph run` on `main` would fast-forward `main`. The refusal fires before an Implementer
+    is ever built, so none is injected here."""
     repo.git("checkout", "main")
 
     with pytest.raises(Refused, match="protected"):
