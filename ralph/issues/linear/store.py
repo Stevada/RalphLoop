@@ -119,7 +119,7 @@ class LinearIssueStore:
             self.client.create_comment(issue.id, body)
         except Exception:  # noqa: BLE001 — Linear write-through is best-effort by design
             log.warning(
-                "could not mirror token consumption for %s into Linear", id, exc_info=True
+                "could not mirror consumption telemetry for %s into Linear", id, exc_info=True
             )
             return
         self._append_cached_comment(

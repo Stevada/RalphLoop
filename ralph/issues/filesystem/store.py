@@ -245,7 +245,7 @@ class FilesystemIssueStore:
         path = self._consumption_path(id)
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
-            path.write_text(f"# Token consumption for {id}\n\n")
+            path.write_text(f"# Consumption telemetry for {id}\n\n")
         with path.open("a") as handle:
             handle.write(render_consumption_line(record))
 

@@ -36,6 +36,7 @@ class SessionTelemetry:
     exit_code: int
     killed: Killed | None
     consumed_tokens: int  # telemetry only. nothing is gated on it.
+    auto_compactions: int  # telemetry only. nothing is gated on it.
     wall_clock_s: float
     commits: int
     diffstat: str

@@ -255,7 +255,9 @@ async def test_consumption_is_mirrored_to_a_linear_sub_issue_comment() -> None:
 
     await store.record_consumption(
         SubIssueId("RAL-2"),
-        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000),
+        SessionConsumption(
+            actor=Actor.IMPLEMENTER, consumed_tokens=123_000, auto_compactions=2
+        ),
     )
 
     assert len(client.created_comments) == 1
@@ -264,8 +266,9 @@ async def test_consumption_is_mirrored_to_a_linear_sub_issue_comment() -> None:
     assert "<!-- ralph:consumption -->" in body
     assert "implementer" in body
     assert "123000" in body
+    assert "2 auto-compactions" in body
     assert store.consumption(SubIssueId("RAL-2")) == (
-        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000, auto_compactions=2),
     )
 
 

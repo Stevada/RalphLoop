@@ -22,6 +22,7 @@ from ralph.adapters.editor import (
     read_only,
 )
 from ralph.adapters.turn_stream import (
+    AutoCompaction,
     TokenUsage,
     Turn,
     TurnStreamAsk,
@@ -246,6 +247,10 @@ class StubSession:
         self._pause = pause
         self.returncode: int | None = None
         self.killed = False
+
+    @property
+    def auto_compactions(self) -> tuple[AutoCompaction, ...]:
+        return ()
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         for turn in self._scripted:

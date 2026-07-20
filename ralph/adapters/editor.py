@@ -177,11 +177,18 @@ async def run_editor(
         exit_code=completed.exit_code,
         output=completed.output,
         wall_clock_s=completed.wall_clock_s,
+        auto_compactions=completed.auto_compactions,
     )
     return telemetry, verdict_of(completed.output)
 
 
-def editor_telemetry(bound: Bound, exit_code: int, output: str, wall_clock_s: float) -> SessionTelemetry:
+def editor_telemetry(
+    bound: Bound,
+    exit_code: int,
+    output: str,
+    wall_clock_s: float,
+    auto_compactions: int = 0,
+) -> SessionTelemetry:
     """An Editor's telemetry, however it was run — an SDK conversation or a CLI subprocess.
 
     `commits` is zero and `diffstat` empty **by construction, not by observation**: the Editor was
@@ -193,6 +200,7 @@ def editor_telemetry(bound: Bound, exit_code: int, output: str, wall_clock_s: fl
         exit_code=exit_code,
         killed=bound.killed,
         consumed_tokens=bound.consumed_tokens,
+        auto_compactions=auto_compactions,
         wall_clock_s=wall_clock_s,
         commits=0,
         diffstat="",

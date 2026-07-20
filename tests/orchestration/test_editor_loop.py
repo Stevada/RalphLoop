@@ -234,7 +234,7 @@ async def test_each_session_consumption_is_persisted_for_the_sub_issue() -> None
     editor = FakeEditor(
         scripted=[
             (
-                telemetry(commits=0, consumed_tokens=50_000),
+                telemetry(commits=0, consumed_tokens=50_000, auto_compactions=1),
                 verdict(Verdict.REVISE, brief="try the supported API"),
             )
         ]
@@ -244,7 +244,7 @@ async def test_each_session_consumption_is_persisted_for_the_sub_issue() -> None
 
     assert store.consumption(ONE) == (
         SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=100_000),
-        SessionConsumption(actor=Actor.EDITOR, consumed_tokens=50_000),
+        SessionConsumption(actor=Actor.EDITOR, consumed_tokens=50_000, auto_compactions=1),
         SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=200_000),
     )
 
@@ -269,22 +269,26 @@ async def test_run_report_and_notification_include_persisted_consumption_for_qua
     )
     implementer = FakeImplementer(
         scripted=[
-            telemetry(commits=1, consumed_tokens=10),
-            telemetry(commits=0, consumed_tokens=20),
+            telemetry(commits=1, consumed_tokens=10, auto_compactions=2),
+            telemetry(commits=0, consumed_tokens=20, auto_compactions=3),
         ]
     )
-    editor = FakeEditor(scripted=[(telemetry(commits=0, consumed_tokens=5), verdict())])
+    editor = FakeEditor(
+        scripted=[(telemetry(commits=0, consumed_tokens=5, auto_compactions=1), verdict())]
+    )
 
     report = await run_with(store, implementer, editor)
 
     assert report.consumption == {SubIssueId("01"): 10, SubIssueId("02"): 25}
     assert report.total_consumed_tokens == 35
+    assert report.auto_compactions == {SubIssueId("01"): 2, SubIssueId("02"): 4}
+    assert report.total_auto_compactions == 6
 
     text = render(report.notification)
     assert "consumption:" in text
-    assert "  01: 10 tokens" in text
-    assert "  02: 25 tokens" in text
-    assert "  total: 35 tokens" in text
+    assert "  01: 10 tokens, 2 auto-compactions" in text
+    assert "  02: 25 tokens, 4 auto-compactions" in text
+    assert "  total: 35 tokens, 6 auto-compactions" in text
     assert "  03:" not in text
     assert "02  impasse" in text
 

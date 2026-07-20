@@ -81,6 +81,9 @@ class TurnStreamSession(Protocol):
     @property
     def returncode(self) -> int | None: ...
 
+    @property
+    def auto_compactions(self) -> tuple[AutoCompaction, ...]: ...
+
     def turns(self) -> AsyncGenerator[Turn, None]: ...
 
     def kill(self) -> None: ...
@@ -96,6 +99,7 @@ class TurnStreamRun:
     exit_code: int
     output: str
     wall_clock_s: float
+    auto_compactions: int
 
 
 async def run_turn_stream(session: TurnStreamSession, budget: Budget) -> TurnStreamRun:
@@ -121,6 +125,13 @@ async def run_turn_stream(session: TurnStreamSession, budget: Budget) -> TurnStr
         exit_code=session.returncode if session.returncode is not None else -1,
         output="".join(said),
         wall_clock_s=time.monotonic() - started,
+        auto_compactions=_completed_auto_compactions(session.auto_compactions),
+    )
+
+
+def _completed_auto_compactions(events: tuple[AutoCompaction, ...]) -> int:
+    return sum(
+        1 for event in events if event.event == "compacted" and event.success is not False
     )
 
 

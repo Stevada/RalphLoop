@@ -141,12 +141,14 @@ def implementer_telemetry(
     output: str,
     wall_clock_s: float,
     worktree: Worktree,
+    auto_compactions: int = 0,
 ) -> SessionTelemetry:
     """The harness facts every Implementer session reports, regardless of transport."""
     return SessionTelemetry(
         exit_code=exit_code,
         killed=bound.killed,
         consumed_tokens=bound.consumed_tokens,
+        auto_compactions=auto_compactions,
         wall_clock_s=wall_clock_s,
         commits=int(run_git(worktree.path, "rev-list", "--count", f"{worktree.base}..HEAD")),
         diffstat=run_git(worktree.path, "diff", "--stat", f"{worktree.base}..HEAD"),
@@ -189,6 +191,7 @@ async def run_turn_stream_implementer(
         output=completed.output,
         wall_clock_s=completed.wall_clock_s,
         worktree=context.worktree,
+        auto_compactions=completed.auto_compactions,
     )
 
 

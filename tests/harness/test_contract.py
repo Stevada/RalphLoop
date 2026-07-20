@@ -98,6 +98,7 @@ def test_budget_is_only_the_wall_clock_bound() -> None:
 def test_session_telemetry_carries_consumption_but_no_context_peak() -> None:
     names = {f.name for f in dataclasses.fields(SessionTelemetry)}
     assert "consumed_tokens" in names
+    assert "auto_compactions" in names
     assert "peak_context_tokens" not in names
 
 

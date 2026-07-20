@@ -416,8 +416,14 @@ def render(n: Notification) -> str:
     if n.consumption:
         lines.append("\nconsumption:")
         for c in n.consumption:
-            lines.append(f"  {c.sub_issue}: {c.consumed_tokens} tokens")
-        lines.append(f"  total: {n.total_consumed_tokens} tokens")
+            lines.append(
+                f"  {c.sub_issue}: {c.consumed_tokens} tokens, "
+                f"{c.auto_compactions} auto-compactions"
+            )
+        lines.append(
+            f"  total: {n.total_consumed_tokens} tokens, "
+            f"{n.total_auto_compactions} auto-compactions"
+        )
     if not n.escalations:
         return "\n".join(lines)
 

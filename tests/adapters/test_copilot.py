@@ -11,19 +11,25 @@ import json
 from collections.abc import AsyncGenerator, Callable, Sequence
 from pathlib import Path
 
+from ralph.cli import render
 from ralph.adapters.copilot import CopilotEditor, CopilotImplementer
-from ralph.adapters.turn_stream import Permission, TokenUsage, Turn, TurnStreamAsk
+from ralph.adapters.turn_stream import AutoCompaction, Permission, TokenUsage, Turn, TurnStreamAsk
 from ralph.adapters.git import GitCli, run_git
 from ralph.harness import (
+    Actor,
     EditorVerdict,
     Outcome,
     SessionTelemetry,
     Verdict,
     failure_report,
 )
-from ralph.issues import Brief, Findings
+from ralph.issues import Brief, Findings, SessionConsumption, SubIssueId, SubIssueState
+from ralph.issues.filesystem import FilesystemIssueStore
+from ralph.issues.linear import LinearIssueStore
+from ralph.notification import notify
 from ralph.ports import Budget, SessionContext, Worktree
-from tests.builders import impasse, suite, telemetry
+from tests.builders import graph_of, impasse, suite, telemetry
+from tests.issues.test_linear_issue_store import FakeLinearClient, parent_with, sub_issue
 from tests.testbed import TargetRepo
 
 SUITE: Sequence[str] = ("python", "-m", "pytest")
@@ -42,6 +48,21 @@ def _worktree(tmp_path: Path) -> Worktree:
     return Worktree(path=path, branch="ralph/02-thing", base="integration")
 
 
+def _commit_stub_work(wt: Worktree) -> None:
+    (wt.path / "copilot.txt").write_text("sdk implementer\n")
+    run_git(wt.path, "add", "copilot.txt")
+    run_git(
+        wt.path,
+        "-c",
+        "user.email=copilot@ralph.invalid",
+        "-c",
+        "user.name=Copilot Stub",
+        "commit",
+        "-m",
+        "copilot sdk change",
+    )
+
+
 # ── the whole Implementer, against a stub SDK session ────────────────────────────────────────
 
 
@@ -50,15 +71,21 @@ class StubTurnStreamSession:
         self,
         turns: Sequence[Turn],
         *,
+        auto_compactions: Sequence[AutoCompaction] = (),
         on_start: Callable[[], None] | None = None,
         block_after_turns: bool = False,
     ) -> None:
         self._turns = turns
+        self._auto_compactions = tuple(auto_compactions)
         self._on_start = on_start
         self._block_after_turns = block_after_turns
         self._released = asyncio.Event()
         self.returncode: int | None = None
         self.killed = False
+
+    @property
+    def auto_compactions(self) -> tuple[AutoCompaction, ...]:
+        return self._auto_compactions
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         if self._on_start is not None:
@@ -88,18 +115,7 @@ async def test_the_implementer_reports_sdk_usage_and_git_facts(repo: TargetRepo)
     seen: list[TurnStreamAsk] = []
 
     def commit_work() -> None:
-        (wt.path / "copilot.txt").write_text("sdk implementer\n")
-        run_git(wt.path, "add", "copilot.txt")
-        run_git(
-            wt.path,
-            "-c",
-            "user.email=copilot@ralph.invalid",
-            "-c",
-            "user.name=Copilot Stub",
-            "commit",
-            "-m",
-            "copilot sdk change",
-        )
+        _commit_stub_work(wt)
 
     def open_session(ask: TurnStreamAsk) -> StubTurnStreamSession:
         seen.append(ask)
@@ -120,9 +136,80 @@ async def test_the_implementer_reports_sdk_usage_and_git_facts(repo: TargetRepo)
     assert t.killed is None
     assert t.exit_code == 0
     assert t.consumed_tokens == 999_999
+    assert t.auto_compactions == 0
     assert t.commits == 1
     assert "copilot.txt" in t.diffstat
     assert t.session_output == "implemented\n"
+
+
+async def test_the_implementer_reports_sdk_auto_compactions(repo: TargetRepo) -> None:
+    git = GitCli(repo=repo.path)
+    wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
+
+    def commit_work() -> None:
+        _commit_stub_work(wt)
+
+    def open_session(_ask: TurnStreamAsk) -> StubTurnStreamSession:
+        return StubTurnStreamSession(
+            ["implemented\n", TokenUsage(consumed_tokens=999_999)],
+            auto_compactions=[
+                AutoCompaction(event="started"),
+                AutoCompaction(event="compacted", success=True),
+                AutoCompaction(event="compacted", success=False),
+            ],
+            on_start=commit_work,
+        )
+
+    t = await CopilotImplementer(open_session=open_session).run(_context(wt))
+
+    assert t.auto_compactions == 1
+
+
+async def test_sdk_auto_compactions_reach_both_stores_and_the_report(
+    repo: TargetRepo,
+) -> None:
+    git = GitCli(repo=repo.path)
+    wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
+
+    def commit_work() -> None:
+        _commit_stub_work(wt)
+
+    def open_session(_ask: TurnStreamAsk) -> StubTurnStreamSession:
+        return StubTurnStreamSession(
+            ["implemented\n", TokenUsage(consumed_tokens=999_999)],
+            auto_compactions=[
+                AutoCompaction(event="started"),
+                AutoCompaction(event="compacted", success=True),
+            ],
+            on_start=commit_work,
+        )
+
+    t = await CopilotImplementer(open_session=open_session).run(_context(wt))
+    record = SessionConsumption(
+        actor=Actor.IMPLEMENTER,
+        consumed_tokens=t.consumed_tokens,
+        auto_compactions=t.auto_compactions,
+    )
+
+    filesystem = FilesystemIssueStore(issues_dir=repo.issues_dir)
+    await filesystem.record_consumption(SubIssueId("01"), record)
+    assert filesystem.consumption(SubIssueId("01"))[-1] == record
+
+    linear_client = FakeLinearClient(parent_with(sub_issue("RAL-2", id="linear-2")))
+    linear = LinearIssueStore(parent_identifier="RAL-1", client=linear_client)
+    linear.read_graph()
+    await linear.record_consumption(SubIssueId("RAL-2"), record)
+    assert linear.consumption(SubIssueId("RAL-2")) == (record,)
+
+    graph = graph_of({"01": []})
+    notification = notify(
+        graph,
+        {SubIssueId("01"): SubIssueState.LANDED},
+        [SubIssueId("01")],
+        {},
+        {SubIssueId("01"): (record,)},
+    )
+    assert "01: 999999 tokens, 1 auto-compactions" in render(notification)
 
 
 async def test_the_implementer_parses_an_impasse_from_the_sdk_output(repo: TargetRepo) -> None:

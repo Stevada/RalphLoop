@@ -155,14 +155,17 @@ async def test_consumption_records_round_trip_for_a_sub_issue(tmp_path: Path) ->
     store = FilesystemIssueStore(issues_dir=tmp_path)
 
     await store.record_consumption(
-        SubIssueId("01"), SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000)
+        SubIssueId("01"),
+        SessionConsumption(
+            actor=Actor.IMPLEMENTER, consumed_tokens=123_000, auto_compactions=2
+        ),
     )
     await store.record_consumption(
         SubIssueId("01"), SessionConsumption(actor=Actor.EDITOR, consumed_tokens=45_000)
     )
 
     assert store.consumption(SubIssueId("01")) == (
-        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000, auto_compactions=2),
         SessionConsumption(actor=Actor.EDITOR, consumed_tokens=45_000),
     )
 

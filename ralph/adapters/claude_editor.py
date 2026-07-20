@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from ralph.adapters.editor import READ_ONLY_TOOLS, read_only, run_editor
 from ralph.adapters.prompt import editor_prompt
 from ralph.adapters.turn_stream import (
+    AutoCompaction,
     OpenSession,
     TokenUsage,
     Turn,
@@ -118,6 +119,10 @@ class _SdkSession:
     @property
     def returncode(self) -> int | None:
         return self._code
+
+    @property
+    def auto_compactions(self) -> tuple[AutoCompaction, ...]:
+        return ()
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         while (turn := await self._turns.get()) is not None:

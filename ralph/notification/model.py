@@ -22,6 +22,7 @@ class Escalation:
 class SubIssueConsumption:
     sub_issue: SubIssueId
     consumed_tokens: int
+    auto_compactions: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,3 +34,7 @@ class Notification:
     @property
     def total_consumed_tokens(self) -> int:
         return sum(c.consumed_tokens for c in self.consumption)
+
+    @property
+    def total_auto_compactions(self) -> int:
+        return sum(c.auto_compactions for c in self.consumption)

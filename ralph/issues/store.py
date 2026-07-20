@@ -20,9 +20,9 @@ class IssueStore(Protocol):
     """The issue tracker: filesystem markdown or Linear.
 
     `write_event` mirrors a transition back into the tracker, `record_consumption` persists the
-    tokens each actor session consumed, and `publish_notification` gives the tracker the final
-    human-facing run summary. The harness's authoritative lifecycle record is the `RunLog`, which is
-    a different sink with different durability.
+    telemetry each actor session consumed, and `publish_notification` gives the tracker the final
+    human-facing run summary. The harness's authoritative lifecycle record is the `RunLog`, which
+    is a different sink with different durability.
     """
 
     def read_graph(self) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]: ...

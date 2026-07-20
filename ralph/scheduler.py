@@ -89,6 +89,14 @@ class RunReport:
         return self.notification.total_consumed_tokens
 
     @property
+    def auto_compactions(self) -> Mapping[SubIssueId, int]:
+        return {c.sub_issue: c.auto_compactions for c in self.notification.consumption}
+
+    @property
+    def total_auto_compactions(self) -> int:
+        return self.notification.total_auto_compactions
+
+    @property
     def clean(self) -> bool:
         return not self.notification.escalations
 
@@ -232,7 +240,9 @@ class Scheduler:
         await self._store.record_consumption(
             sub.id,
             SessionConsumption(
-                actor=Actor.IMPLEMENTER, consumed_tokens=telemetry.consumed_tokens
+                actor=Actor.IMPLEMENTER,
+                consumed_tokens=telemetry.consumed_tokens,
+                auto_compactions=telemetry.auto_compactions,
             ),
         )
         # The suite result, not the exit code, is the outcome. The harness runs the tests.
@@ -301,7 +311,11 @@ class Scheduler:
         telemetry, verdict = await self._editor.adjudicate(context, report, must_be_terminal)
         await self._store.record_consumption(
             sub.id,
-            SessionConsumption(actor=Actor.EDITOR, consumed_tokens=telemetry.consumed_tokens),
+            SessionConsumption(
+                actor=Actor.EDITOR,
+                consumed_tokens=telemetry.consumed_tokens,
+                auto_compactions=telemetry.auto_compactions,
+            ),
         )
         outcome = classify_editor(telemetry, verdict)
         await self._record(sub.id, Actor.EDITOR, EventKind.SESSION_FINISHED, outcome)

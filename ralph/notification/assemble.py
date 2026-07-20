@@ -63,6 +63,7 @@ def _summarize_consumption(
         SubIssueConsumption(
             sub_issue=id,
             consumed_tokens=sum(record.consumed_tokens for record in consumption[id]),
+            auto_compactions=sum(record.auto_compactions for record in consumption[id]),
         )
         for id in sorted(graph.sub_issues)
         if id in consumption and consumption[id]
