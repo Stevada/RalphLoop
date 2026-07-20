@@ -21,7 +21,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from ralph.adapters.claude_editor import ClaudeCodeEditor, claude_sdk_session
-from ralph.adapters.codex import codex_implementer
+from ralph.adapters.codex import codex_editor, codex_implementer
 from ralph.adapters.copilot import copilot_editor, copilot_implementer
 from ralph.adapters.git import GitCli, run_git
 from ralph.adapters.suite import SubprocessTestRunner, install_once
@@ -155,7 +155,7 @@ def _add_option_flags(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--editor",
-        choices=(CLAUDE, COPILOT),
+        choices=(CLAUDE, CODEX, COPILOT),
         default=DEFAULT_EDITOR,
         help=f"the CLI that diagnoses failures. Defaults to {DEFAULT_EDITOR}.",
     )
@@ -184,9 +184,9 @@ def validate_agents(options: RunOptions) -> None:
         raise NoAgent(
             f"implementer: {options.implementer!r} names no Implementer. Known: {CODEX}, {COPILOT}."
         )
-    if options.editor not in {CLAUDE, COPILOT}:
+    if options.editor not in {CLAUDE, CODEX, COPILOT}:
         raise NoAgent(
-            f"editor: {options.editor!r} names no Editor. Known: {CLAUDE}, {COPILOT}."
+            f"editor: {options.editor!r} names no Editor. Known: {CLAUDE}, {CODEX}, {COPILOT}."
         )
 
 
@@ -200,6 +200,8 @@ def editor_of(options: RunOptions) -> Editor:
     named = options.editor
     if named == CLAUDE:
         return ClaudeCodeEditor(open_session=claude_sdk_session, suite=options.test_cmd)
+    if named == CODEX:
+        return codex_editor(suite=options.test_cmd)
     if named == COPILOT:
         return copilot_editor(suite=options.test_cmd)
     validate_agents(options)

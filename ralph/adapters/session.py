@@ -20,6 +20,7 @@ from pathlib import Path
 
 from ralph.adapters.context import Bound, run_bounded
 from ralph.adapters.git import run_git
+from ralph.adapters.turn_stream import TurnStreamSession, run_turn_stream
 from ralph.harness import Approach, ImpasseReport, SessionTelemetry
 from ralph.issues import Brief, Findings
 from ralph.ports import Budget, SessionContext, Worktree
@@ -174,6 +175,20 @@ async def run_agent(
         output=session.output,
         wall_clock_s=session.wall_clock_s,
         worktree=wt,
+    )
+
+
+async def run_turn_stream_implementer(
+    session: TurnStreamSession, context: SessionContext
+) -> SessionTelemetry:
+    """One SDK-backed Implementer session, plus the harness-owned git facts."""
+    completed = await run_turn_stream(session, context.budget)
+    return implementer_telemetry(
+        bound=completed.bound,
+        exit_code=completed.exit_code,
+        output=completed.output,
+        wall_clock_s=completed.wall_clock_s,
+        worktree=context.worktree,
     )
 
 

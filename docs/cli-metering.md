@@ -5,8 +5,10 @@ human visibility and cost accounting; it is not a session bound, and no harness 
 
 ## Codex
 
-`codex exec --json` emits `turn.completed` on stdout at the end of the session. Ralph reads
-`usage.total_tokens` from the last completed turn and stores it as `SessionTelemetry.consumed_tokens`.
+`codex exec --json` emits JSONL events during the session. Ralph's Codex turn-stream wrapper reads
+`usage.total_tokens` from completed-turn events and stores it as
+`SessionTelemetry.consumed_tokens`. The same wrapper captures context-compaction events as
+auto-compaction telemetry for the persistence path that consumes SDK session metadata.
 
 ## Copilot
 

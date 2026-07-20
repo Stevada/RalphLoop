@@ -87,8 +87,8 @@ The rules that hold this shape together:
   imports `ralph.fakes`, and a test asserts the package imports nothing from `tests/`. That is what
   makes "no adapter may reach for a fake" enforceable rather than aspirational.
 
-The Implementer and the Editor are each chosen at startup — Codex or Copilot implements, Claude Code
-or Copilot edits — and nothing downstream of `cli.py` knows which.
+The Implementer and the Editor are each chosen at startup — Codex or Copilot implements, Claude Code,
+Codex, or Copilot edits — and nothing downstream of `cli.py` knows which.
 
 ---
 
@@ -206,7 +206,7 @@ knows which is running.
 
 |  | Implementer | Editor |
 |---|---|---|
-| **Codex** (`codex exec`) | ✅ | — |
+| **Codex** (`codex exec --json`) | ✅ | ✅ |
 | **Copilot** (`copilot -p`) | ✅ | ✅ |
 | **Claude Code** (`claude-agent-sdk`) | — | ✅ |
 
@@ -224,12 +224,13 @@ Per-CLI usage details live in [`docs/cli-metering.md`](cli-metering.md). They ar
 code and change on the vendors' schedule, not ours. What matters at this layer: token consumption is
 telemetry, and no harness decision gates on it.
 
-### An Implementer is an argv and telemetry sources
+### An Implementer is either an argv or a turn stream
 
-That is the whole of `SubprocessImplementer` ([session.py](../ralph/adapters/session.py)), and it is
-why `codex.py` is small. Everything that makes a session a session — bounding on the clock, counting
-commits, reading the diffstat, finding the `<impasse>` sentinel — lives once in `session.py`; each
-CLI adapter is an argv and may also read `consumed_tokens` from the CLI's completed usage payload.
+That is the whole of `SubprocessImplementer` ([session.py](../ralph/adapters/session.py)) for
+process-only actors. SDK-backed Implementers use the same telemetry core after `turn_stream.py`
+collects their output. Everything that makes an Implementer session an Implementer session —
+bounding on the clock, counting commits, reading the diffstat, finding the `<impasse>` sentinel —
+lives once in `session.py`; each CLI adapter only supplies either an argv or a `TurnStreamSession`.
 [prompt.py](../ralph/adapters/prompt.py) is the one place a `Brief` becomes
 text a model reads, shared by Codex and Copilot so their failures stay comparable; findings go in as
 a **separate section**, never folded into the brief.
@@ -237,11 +238,12 @@ a **separate section**, never folded into the brief.
 ### The Editor writes nothing but brief and findings — enforced, not asked
 
 The Editor may read anything and run read-only commands; the moment it commits it is an Implementer
-with a different name. **This is enforced by a tool allowlist, not by the prompt.** What counts as
-mutating is decided **once**, in [editor.py](../ralph/adapters/editor.py) (the model-agnostic half,
-which also owns the `<verdict>` sentinel and the bounding). `ClaudeCodeEditor` is that plus the Agent
-SDK's `can_use_tool` callback; `CopilotEditor` is that plus the CLI's `--available-tools` /
-`--deny-tool` flags. Only the *delivery* of the denial differs.
+with a different name. **This is enforced, not prompted.** What counts as mutating is decided
+**once**, in [editor.py](../ralph/adapters/editor.py) for SDKs with pre-tool permission callbacks
+(the model-agnostic half also owns the `<verdict>` sentinel and the bounding). `ClaudeCodeEditor` is
+that plus the Agent SDK's `can_use_tool` callback; `CopilotEditor` is that plus the SDK permission
+request hook. Codex exposes no equivalent callback, so `CodexEditor` gets the same guarantee through
+Codex's `read-only` OS sandbox instead.
 
 Three things are load-bearing, each a hole in the obvious implementation:
 

@@ -204,7 +204,7 @@ def test_the_fixture_repo_is_ready_to_run(repo: TargetRepo) -> None:
 
 
 def test_validate_rejects_editor_none(repo: TargetRepo) -> None:
-    with pytest.raises(NoAgent, match="Known: claude, copilot"):
+    with pytest.raises(NoAgent, match="Known: claude, codex, copilot"):
         validate(repo.path, options=make_options(editor="none"))
 
 

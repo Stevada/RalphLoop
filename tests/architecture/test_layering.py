@@ -170,7 +170,11 @@ def test_the_composition_root_is_where_both_actors_are_chosen() -> None:
     named = _ralph_imports(CLI)
 
     assert {"ralph.adapters.codex", "ralph.adapters.copilot"} <= named  # the Implementers
-    assert {"ralph.adapters.claude_editor", "ralph.adapters.copilot"} <= named  # the Editors
+    assert {
+        "ralph.adapters.claude_editor",
+        "ralph.adapters.codex",
+        "ralph.adapters.copilot",
+    } <= named  # the Editors
 
 
 def test_the_scheduler_asks_the_routing_table_rather_than_reimplementing_it() -> None:

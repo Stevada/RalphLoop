@@ -16,7 +16,7 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from ralph.adapters.context import Bound, run_bounded
 from ralph.ports import Budget
@@ -51,6 +51,18 @@ class TokenUsage:
     """Token consumption reported by a model call."""
 
     consumed_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class AutoCompaction:
+    """An SDK auto-compaction event, captured before persistence exists."""
+
+    event: Literal["started", "compacted"]
+    success: bool | None = None
+    conversation_tokens: int | None = None
+    pre_compaction_tokens: int | None = None
+    post_compaction_tokens: int | None = None
+    tokens_removed: int | None = None
 
 
 Turn = str | TokenUsage

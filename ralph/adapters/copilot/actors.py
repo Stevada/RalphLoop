@@ -15,13 +15,11 @@ from dataclasses import dataclass
 from ralph.adapters.copilot.session import copilot_sdk_session
 from ralph.adapters.editor import read_only, run_editor
 from ralph.adapters.prompt import editor_prompt, implementer_prompt
-from ralph.adapters.session import implementer_telemetry
+from ralph.adapters.session import run_turn_stream_implementer
 from ralph.adapters.turn_stream import (
     OpenSession,
     Permission,
     TurnStreamAsk,
-    TurnStreamSession,
-    run_turn_stream,
 )
 from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry
 from ralph.ports import SessionContext
@@ -49,20 +47,7 @@ class CopilotImplementer:
                 permit=allow_all,
             )
         )
-        return await run_implementer(session, context)
-
-
-async def run_implementer(
-    session: TurnStreamSession, context: SessionContext
-) -> SessionTelemetry:
-    completed = await run_turn_stream(session, context.budget)
-    return implementer_telemetry(
-        bound=completed.bound,
-        exit_code=completed.exit_code,
-        output=completed.output,
-        wall_clock_s=completed.wall_clock_s,
-        worktree=context.worktree,
-    )
+        return await run_turn_stream_implementer(session, context)
 
 
 def copilot_implementer() -> CopilotImplementer:

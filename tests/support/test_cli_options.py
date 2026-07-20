@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ralph.cli import ENV_FILE, _load_env, _options_for
+from ralph.cli import ENV_FILE, _load_env, _options_for, validate_agents
 
 
 def test_cli_options_have_the_current_defaults() -> None:
@@ -26,6 +26,10 @@ def test_command_options_are_split_like_shell_words() -> None:
 
     assert options.test_cmd == ("uv", "run", "pytest", "tests/a test.py")
     assert options.install_cmd == ("uv", "sync")
+
+
+def test_codex_is_a_known_editor() -> None:
+    validate_agents(_options_for({}, editor="codex"))
 
 
 def test_a_dotenv_is_loaded_wholesale_without_policing_keys(

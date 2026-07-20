@@ -19,7 +19,7 @@ Three actors. They never talk to each other. They talk to a sub-issue's **brief*
 | Actor | Backed by | Writes | Reads |
 |---|---|---|---|
 | **Planner** | Claude Opus, in conversation | The issue graph and the first draft of every brief | PRD, codebase, integration branch |
-| **Editor** | Claude Code **or** Copilot | A single sub-issue's brief and findings | Everything; may run read-only commands |
+| **Editor** | Claude Code, Codex, **or** Copilot | A single sub-issue's brief and findings | Everything; may run read-only commands |
 | **Implementer** | Codex **or** Copilot | All code, tests included | Its brief and findings, the repo |
 
 The Planner is invoked by a human, in conversation. The Editor and Implementer run
@@ -30,6 +30,28 @@ unattended inside a run.
 portfolio decision, not a hedge: the Implementer and the Editor should
 not be the same model on the same failure, because an Editor adjudicating an impasse declared
 by *itself* is the least independent sensor the system could have.
+
+### Codex transport decision
+
+Codex uses the SDK session seam rather than the older subprocess Implementer adapter. The "SDK" is
+Ralph's typed wrapper around `codex exec --json`: the child process is still Codex CLI, but the rest
+of the harness sees a `TurnStreamSession` that emits text, completed-turn usage, and
+auto-compaction telemetry. That keeps Codex on the same role cores as Copilot and Claude Code:
+Implementer output flows through the shared SDK Implementer telemetry path, and Editor output flows
+through `run_editor`.
+
+The cancellation spike is a process-bound guarantee: `kill()` kills the running `codex exec` child,
+the JSONL stream drains to EOF, and the stream reader ends rather than raising through the harness.
+The wall-clock backstop therefore bounds both Codex roles through the same `run_turn_stream` path.
+
+The read-only spike found no Codex per-tool pre-execution veto equivalent to Claude Code's
+`can_use_tool` callback or Copilot's permission request hook. Codex's Editor guarantee is therefore
+OS-enforced with `--sandbox read-only`, not callback-enforced through `read_only()`. That is the
+same guarantee in kind — the Editor cannot write the worktree — with a different mechanism. The
+cost is real: Codex CLI 0.143's read-only sandbox also denies temp/cache writes, so `uv run pytest`
+does not run unchanged inside it. Ralph preserves the write guarantee rather than downgrading Codex
+Editor to `workspace-write`; a repo that wants Codex as Editor must give Ralph a suite command that
+is read-only under that sandbox, or the Editor session will fail visibly as infrastructure.
 
 ---
 

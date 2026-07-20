@@ -9,9 +9,16 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
-from ralph.adapters.turn_stream import TurnStreamAsk, TurnStreamSession, Permit, TokenUsage, Turn
+from ralph.adapters.turn_stream import (
+    AutoCompaction,
+    Permit,
+    TokenUsage,
+    Turn,
+    TurnStreamAsk,
+    TurnStreamSession,
+)
 
 if TYPE_CHECKING:
     from copilot.generated.session_events import PermissionRequest as SdkPermissionRequest
@@ -44,21 +51,11 @@ POST_COMPACTION_TOKENS = "post_compaction_tokens"
 TOKENS_REMOVED = "tokens_removed"
 SUCCESS = "success"
 
+__all__ = ["AutoCompaction"]
+
 
 class CopilotSdkUsageError(RuntimeError):
     """A Copilot SDK usage event whose token total Ralph cannot read."""
-
-
-@dataclass(frozen=True, slots=True)
-class AutoCompaction:
-    """An SDK auto-compaction event, captured before persistence exists."""
-
-    event: Literal["started", "compacted"]
-    success: bool | None = None
-    conversation_tokens: int | None = None
-    pre_compaction_tokens: int | None = None
-    post_compaction_tokens: int | None = None
-    tokens_removed: int | None = None
 
 
 class SdkEvent(Protocol):
