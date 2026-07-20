@@ -18,6 +18,14 @@ This file points at nothing: it is where the vocabulary bottoms out.
 | **Editor** | The actor that rewrites a brief and its findings after an impasse, and returns a verdict. | reviewer, mentor, critic |
 | **Implementer** | The actor that writes all code and tests, working from a single brief. | worker, agent, coder |
 
+## Adapters and transports
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Concrete adapter** | A vendor-specific implementation of an actor port, wired only by `cli.py`. | — |
+| **Transport** | The mechanism a concrete adapter uses to carry a session, such as a subprocess or a turn-stream session. | — |
+| **Turn-stream session** | A bounded stream of model text, usage observations, and auto-compaction events consumed by the role cores. | — |
+
 ## Time and bounds
 
 | Term | Definition | Aliases to avoid |
@@ -152,9 +160,9 @@ are already distinguishable without inventing a state for the second one.
 | **Merge lock** | The mutex a worktree holds while it rebases, re-runs the suite, and fast-forwards. | integration lock, queue lock |
 
 The pre-commit hook and the merge queue's suite run **inside** the blast radius: they execute
-against the tree the agent just modified, on the agent's machine. **CI on the PR is the only
-honest check** — a fresh install from the lockfile on a checkout no agent touched. No malice is
-implied; every green result is produced inside the blast radius of the thing being tested.
+against the tree the actor just modified, on the actor's machine. **CI on the PR is the only honest
+check** — a fresh install from the lockfile on a checkout no actor touched. No malice is implied;
+every green result is produced inside the blast radius of the thing being tested.
 
 ## Relationships
 

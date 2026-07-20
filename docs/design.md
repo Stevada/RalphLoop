@@ -1,6 +1,6 @@
 # Ralph Loop — Design rationale
 
-Harnessed engineering for coding agents. Three actors, one medium, one repo, one PR.
+Harnessed engineering for coding models. Three actors, one medium, one repo, one PR.
 
 This is the **why**: the design and the reasoning behind it, including the risks accepted
 deliberately. The first implementation has been built against it — where the code and this document
@@ -25,13 +25,23 @@ Three actors. They never talk to each other. They talk to a sub-issue's **brief*
 The Planner is invoked by a human, in conversation. The Editor and Implementer run
 unattended inside a run.
 
-**An actor is a role, not a model.** Either CLI can back either of the two unattended roles;
-`cli.py` chooses from CLI arguments, and nothing downstream knows which is running. That is a
-portfolio decision, not a hedge: the Implementer and the Editor should
-not be the same model on the same failure, because an Editor adjudicating an impasse declared
-by *itself* is the least independent sensor the system could have.
+**An actor is a role, not a model.** Either Codex or Copilot can back either of the two unattended
+roles; `cli.py` chooses from CLI arguments, and nothing downstream knows which is running. That is a
+portfolio decision, not a hedge: the Implementer and the Editor should not be the same model on the
+same failure, because an Editor adjudicating an impasse declared by *itself* is the least independent
+sensor the system could have.
 
-### Codex transport decision
+### Transport per vendor
+
+Ralph adopts SDK-backed transports per `(vendor, role)` where they earn their keep, not as a blanket
+rewrite. The role cores need bounded text, token usage, auto-compaction telemetry, and — for the
+Editor — a read-only guarantee. Copilot's SDK earns that place for both roles because it surfaces
+usage and compaction as events and gives the Editor a permission request hook. Claude Code earns it
+for the Editor because `can_use_tool` lets Ralph enforce the same allowlist before a tool runs.
+Process transport remains for scripted stand-ins and any future command-only actor; removing it would
+delete useful test coverage rather than simplify the harness.
+
+### Codex decision
 
 Codex uses the SDK session seam rather than the older subprocess Implementer adapter. The "SDK" is
 Ralph's typed wrapper around `codex exec --json`: the child process is still Codex CLI, but the rest
@@ -123,9 +133,9 @@ life. Everything the Implementer and Editor read derives from it. Nothing reads 
 
 ### 4.2 Base green check
 
-Before any agent starts, run the repo's test command on the integration branch.
+Before any actor starts, run the repo's test command on the integration branch.
 
-**If it is red, no agent starts.** This single check catches the stale lockfile, the
+**If it is red, no actor starts.** This single check catches the stale lockfile, the
 broken environment, the half-merged previous run, and the case where trunk was already
 broken. It also gives every subsequent failure a meaningful baseline: *these tests passed
 twenty minutes ago on this exact tree.*
@@ -147,9 +157,9 @@ Installation failure is loud and fatal — never `|| true`.
 
 ### 4.4 The Implementer's session
 
-One continuous `codex exec` session. It writes tests first, then implementation,
-per `/tdd`. It iterates as it sees fit — running the suite, fixing, trying again — using its
-own judgment about when it is stuck.
+One continuous Implementer session. It writes tests first, then implementation, per `/tdd`. It
+iterates as it sees fit — running the suite, fixing, trying again — using its own judgment about
+when it has reached an impasse.
 
 That inner loop is the *model's*, inside one session, and is the only thing in this system that
 resembles a retry. **The harness never retries anything**: it never re-dispatches a session, and
@@ -180,8 +190,8 @@ itself a signal worth surfacing.
 #### The hard session bound
 
 The session bound is the **wall-clock timeout**, enforced in real time from outside the model.
-A session that re-runs a failing suite for too long is a stuck session, and the honest outcome is
-`infra-failed`.
+A session that re-runs a failing suite for too long has exceeded the session bound, and the honest
+outcome is `infra-failed`.
 
 Token consumption is recorded as telemetry — it is what the session cost — but nothing is gated on
 it.
@@ -381,7 +391,7 @@ TASKS</promise>`. Extend the pattern.
 
 ### Why this is not optional
 
-Dependency installation fails. The agent starts in a worktree with no `node_modules`.
+Dependency installation fails. The Implementer starts in a worktree with no `node_modules`.
 Every test fails with `Cannot find module`. It writes a test — fails. Writes an
 implementation — fails. Tries a different approach — fails identically. Behaving exactly
 as designed, it emits `<impasse>`: *"I cannot make these tests pass."*
@@ -398,7 +408,7 @@ A 429 across N parallel Implementers on one API key produces the same signature.
 kill.
 
 Pre-commit hooks do not help here. They *cause* this: the hook rejects the commit, the
-agent thrashes, the agent declares an impasse. **Hooks protect the branch. Classification
+the model thrashes, the model declares an impasse. **Hooks protect the branch. Classification
 protects the budget.** They are orthogonal.
 
 ### Rules
@@ -407,8 +417,8 @@ protects the budget.** They are orthogonal.
   model gave up, whether or not it said so) or `infra-failed`. Today's `no commits - skipping`
   silently treats it as success.
 - **The suite result, not the exit code, is the outcome.** The harness runs the tests. The
-  prompt *asks* the agent not to commit on red; nothing verifies that.
-- Wrap `codex exec` in `timeout`; treat exit 124 as `infra-failed`.
+  prompt *asks* the model not to commit on red; nothing verifies that.
+- Apply the wall-clock bound to the actor session; treat a killed session as `infra-failed`.
 - A non-zero exit **without** the sentinel means the process died — do not assume the model
   gave up.
 
@@ -465,9 +475,9 @@ supervised.
 
 ### CI is the trust boundary
 
-Every check in this system runs **inside the agent's blast radius**: pre-commit hooks, the
-merge queue's suite, the Editor's reproduction. The agent has had `workspace-write` for the
-whole session with `--ask-for-approval never`. An agent that adds a `conftest.py` fixture
+Every check in this system runs **inside the actor's blast radius**: pre-commit hooks, the
+merge queue's suite, the Editor's reproduction. The actor has had `workspace-write` for the
+whole session with `--ask-for-approval never`. A model that adds a `conftest.py` fixture
 stubbing a dependency, edits `vitest.config.ts` to exclude a directory, hand-installs a
 package, or writes a `.env` the suite reads, has produced a suite that is green **only
 there**.
@@ -475,9 +485,9 @@ there**.
 No malice is implied. Every green result is produced inside the blast radius of the thing
 being tested.
 
-**CI on the PR is the only check that runs on a clean checkout the agent never touched.**
+**CI on the PR is the only check that runs on a clean checkout the actor never touched.**
 `ralph validate` must refuse a repo without PR CI. CI is the natural home for a fresh install
-from the lockfile, a diff of test-config files, and a suite run with none of the agent's
+from the lockfile, a diff of test-config files, and a suite run with none of the actor's
 leftover artifacts.
 
 ---

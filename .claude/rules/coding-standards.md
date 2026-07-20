@@ -120,6 +120,10 @@ Object-level design, for classes and their collaborators.
 - **Dependency inversion.** High-level policy depends on abstractions, not on concrete
   implementations; the concrete types are wired together at a single composition root. The dependency
   arrow points toward the abstraction.
+- **Adapter packaging follows shared structure, not port names alone.** Keeping multiple
+  implementations together is justified only while they share enough transport, parsing, or role-core
+  structure to make the grouping clearer. When that precondition weakens, reassess the boundary
+  without treating the old grouping as a mandate.
 
 ### 7. Failure discipline
 

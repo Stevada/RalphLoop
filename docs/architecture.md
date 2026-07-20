@@ -53,7 +53,7 @@ ralph/
   notification/    Escalation, Notification, notify() — the one human-facing run artifact
   ports.py         Protocols — the seams. every one has a fake.
   runlog/          Event, EventKind, event(), JsonlRunLog — the authoritative run ledger
-  adapters/        codex, copilot, claude_editor, context, prompt, session,
+  adapters/        codex, copilot, claude_editor, context, prompt, session, turn_stream,
                    git, suite
   mergequeue.py    \  the merge queue and the scheduler, so not an adapter either
   scheduler.py      } orchestration — depends on ports only, never on a concrete adapter
@@ -62,7 +62,7 @@ ralph/
 tests/
   fakes.py         a fake per Protocol. adapters: they satisfy an interface at a seam.
   builders.py      telemetry(), graph_of(), … values, not adapters. a different thing.
-  testbed.py       a REAL git repo and a REAL stand-in agent subprocess. neither is a fake.
+  testbed.py       a REAL git repo and a REAL stand-in subprocess. neither is a fake.
 ```
 
 The rules that hold this shape together:
@@ -79,10 +79,9 @@ The rules that hold this shape together:
   that knows how it will be classified has stopped being a value.
 - **`harness/__init__.py` is the interface.** Import `from ralph.harness import Outcome`; the internal
   `model/` ⁄ `rules/` layout is not a caller's business.
-- **The harness core is not split by actor, and `adapters/` is not split by port.** `Outcome`,
-  `SessionTelemetry`, and `SuiteResult` belong to *both* actors; `route(actor, outcome)` is about
-  both; `copilot/actors.py` is *both* an Implementer and an Editor. Either split would strand the shared
-  types in a `shared/` folder that swallows most of the harness core.
+- **The harness core is not split by actor.** `Outcome`, `SessionTelemetry`, and `SuiteResult` belong
+  to *both* actors; `route(actor, outcome)` is about both. Adapter packages are layout, not harness
+  policy; the shipped transports are listed below and the rationale lives in `docs/design.md`.
 - **The fakes live under `tests/`, not in the package.** Ralph is an application: nothing downstream
   imports `ralph.fakes`, and a test asserts the package imports nothing from `tests/`. That is what
   makes "no adapter may reach for a fake" enforceable rather than aspirational.
@@ -201,36 +200,36 @@ Brief and findings are separate files because a revision may change one and leav
 
 ## 4. Adapters — `ralph/adapters/`
 
-Two CLIs, and **either can back either actor**. Chosen in `cli.py` from CLI arguments; nothing else
-knows which is running.
+The Implementer and Editor are chosen in `cli.py` from CLI arguments; nothing downstream knows which
+concrete adapter is running, and `cli.py` remains the only module that names one.
 
-|  | Implementer | Editor |
+| Vendor | Implementer transport | Editor transport |
 |---|---|---|
-| **Codex** (`codex exec --json`) | ✅ | ✅ |
-| **Copilot** (`copilot -p`) | ✅ | ✅ |
-| **Claude Code** (`claude-agent-sdk`) | — | ✅ |
+| **Codex** | `CodexJsonSession` over `codex exec --json` | `CodexJsonSession` over `codex exec --json` with `--sandbox read-only` |
+| **Copilot** | `CopilotSdkSession` | `CopilotSdkSession` with the SDK permission request hook |
+| **Claude Code** | — | Claude Agent SDK session with `can_use_tool` |
 
-A portfolio decision, not a hedge: the Implementer and Editor should not be the same model on the
-same failure — an Editor adjudicating an impasse it declared *itself* is the least independent sensor
-the system could have.
+The reason for keeping multiple vendors available on each unattended role lives in
+[`docs/design.md`](design.md).
 
 ### The wall-clock bound and token usage telemetry
 
 `run_bounded(proc, budget)` ([context.py](../ralph/adapters/context.py)) is the kill loop every
-adapter's `run`/`adjudicate` reduces to. It takes a `Killable` rather than a subprocess, because the
-SDK Editor is a conversation, not a process.
+adapter's `run`/`adjudicate` reduces to. It takes a `Killable` rather than a subprocess, because
+turn-stream sessions and subprocesses are bounded through the same small interface.
 
 Per-CLI usage details live in [`docs/cli-metering.md`](cli-metering.md). They are external to our
 code and change on the vendors' schedule, not ours. What matters at this layer: token consumption is
 telemetry, and no harness decision gates on it.
 
-### An Implementer is either an argv or a turn stream
+### Role cores sit above transports
 
-That is the whole of `SubprocessImplementer` ([session.py](../ralph/adapters/session.py)) for
-process-only actors. SDK-backed Implementers use the same telemetry core after `turn_stream.py`
-collects their output. Everything that makes an Implementer session an Implementer session —
-bounding on the clock, counting commits, reading the diffstat, finding the `<impasse>` sentinel —
-lives once in `session.py`; each CLI adapter only supplies either an argv or a `TurnStreamSession`.
+`SubprocessImplementer` ([session.py](../ralph/adapters/session.py)) remains the process transport
+for scripted stand-ins and any process-only actor. Vendor Implementers that shipped in Phase B use
+the same telemetry core after `turn_stream.py` collects their output. Everything that makes an
+Implementer session an Implementer session — bounding on the clock, counting commits, reading the
+diffstat, finding the `<impasse>` sentinel — lives once in `session.py`; each concrete adapter
+supplies either an argv or a `TurnStreamSession`.
 [prompt.py](../ralph/adapters/prompt.py) is the one place a `Brief` becomes
 text a model reads, shared by Codex and Copilot so their failures stay comparable; findings go in as
 a **separate section**, never folded into the brief.
@@ -262,10 +261,10 @@ adapter returns `None` rather than inventing an `inconclusive` the parser fumble
 
 **`CopilotEditor`'s read-only guarantee is weaker than `ClaudeCodeEditor`'s** — not because the list
 is shorter, but because `read_only()` is a pure function the harness owns and the suite attacks fifty
-ways, while Copilot's enforcement lives inside a binary we cannot inspect or test. The tests pin that
+ways, while Copilot's enforcement lives inside an SDK we cannot inspect or test. The tests pin that
 the harness *asks* correctly; that Copilot *honours* the ask is a reasonable assumption, still an
-assumption. Prefer the SDK Editor where the choice is free; Copilot exists so the Editor need not be
-the same model as the Implementer, which matters more.
+assumption. Prefer the callback-enforced Editor where the choice is free; Copilot exists so the
+Editor need not be the same model as the Implementer, which matters more.
 
 ## 5. Orchestration
 
@@ -374,6 +373,6 @@ asks, never by a second topological sort that is free to disagree.
 | Failure taxonomy + base-green | [classify.py](../ralph/harness/rules/classify.py), [routing.py](../ralph/harness/rules/routing.py), [runlog/](../ralph/runlog/), `Scheduler._refuse_a_red_base` |
 | Wall-clock bound and usage telemetry | `Budget`, [context.py](../ralph/adapters/context.py), per-CLI usage parsing ([cli-metering.md](cli-metering.md)) |
 | Impasse report format | [impasse.py](../ralph/harness/model/impasse.py), [failure.py](../ralph/harness/model/failure.py) |
-| The Editor | [claude_editor.py](../ralph/adapters/claude_editor.py), [copilot/actors.py](../ralph/adapters/copilot/actors.py), `CycleLedger` |
+| The Editor | [claude_editor.py](../ralph/adapters/claude_editor.py), [codex/actors.py](../ralph/adapters/codex/actors.py), [copilot/actors.py](../ralph/adapters/copilot/actors.py), `CycleLedger` |
 | Linear sync | `issues/linear/` behind the existing `IssueStore` Protocol |
 | Pre-flight + notification | [preflight.py](../ralph/harness/rules/preflight.py), [notification/](../ralph/notification/), `RunReport`, `cli.render` |
