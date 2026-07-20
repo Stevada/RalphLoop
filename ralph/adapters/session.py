@@ -1,69 +1,22 @@
-"""Running an Implementer in a worktree, and collecting the facts it cannot report about itself.
+"""A bounded subprocess session, and the transcript it produced — the subprocess twin of the SDK
+`TurnStreamSession` in `turn_stream.py`.
 
-**This is the whole of a subprocess Implementer that is not model-specific.** Codex is this plus an
-argv and final usage; the stand-in Implementer is this plus an argv. Everything that makes a
-subprocess session a session — bounding on the clock, counting the commits, reading the diffstat,
-finding the `<impasse>` sentinel — happens here, once.
-
-The model's exit code is its opinion. Everything in the `SessionTelemetry` this returns is the
-harness's own observation, and the two are allowed to disagree. That disagreement is the signal.
+A session is a command, in a directory, under the wall-clock bound. This module knows nothing of
+which role runs it: the Implementer role core in `implementer.py` reads an `<impasse>` and a commit
+count out of the result. Today only the Implementer runs this way — the Editors are all
+turn-stream-backed — but the transport itself is role-neutral by construction.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ralph.adapters.context import Bound, run_bounded
-from ralph.adapters.git import run_git
-from ralph.adapters.turn_stream import TurnStreamSession, run_turn_stream
-from ralph.harness import Approach, ImpasseReport, SessionTelemetry
-from ralph.issues import Brief, Findings
-from ralph.ports import Budget, SessionContext, Worktree
-
-IMPASSE_OPEN, IMPASSE_CLOSE = "<impasse>", "</impasse>"
-
-BuildArgv = Callable[[Brief, Findings, Worktree], Sequence[str]]
-"""What separates one Implementer from another: how you spell the command."""
-
-
-class ImpasseParseError(ValueError):
-    """The session emitted a sentinel the harness cannot read.
-
-    Loud, and deliberately so. An unreadable impasse would otherwise be classified as an undeclared
-    impasse — the model's claim silently dropped, the failure looking exactly like a correctly-handled
-    one.
-    """
-
-
-def parse_impasse(output: str) -> ImpasseReport | None:
-    """The sentinel, or nothing. The body is JSON keyed to `ImpasseReport`'s own fields."""
-    start = output.find(IMPASSE_OPEN)
-    if start == -1:
-        return None
-    end = output.find(IMPASSE_CLOSE, start)
-    if end == -1:
-        raise ImpasseParseError(f"{IMPASSE_OPEN} with no {IMPASSE_CLOSE}")
-
-    body = output[start + len(IMPASSE_OPEN) : end]
-    try:
-        raw = json.loads(body)
-        return ImpasseReport(
-            failing_test=raw["failing_test"],
-            assertion_output=raw["assertion_output"],
-            approaches=tuple(
-                Approach(tried=a["tried"], abandoned_because=a["abandoned_because"])
-                for a in raw["approaches"]
-            ),
-            unsatisfiable_criterion=raw["unsatisfiable_criterion"],
-            what_would_satisfy=raw["what_would_satisfy"],
-        )
-    except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise ImpasseParseError(f"unreadable impasse report: {body!r}") from exc
+from ralph.adapters.bounding import Bound, run_bounded
+from ralph.ports import Budget
 
 
 class Transcript:
@@ -95,20 +48,15 @@ async def _pump(stream: asyncio.StreamReader, transcript: Transcript) -> None:
 class Session:
     """What the harness observed of a subprocess session, before anyone asks what role it played.
 
-    An Implementer session and a Copilot Editor session are the same event at this level — a
-    command, in a directory, under both bounds — and they differ only in what is read out of the
-    output afterwards: an `<impasse>` and a commit count, or a `<verdict>` and nothing.
+    A subprocess session is a command, in a directory, under both bounds; what differs by role is
+    only what a role core reads out of the output afterwards. Today only the Implementer runs this
+    way — the Editors are all turn-stream-backed — but the transport itself knows nothing of that.
     """
 
     bound: Bound
     exit_code: int
     output: str
     wall_clock_s: float
-
-
-FinalConsumedTokens = Callable[[Session, Worktree], Awaitable[int | None]]
-"""Where a model-specific adapter reads the session's final consumption figure, if it publishes
-one. `None` means there was no final figure to read, and the live observations remain the fallback."""
 
 
 async def run_session(argv: Sequence[str], cwd: Path, budget: Budget) -> Session:
@@ -132,86 +80,3 @@ async def run_session(argv: Sequence[str], cwd: Path, budget: Budget) -> Session
         output=transcript.text,
         wall_clock_s=time.monotonic() - started,
     )
-
-
-def implementer_telemetry(
-    *,
-    bound: Bound,
-    exit_code: int,
-    output: str,
-    wall_clock_s: float,
-    worktree: Worktree,
-    auto_compactions: int = 0,
-) -> SessionTelemetry:
-    """The harness facts every Implementer session reports, regardless of transport."""
-    return SessionTelemetry(
-        exit_code=exit_code,
-        killed=bound.killed,
-        consumed_tokens=bound.consumed_tokens,
-        auto_compactions=auto_compactions,
-        wall_clock_s=wall_clock_s,
-        commits=int(run_git(worktree.path, "rev-list", "--count", f"{worktree.base}..HEAD")),
-        diffstat=run_git(worktree.path, "diff", "--stat", f"{worktree.base}..HEAD"),
-        session_output=output,
-        impasse_report=parse_impasse(output),
-    )
-
-
-async def run_agent(
-    argv: Sequence[str],
-    wt: Worktree,
-    budget: Budget,
-    final_consumed_tokens: FinalConsumedTokens | None = None,
-) -> SessionTelemetry:
-    """One Implementer session: a bounded subprocess, plus the two facts it cannot report about
-    itself — how many commits it actually made, and what it actually changed."""
-    session = await run_session(argv, wt.path, budget)
-    consumed_tokens = session.bound.consumed_tokens
-    if final_consumed_tokens is not None:
-        final = await final_consumed_tokens(session, wt)
-        if final is not None:
-            consumed_tokens = final
-    return implementer_telemetry(
-        bound=Bound(killed=session.bound.killed, consumed_tokens=consumed_tokens),
-        exit_code=session.exit_code,
-        output=session.output,
-        wall_clock_s=session.wall_clock_s,
-        worktree=wt,
-    )
-
-
-async def run_turn_stream_implementer(
-    session: TurnStreamSession, context: SessionContext
-) -> SessionTelemetry:
-    """One SDK-backed Implementer session, plus the harness-owned git facts."""
-    completed = await run_turn_stream(session, context.budget)
-    return implementer_telemetry(
-        bound=completed.bound,
-        exit_code=completed.exit_code,
-        output=completed.output,
-        wall_clock_s=completed.wall_clock_s,
-        worktree=context.worktree,
-        auto_compactions=completed.auto_compactions,
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class SubprocessImplementer:
-    """An Implementer is an argv, a worktree, and the telemetry its CLI publishes.
-
-    That is the whole of it for subprocess-backed actors. Codex is this with `codex exec` and
-    end-of-turn usage; the stand-in Implementer is this with neither. Nothing above this line knows
-    the difference.
-    """
-
-    build_argv: BuildArgv
-    final_consumed_tokens: FinalConsumedTokens | None = None
-
-    async def run(self, context: SessionContext) -> SessionTelemetry:
-        worktree = context.worktree
-        return await run_agent(
-            self.build_argv(context.brief, context.findings, worktree),
-            worktree,
-            context.budget,
-            self.final_consumed_tokens,
-        )

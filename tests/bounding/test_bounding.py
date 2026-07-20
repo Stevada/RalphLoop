@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from ralph.adapters.context import Bound, run_bounded
+from ralph.adapters.bounding import Bound, run_bounded
 from ralph.adapters.git import GitCli
-from ralph.adapters.session import SubprocessImplementer
+from ralph.adapters.implementer import SubprocessImplementer
 from ralph.harness import Outcome, SuiteResult, classify_implementer
 from ralph.issues import Brief, Findings
 from ralph.ports import Budget, SessionContext

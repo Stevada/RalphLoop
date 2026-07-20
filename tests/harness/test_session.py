@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from ralph.adapters.git import GitCli
-from ralph.adapters.session import ImpasseParseError, SubprocessImplementer, parse_impasse
+from ralph.adapters.implementer import ImpasseParseError, SubprocessImplementer, parse_impasse
 from ralph.harness import Outcome, SuiteResult, classify_implementer
 from ralph.issues import Brief, Findings
 from ralph.ports import Budget, SessionContext, Worktree

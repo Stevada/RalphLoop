@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from ralph.adapters.copilot.session import copilot_sdk_session
 from ralph.adapters.editor import read_only, run_editor
 from ralph.adapters.prompt import editor_prompt, implementer_prompt
-from ralph.adapters.session import run_turn_stream_implementer
+from ralph.adapters.implementer import run_turn_stream_implementer
 from ralph.adapters.turn_stream import (
     OpenSession,
     Permission,

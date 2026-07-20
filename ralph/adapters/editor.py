@@ -19,7 +19,7 @@ import re
 import shlex
 from collections.abc import Mapping, Sequence
 
-from ralph.adapters.context import Bound
+from ralph.adapters.bounding import Bound
 from ralph.adapters.turn_stream import (
     Permission,
     TurnStreamSession,

@@ -14,7 +14,7 @@ The `<impasse>` and `<verdict>` sentinels are defined where they are *parsed* â€
 from __future__ import annotations
 
 from ralph.adapters.editor import VERDICT_CLOSE, VERDICT_OPEN
-from ralph.adapters.session import IMPASSE_CLOSE, IMPASSE_OPEN
+from ralph.adapters.implementer import IMPASSE_CLOSE, IMPASSE_OPEN
 from ralph.harness import CycleLedger, FailureReport
 from ralph.issues import Brief, Findings
 
