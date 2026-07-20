@@ -1,4 +1,4 @@
-"""Codex as both actors, through the JSONL `codex exec` turn stream."""
+"""Codex's JSONL `codex exec` turn-stream boundary."""
 
 from __future__ import annotations
 
@@ -7,23 +7,19 @@ import json
 import os
 import signal
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
-from ralph.adapters.editor import run_editor
-from ralph.adapters.prompt import editor_prompt, implementer_prompt
-from ralph.adapters.session import Session, run_turn_stream_implementer
+from ralph.adapters.prompt import implementer_prompt
+from ralph.adapters.session import Session
 from ralph.adapters.turn_stream import (
     AutoCompaction,
-    OpenSession,
     TokenUsage,
     Turn,
     TurnStreamAsk,
     TurnStreamSession,
 )
-from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry
 from ralph.issues import Brief, Findings
-from ralph.ports import SessionContext, Worktree
+from ralph.ports import Worktree
 
 MODEL = "gpt-5.3-codex"
 IMPLEMENTER_SANDBOX = "workspace-write"
@@ -309,58 +305,9 @@ def _compaction_of(kind: str, event: Mapping[str, object]) -> AutoCompaction:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class CodexImplementer:
-    """Codex writing code through the JSONL turn stream."""
-
-    open_session: OpenSession
-
-    async def run(self, context: SessionContext) -> SessionTelemetry:
-        session = self.open_session(
-            TurnStreamAsk(
-                prompt=implementer_prompt(context.brief, context.findings),
-                cwd=context.worktree.path,
-            )
-        )
-        return await run_turn_stream_implementer(session, context)
-
-
-@dataclass(frozen=True, slots=True)
-class CodexEditor:
-    """Codex adjudicating a failed session under the Codex read-only sandbox."""
-
-    open_session: OpenSession
-    suite: Sequence[str]
-
-    async def adjudicate(
-        self,
-        context: SessionContext,
-        failure: FailureReport,
-        must_be_terminal: bool,
-    ) -> tuple[SessionTelemetry, EditorVerdict | None]:
-        _ = self.suite  # Codex has no pre-tool callback; read-only is the sandbox mechanism.
-        session = self.open_session(
-            TurnStreamAsk(
-                prompt=editor_prompt(
-                    context.brief, context.findings, failure, must_be_terminal
-                ),
-                cwd=context.worktree.path,
-            )
-        )
-        return await run_editor(session, context.budget)
-
-
 def codex_sdk_session(ask: TurnStreamAsk) -> CodexJsonSession:
     return CodexJsonSession(ask=ask, sandbox=IMPLEMENTER_SANDBOX)
 
 
 def codex_read_only_session(ask: TurnStreamAsk) -> CodexJsonSession:
     return CodexJsonSession(ask=ask, sandbox=EDITOR_SANDBOX)
-
-
-def codex_implementer() -> CodexImplementer:
-    return CodexImplementer(open_session=codex_sdk_session)
-
-
-def codex_editor(suite: Sequence[str]) -> CodexEditor:
-    return CodexEditor(open_session=codex_read_only_session, suite=suite)
