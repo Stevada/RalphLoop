@@ -68,13 +68,6 @@ LINEAR_API_KEY = "LINEAR_API_KEY"
 ENV_FILE = ".env"
 PRE_COMMIT_CONFIGS = (".pre-commit-config.yaml", ".pre-commit-config.yml")
 
-
-class _NoEditorOverride:
-    pass
-
-
-_NO_EDITOR_OVERRIDE = _NoEditorOverride()
-
 # Operational verbosity is a command-line flag: the harness's own diagnostic
 # log, separate from the run log. `WARNING` keeps a clean run quiet.
 DEFAULT_LOG_LEVEL = "WARNING"
@@ -357,7 +350,7 @@ async def run(
     *,
     budget: Budget | None = None,
     implementer: Implementer | None = None,
-    editor: Editor | _NoEditorOverride = _NO_EDITOR_OVERRIDE,
+    editor: Editor | None = None,
     options: RunOptions | None = None,
 ) -> RunReport:
     """Explicit `implementer`/`editor` override the ones the resolved options name — those are the seams
@@ -382,7 +375,7 @@ async def run(
 
     store = issue_store(repo, issue_source, options)
     selected_implementer = implementer if implementer is not None else implementer_of(options)
-    selected_editor = editor_of(options) if isinstance(editor, _NoEditorOverride) else editor
+    selected_editor = editor if editor is not None else editor_of(options)
     scheduler = Scheduler(
         repo=repo,
         git=git,
