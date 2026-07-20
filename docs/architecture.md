@@ -81,7 +81,7 @@ The rules that hold this shape together:
   `model/` ⁄ `rules/` layout is not a caller's business.
 - **The harness core is not split by actor, and `adapters/` is not split by port.** `Outcome`,
   `SessionTelemetry`, and `SuiteResult` belong to *both* actors; `route(actor, outcome)` is about
-  both; `copilot.py` is *both* an Implementer and an Editor. Either split would strand the shared
+  both; `copilot/actors.py` is *both* an Implementer and an Editor. Either split would strand the shared
   types in a `shared/` folder that swallows most of the harness core.
 - **The fakes live under `tests/`, not in the package.** Ralph is an application: nothing downstream
   imports `ralph.fakes`, and a test asserts the package imports nothing from `tests/`. That is what
@@ -372,6 +372,6 @@ asks, never by a second topological sort that is free to disagree.
 | Failure taxonomy + base-green | [classify.py](../ralph/harness/rules/classify.py), [routing.py](../ralph/harness/rules/routing.py), [runlog/](../ralph/runlog/), `Scheduler._refuse_a_red_base` |
 | Wall-clock bound and usage telemetry | `Budget`, [context.py](../ralph/adapters/context.py), per-CLI usage parsing ([cli-metering.md](cli-metering.md)) |
 | Impasse report format | [impasse.py](../ralph/harness/model/impasse.py), [failure.py](../ralph/harness/model/failure.py) |
-| The Editor | [claude_editor.py](../ralph/adapters/claude_editor.py), [copilot.py](../ralph/adapters/copilot.py), `CycleLedger` |
+| The Editor | [claude_editor.py](../ralph/adapters/claude_editor.py), [copilot/actors.py](../ralph/adapters/copilot/actors.py), `CycleLedger` |
 | Linear sync | `issues/linear/` behind the existing `IssueStore` Protocol |
 | Pre-flight + notification | [preflight.py](../ralph/harness/rules/preflight.py), [notification/](../ralph/notification/), `RunReport`, `cli.render` |

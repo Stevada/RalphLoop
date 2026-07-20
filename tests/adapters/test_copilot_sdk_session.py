@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ralph.adapters.copilot_sdk_session import (
+from ralph.adapters.copilot.session import (
     ASSISTANT_MESSAGE,
     ASSISTANT_MESSAGE_DELTA,
     ASSISTANT_TURN_END,
@@ -30,7 +30,8 @@ from ralph.adapters.copilot_sdk_session import (
     SdkPermissionHandler,
     copilot_sdk_session,
 )
-from ralph.adapters.editor import TurnStreamAsk, TokenUsage, Turn, read_only
+from ralph.adapters.editor import read_only
+from ralph.adapters.turn_stream import TokenUsage, Turn, TurnStreamAsk
 
 if TYPE_CHECKING:
     from copilot.generated.session_events import PermissionRequest
@@ -267,11 +268,11 @@ async def test_permission_handler_denies_mutating_requests_pre_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "ralph.adapters.copilot_sdk_session._approve_once",
+        "ralph.adapters.copilot.session._approve_once",
         lambda: Decision(allowed=True),
     )
     monkeypatch.setattr(
-        "ralph.adapters.copilot_sdk_session._reject_permission",
+        "ralph.adapters.copilot.session._reject_permission",
         lambda reason: Decision(allowed=False, reason=reason),
     )
     stub = StubCopilotSession(

@@ -12,7 +12,7 @@ from collections.abc import AsyncGenerator, Callable, Sequence
 from pathlib import Path
 
 from ralph.adapters.copilot import CopilotEditor, CopilotImplementer
-from ralph.adapters.editor import TurnStreamAsk, Permission, TokenUsage, Turn
+from ralph.adapters.turn_stream import Permission, TokenUsage, Turn, TurnStreamAsk
 from ralph.adapters.git import GitCli, run_git
 from ralph.harness import (
     EditorVerdict,

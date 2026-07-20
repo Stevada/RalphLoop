@@ -16,14 +16,16 @@ import pytest
 
 from ralph.adapters.claude_editor import ClaudeCodeEditor
 from ralph.adapters.editor import (
-    TurnStreamAsk,
     VERDICT_CLOSE,
     VERDICT_OPEN,
-    TurnStreamSession,
-    TokenUsage,
-    Turn,
     parse_verdict,
     read_only,
+)
+from ralph.adapters.turn_stream import (
+    TokenUsage,
+    Turn,
+    TurnStreamAsk,
+    TurnStreamSession,
 )
 from ralph.harness import (
     EditorVerdict,

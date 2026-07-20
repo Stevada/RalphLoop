@@ -1,4 +1,5 @@
-"""Copilot as an SDK-backed Implementer and Editor.
+"""Copilot's two actors: an Implementer that writes code and an Editor that adjudicates, both on the
+SDK session in `session.py`.
 
 Keeping two CLIs on each side is a **portfolio decision, not a hedge**: the Implementer and the
 Editor should not be the same model on the same failure, because an Editor adjudicating an impasse
@@ -11,18 +12,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from ralph.adapters.copilot_sdk_session import copilot_sdk_session
-from ralph.adapters.editor import (
-    TurnStreamAsk,
-    TurnStreamSession,
-    OpenSession,
-    Permission,
-    read_only,
-    run_editor,
-    run_turn_stream,
-)
+from ralph.adapters.copilot.session import copilot_sdk_session
+from ralph.adapters.editor import read_only, run_editor
 from ralph.adapters.prompt import editor_prompt, implementer_prompt
 from ralph.adapters.session import implementer_telemetry
+from ralph.adapters.turn_stream import (
+    OpenSession,
+    Permission,
+    TurnStreamAsk,
+    TurnStreamSession,
+    run_turn_stream,
+)
 from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry
 from ralph.ports import SessionContext
 

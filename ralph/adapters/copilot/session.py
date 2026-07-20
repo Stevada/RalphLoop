@@ -11,7 +11,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
-from ralph.adapters.editor import TurnStreamAsk, TurnStreamSession, Permit, TokenUsage, Turn
+from ralph.adapters.turn_stream import TurnStreamAsk, TurnStreamSession, Permit, TokenUsage, Turn
 
 if TYPE_CHECKING:
     from copilot.generated.session_events import PermissionRequest as SdkPermissionRequest
