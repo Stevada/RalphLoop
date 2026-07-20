@@ -6,9 +6,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ralph.adapters.claude.session import claude_sdk_session
-from ralph.adapters.editor import read_only, run_editor
-from ralph.adapters.prompt import editor_prompt
-from ralph.adapters.turn_stream import OpenSession, TurnStreamAsk
+from ralph.adapters.runtime.editor import read_only, run_editor
+from ralph.adapters.runtime.prompt import editor_prompt
+from ralph.adapters.runtime.turn_stream import OpenSession, TurnStreamAsk
 from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry
 from ralph.ports import SessionContext
 

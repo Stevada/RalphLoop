@@ -24,10 +24,10 @@ from ralph.adapters.codex import (
     codex_implementer,
     end_of_turn_consumed_tokens,
 )
-from ralph.adapters.bounding import Bound
+from ralph.adapters.runtime.bounding import Bound
 from ralph.adapters.git import GitCli
-from ralph.adapters.session import Session
-from ralph.adapters.turn_stream import AutoCompaction, TokenUsage, Turn, TurnStreamAsk
+from ralph.adapters.runtime.session import Session
+from ralph.adapters.runtime.turn_stream import AutoCompaction, TokenUsage, Turn, TurnStreamAsk
 from ralph.harness import (
     Outcome,
     SuiteResult,

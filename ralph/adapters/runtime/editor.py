@@ -19,8 +19,8 @@ import re
 import shlex
 from collections.abc import Mapping, Sequence
 
-from ralph.adapters.bounding import Bound
-from ralph.adapters.turn_stream import (
+from ralph.adapters.runtime.bounding import Bound
+from ralph.adapters.runtime.turn_stream import (
     Permission,
     TurnStreamSession,
     run_turn_stream,

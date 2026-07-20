@@ -16,8 +16,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 
-from ralph.adapters.editor import READ_ONLY_TOOLS
-from ralph.adapters.turn_stream import (
+from ralph.adapters.runtime.editor import READ_ONLY_TOOLS
+from ralph.adapters.runtime.turn_stream import (
     AutoCompaction,
     TokenUsage,
     Turn,

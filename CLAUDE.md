@@ -67,7 +67,7 @@ load-bearing facts:
   dependents never become eligible); everything unaffected still lands. The run never stops early; the
   human is paged **once**, at the end.
 - **The Editor writes nothing but brief and findings,** enforced by a tool allowlist (not the
-  prompt): `adapters/editor.py` for the model-agnostic half. At most **three cycles**, enforced by the
+  prompt): `adapters/runtime/editor.py` for the model-agnostic half. At most **three cycles**, enforced by the
   scheduler alone.
 
 ## Docs and vocabulary

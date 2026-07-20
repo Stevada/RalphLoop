@@ -13,10 +13,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ralph.adapters.copilot.session import copilot_sdk_session
-from ralph.adapters.editor import read_only, run_editor
-from ralph.adapters.prompt import editor_prompt, implementer_prompt
-from ralph.adapters.implementer import run_turn_stream_implementer
-from ralph.adapters.turn_stream import (
+from ralph.adapters.runtime.editor import read_only, run_editor
+from ralph.adapters.runtime.prompt import editor_prompt, implementer_prompt
+from ralph.adapters.runtime.implementer import run_turn_stream_implementer
+from ralph.adapters.runtime.turn_stream import (
     OpenSession,
     Permission,
     TurnStreamAsk,

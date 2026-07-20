@@ -30,8 +30,8 @@ from ralph.adapters.copilot.session import (
     SdkPermissionHandler,
     copilot_sdk_session,
 )
-from ralph.adapters.editor import read_only
-from ralph.adapters.turn_stream import TokenUsage, Turn, TurnStreamAsk
+from ralph.adapters.runtime.editor import read_only
+from ralph.adapters.runtime.turn_stream import TokenUsage, Turn, TurnStreamAsk
 
 if TYPE_CHECKING:
     from copilot.generated.session_events import PermissionRequest

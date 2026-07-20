@@ -11,7 +11,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
-from ralph.adapters.turn_stream import (
+from ralph.adapters.runtime.turn_stream import (
     AutoCompaction,
     Permit,
     TokenUsage,

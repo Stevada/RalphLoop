@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from ralph.adapters.implementer import SubprocessImplementer
+from ralph.adapters.runtime.implementer import SubprocessImplementer
 from ralph.cli import RunOptions
 from ralph.issues import Brief, Findings
 from ralph.ports import Implementer, Worktree

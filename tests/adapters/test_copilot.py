@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ralph.cli import render
 from ralph.adapters.copilot import CopilotEditor, CopilotImplementer
-from ralph.adapters.turn_stream import AutoCompaction, Permission, TokenUsage, Turn, TurnStreamAsk
+from ralph.adapters.runtime.turn_stream import AutoCompaction, Permission, TokenUsage, Turn, TurnStreamAsk
 from ralph.adapters.git import GitCli, run_git
 from ralph.harness import (
     Actor,

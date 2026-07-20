@@ -9,9 +9,9 @@ import signal
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from pathlib import Path
 
-from ralph.adapters.prompt import implementer_prompt
-from ralph.adapters.session import Session
-from ralph.adapters.turn_stream import (
+from ralph.adapters.runtime.prompt import implementer_prompt
+from ralph.adapters.runtime.session import Session
+from ralph.adapters.runtime.turn_stream import (
     AutoCompaction,
     TokenUsage,
     Turn,

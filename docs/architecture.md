@@ -214,7 +214,7 @@ The reason for keeping multiple vendors available on each unattended role lives 
 
 ### The wall-clock bound and token usage telemetry
 
-`run_bounded(proc, budget)` ([bounding.py](../ralph/adapters/bounding.py)) is the kill loop every
+`run_bounded(proc, budget)` ([bounding.py](../ralph/adapters/runtime/bounding.py)) is the kill loop every
 adapter's `run`/`adjudicate` reduces to. It takes a `Killable` rather than a subprocess, because
 turn-stream sessions and subprocesses are bounded through the same small interface.
 
@@ -224,14 +224,14 @@ telemetry, and no harness decision gates on it.
 
 ### Role cores sit above transports
 
-`SubprocessImplementer` ([implementer.py](../ralph/adapters/implementer.py)) drives scripted
+`SubprocessImplementer` ([implementer.py](../ralph/adapters/runtime/implementer.py)) drives scripted
 stand-ins and any process-only actor over the subprocess `Session` in
-[session.py](../ralph/adapters/session.py). Vendor Implementers that shipped in Phase B use the same
+[session.py](../ralph/adapters/runtime/session.py). Vendor Implementers that shipped in Phase B use the same
 telemetry core after `turn_stream.py` collects their output. Everything that makes an Implementer
 session an Implementer session — counting commits, reading the diffstat, finding the `<impasse>`
 sentinel — lives once in `implementer.py`, the twin of `editor.py`; each concrete adapter supplies
 either an argv or a `TurnStreamSession`.
-[prompt.py](../ralph/adapters/prompt.py) is the one place a `Brief` becomes
+[prompt.py](../ralph/adapters/runtime/prompt.py) is the one place a `Brief` becomes
 text a model reads, shared by Codex and Copilot so their failures stay comparable; findings go in as
 a **separate section**, never folded into the brief.
 
@@ -239,7 +239,7 @@ a **separate section**, never folded into the brief.
 
 The Editor may read anything and run read-only commands; the moment it commits it is an Implementer
 with a different name. **This is enforced, not prompted.** What counts as mutating is decided
-**once**, in [editor.py](../ralph/adapters/editor.py) for SDKs with pre-tool permission callbacks
+**once**, in [editor.py](../ralph/adapters/runtime/editor.py) for SDKs with pre-tool permission callbacks
 (the model-agnostic half also owns the `<verdict>` sentinel and the bounding). `ClaudeCodeEditor` is
 that plus the Agent SDK's `can_use_tool` callback; `CopilotEditor` is that plus the SDK permission
 request hook. Codex exposes no equivalent callback, so `CodexEditor` gets the same guarantee through
@@ -372,7 +372,7 @@ asks, never by a second topological sort that is free to disagree.
 |---|---|
 | Merge queue | [mergequeue.py](../ralph/mergequeue.py) |
 | Failure taxonomy + base-green | [classify.py](../ralph/harness/rules/classify.py), [routing.py](../ralph/harness/rules/routing.py), [runlog/](../ralph/runlog/), `Scheduler._refuse_a_red_base` |
-| Wall-clock bound and usage telemetry | `Budget`, [bounding.py](../ralph/adapters/bounding.py), per-CLI usage parsing ([cli-metering.md](cli-metering.md)) |
+| Wall-clock bound and usage telemetry | `Budget`, [bounding.py](../ralph/adapters/runtime/bounding.py), per-CLI usage parsing ([cli-metering.md](cli-metering.md)) |
 | Impasse report format | [impasse.py](../ralph/harness/model/impasse.py), [failure.py](../ralph/harness/model/failure.py) |
 | The Editor | [claude/actors.py](../ralph/adapters/claude/actors.py), [codex/actors.py](../ralph/adapters/codex/actors.py), [copilot/actors.py](../ralph/adapters/copilot/actors.py), `CycleLedger` |
 | Linear sync | `issues/linear/` behind the existing `IssueStore` Protocol |

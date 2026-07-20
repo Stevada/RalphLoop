@@ -15,13 +15,13 @@ from pathlib import Path
 import pytest
 
 from ralph.adapters.claude import ClaudeCodeEditor
-from ralph.adapters.editor import (
+from ralph.adapters.runtime.editor import (
     VERDICT_CLOSE,
     VERDICT_OPEN,
     parse_verdict,
     read_only,
 )
-from ralph.adapters.turn_stream import (
+from ralph.adapters.runtime.turn_stream import (
     AutoCompaction,
     TokenUsage,
     Turn,
@@ -230,7 +230,7 @@ def test_a_session_that_answered_nothing_returns_no_verdict() -> None:
 
 
 def test_a_verdict_outside_the_three_is_not_a_verdict() -> None:
-    from ralph.adapters.editor import VerdictParseError
+    from ralph.adapters.runtime.editor import VerdictParseError
 
     with pytest.raises(VerdictParseError):
         parse_verdict(verdict_json("looks-fine-to-me"))
@@ -290,7 +290,7 @@ async def test_a_garbled_verdict_is_no_verdict_and_is_never_quietly_repaired(
     `None` is the honest answer, and it classifies `infra-failed` — a harness problem, which is
     exactly what a verdict the harness cannot read *is*.
     """
-    caplog.set_level("ERROR", logger="ralph.adapters.editor")
+    caplog.set_level("ERROR", logger="ralph.adapters.runtime.editor")
     garbled = StubSession([f"{VERDICT_OPEN}{{'verdict': not even json,,}}{VERDICT_CLOSE}"])
 
     t, v = await adjudicate(garbled)

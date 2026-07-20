@@ -6,10 +6,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ralph.adapters.codex.session import codex_read_only_session, codex_sdk_session
-from ralph.adapters.editor import run_editor
-from ralph.adapters.prompt import editor_prompt, implementer_prompt
-from ralph.adapters.implementer import run_turn_stream_implementer
-from ralph.adapters.turn_stream import OpenSession, TurnStreamAsk
+from ralph.adapters.runtime.editor import run_editor
+from ralph.adapters.runtime.prompt import editor_prompt, implementer_prompt
+from ralph.adapters.runtime.implementer import run_turn_stream_implementer
+from ralph.adapters.runtime.turn_stream import OpenSession, TurnStreamAsk
 from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry
 from ralph.ports import SessionContext
 

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
-from ralph.adapters.bounding import Bound, run_bounded
+from ralph.adapters.runtime.bounding import Bound, run_bounded
 from ralph.ports import Budget
 
 

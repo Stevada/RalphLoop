@@ -16,10 +16,10 @@ import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
-from ralph.adapters.bounding import Bound
+from ralph.adapters.runtime.bounding import Bound
 from ralph.adapters.git import run_git
-from ralph.adapters.session import Session, run_session
-from ralph.adapters.turn_stream import TurnStreamSession, run_turn_stream
+from ralph.adapters.runtime.session import Session, run_session
+from ralph.adapters.runtime.turn_stream import TurnStreamSession, run_turn_stream
 from ralph.harness import Approach, ImpasseReport, SessionTelemetry
 from ralph.issues import Brief, Findings
 from ralph.ports import Budget, SessionContext, Worktree
