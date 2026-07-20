@@ -20,7 +20,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from ralph.adapters.claude_editor import ClaudeCodeEditor, claude_sdk_session
+from ralph.adapters.claude import claude_editor
 from ralph.adapters.codex import codex_editor, codex_implementer
 from ralph.adapters.copilot import copilot_editor, copilot_implementer
 from ralph.adapters.git import GitCli, run_git
@@ -199,7 +199,7 @@ def editor_of(options: RunOptions) -> Editor:
     """
     named = options.editor
     if named == CLAUDE:
-        return ClaudeCodeEditor(open_session=claude_sdk_session, suite=options.test_cmd)
+        return claude_editor(suite=options.test_cmd)
     if named == CODEX:
         return codex_editor(suite=options.test_cmd)
     if named == COPILOT:

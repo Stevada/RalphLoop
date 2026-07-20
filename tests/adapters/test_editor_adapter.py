@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from ralph.adapters.claude_editor import ClaudeCodeEditor
+from ralph.adapters.claude import ClaudeCodeEditor
 from ralph.adapters.editor import (
     VERDICT_CLOSE,
     VERDICT_OPEN,

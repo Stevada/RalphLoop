@@ -53,7 +53,7 @@ ralph/
   notification/    Escalation, Notification, notify() — the one human-facing run artifact
   ports.py         Protocols — the seams. every one has a fake.
   runlog/          Event, EventKind, event(), JsonlRunLog — the authoritative run ledger
-  adapters/        codex, copilot, claude_editor, context, prompt, session, turn_stream,
+  adapters/        claude, codex, copilot, context, prompt, session, turn_stream,
                    git, suite
   mergequeue.py    \  the merge queue and the scheduler, so not an adapter either
   scheduler.py      } orchestration — depends on ports only, never on a concrete adapter
@@ -373,6 +373,6 @@ asks, never by a second topological sort that is free to disagree.
 | Failure taxonomy + base-green | [classify.py](../ralph/harness/rules/classify.py), [routing.py](../ralph/harness/rules/routing.py), [runlog/](../ralph/runlog/), `Scheduler._refuse_a_red_base` |
 | Wall-clock bound and usage telemetry | `Budget`, [context.py](../ralph/adapters/context.py), per-CLI usage parsing ([cli-metering.md](cli-metering.md)) |
 | Impasse report format | [impasse.py](../ralph/harness/model/impasse.py), [failure.py](../ralph/harness/model/failure.py) |
-| The Editor | [claude_editor.py](../ralph/adapters/claude_editor.py), [codex/actors.py](../ralph/adapters/codex/actors.py), [copilot/actors.py](../ralph/adapters/copilot/actors.py), `CycleLedger` |
+| The Editor | [claude/actors.py](../ralph/adapters/claude/actors.py), [codex/actors.py](../ralph/adapters/codex/actors.py), [copilot/actors.py](../ralph/adapters/copilot/actors.py), `CycleLedger` |
 | Linear sync | `issues/linear/` behind the existing `IssueStore` Protocol |
 | Pre-flight + notification | [preflight.py](../ralph/harness/rules/preflight.py), [notification/](../ralph/notification/), `RunReport`, `cli.render` |

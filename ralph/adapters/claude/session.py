@@ -1,4 +1,4 @@
-"""Claude Code as the Editor: `claude-agent-sdk` running Opus, read-only, enforced by the harness.
+"""Claude Code SDK session boundary.
 
 This is the strongest read-only guarantee available to any Editor in the system, and it is why this
 adapter exists alongside the coarser Copilot one: the SDK's `can_use_tool` callback lets the
@@ -14,61 +14,20 @@ lines of message translation, and they are the only lines here that a real sessi
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator
 
-from ralph.adapters.editor import READ_ONLY_TOOLS, read_only, run_editor
-from ralph.adapters.prompt import editor_prompt
+from ralph.adapters.editor import READ_ONLY_TOOLS
 from ralph.adapters.turn_stream import (
     AutoCompaction,
-    OpenSession,
     TokenUsage,
     Turn,
     TurnStreamAsk,
     TurnStreamSession,
 )
-from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry
-from ralph.ports import SessionContext
 
 MODEL = "claude-opus-4-8"
 """The Editor is the expensive one on purpose. It runs at most three times per sub-issue and it is
 the only actor whose judgment the harness cannot check against a suite."""
-
-
-@dataclass(frozen=True, slots=True)
-class ClaudeCodeEditor:
-    """The Editor as the rest of the harness sees it: a brief in, a verdict out.
-
-    It does not write the verdict to the run log, store the revised brief, spend a cycle, or decide
-    what a `revise` on the final cycle means. All of that is the scheduler's, and keeping it there
-    is why this class is twenty lines.
-    """
-
-    open_session: OpenSession
-    suite: Sequence[str]
-    """The repo's own test command — the one the harness itself runs. The Editor is allowed to run
-    exactly this and nothing else that executes, which is how "re-run the suite in the failed
-    worktree" and "you may not write to it" are both true at once."""
-
-    async def adjudicate(
-        self,
-        context: SessionContext,
-        failure: FailureReport,
-        must_be_terminal: bool,
-    ) -> tuple[SessionTelemetry, EditorVerdict | None]:
-        session = self.open_session(
-            TurnStreamAsk(
-                prompt=editor_prompt(
-                    context.brief, context.findings, failure, must_be_terminal
-                ),
-                cwd=context.worktree.path,
-                permit=lambda tool, input: read_only(tool, input, self.suite),
-            )
-        )
-        return await run_editor(session, context.budget)
-
-
-# ── the far side of the seam ─────────────────────────────────────────────────────────────────
 
 
 class _SdkSession:

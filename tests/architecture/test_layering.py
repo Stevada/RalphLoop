@@ -171,7 +171,7 @@ def test_the_composition_root_is_where_both_actors_are_chosen() -> None:
 
     assert {"ralph.adapters.codex", "ralph.adapters.copilot"} <= named  # the Implementers
     assert {
-        "ralph.adapters.claude_editor",
+        "ralph.adapters.claude",
         "ralph.adapters.codex",
         "ralph.adapters.copilot",
     } <= named  # the Editors
