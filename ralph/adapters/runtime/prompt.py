@@ -95,6 +95,11 @@ If, and only if, you return `revise`:
   `math.py`* belongs in the findings. It never belongs in the acceptance criteria.
 - Leave `revised_findings` out entirely to keep the ones already there."""
 
+IMPLEMENTER_ROLE = """\
+Implement the work described by the user in the spec or tickets.
+
+Use /tdd where possible, at pre-agreed seams."""
+
 FINAL_CYCLE = """\
 ## This is the final cycle
 
@@ -202,7 +207,7 @@ def implementer_prompt(spec: Spec, findings: Findings) -> str:
     spec sets the bar. Merging them is how a bar gets lowered by accident — and by the third
     cycle, nobody could tell whether it had been.
     """
-    parts = [spec.body]
+    parts = [IMPLEMENTER_ROLE, spec.body]
     if findings.body.strip():
         parts.append(f"## Findings from an earlier attempt\n\n{findings.body}")
     parts.append(COMMIT)
