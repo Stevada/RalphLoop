@@ -9,6 +9,7 @@ must not be skipped.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -61,6 +62,25 @@ async def test_a_successful_install_really_runs_the_command(tmp_path: Path) -> N
     await install_once(tmp_path, (sys.executable, "-c", script))
 
     assert ledger.read_text() == "x"
+
+
+async def test_the_target_repos_command_never_sees_ralphs_own_venv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`VIRTUAL_ENV` and Ralph's own interpreter's `bin/` are Ralph's business, not the target
+    repo's, whatever language its own install command is written in — while an unrelated variable,
+    standing in for `.env` inheritance, still gets through."""
+    monkeypatch.setenv("VIRTUAL_ENV", sys.prefix)
+    monkeypatch.setenv("RALPH_TEST_MARKER", "present")
+    ledger = tmp_path / "env.json"
+    script = f"import json, os; json.dump(dict(os.environ), open({str(ledger)!r}, 'w'))"
+
+    await install_once(tmp_path, (sys.executable, "-c", script))
+
+    seen = json.loads(ledger.read_text())
+    assert "VIRTUAL_ENV" not in seen
+    assert str(Path(sys.prefix) / "bin") not in seen.get("PATH", "").split(os.pathsep)
+    assert seen.get("RALPH_TEST_MARKER") == "present"
 
 
 # --- the run log --------------------------------------------------------------------------------

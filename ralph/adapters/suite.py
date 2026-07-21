@@ -10,8 +10,10 @@ beyond those defaults.
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,9 +29,28 @@ class InstallFailed(RuntimeError):
     """
 
 
+def _target_env(env: Mapping[str, str]) -> dict[str, str]:
+    """What the target repo's own command sees: everything Ralph inherited, minus any trace of
+    Ralph's own interpreter. `sys.prefix` is Ralph's venv root regardless of how Ralph itself was
+    launched (`uv run`, a manually activated venv, a global install) — so an install or test command
+    resolves its toolchain exactly as it would from a plain shell, whatever language it is in.
+    """
+    result = dict(env)
+    result.pop("VIRTUAL_ENV", None)
+    own_bin = str(Path(sys.prefix) / "bin")
+    result["PATH"] = os.pathsep.join(
+        p for p in result.get("PATH", "").split(os.pathsep) if p != own_bin
+    )
+    return result
+
+
 async def _run(cmd: Sequence[str], cwd: Path) -> tuple[int, str]:
     proc = await asyncio.create_subprocess_exec(
-        *cmd, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+        *cmd,
+        cwd=cwd,
+        env=_target_env(os.environ),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
     )
     out, _ = await proc.communicate()
     return proc.returncode or 0, out.decode(errors="replace")
