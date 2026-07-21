@@ -1,4 +1,4 @@
-"""What a brief looks like by the time a model reads it, and what a failure looks like to an Editor.
+"""What a spec looks like by the time a model reads it, and what a failure looks like to an Editor.
 
 One place, because the alternative is two: Codex and Copilot are different argv and the same job,
 and a prompt that drifted between them would make their failures incomparable — which is the one
@@ -16,7 +16,7 @@ from __future__ import annotations
 from ralph.adapters.runtime.editor import VERDICT_CLOSE, VERDICT_OPEN
 from ralph.adapters.runtime.implementer import IMPASSE_CLOSE, IMPASSE_OPEN
 from ralph.harness import CycleLedger, FailureReport
-from ralph.issues import Brief, Findings
+from ralph.issues import Findings, Spec
 
 COMMIT = """\
 ## What the harness will do when you stop
@@ -33,7 +33,7 @@ IMPASSE = f"""\
 You have no human to ask. This is how you ask.
 
 If an acceptance criterion cannot be satisfied — the API it names does not exist, two criteria
-contradict each other, the repo is not what the brief assumes — **do not soften it, do not guess,
+contradict each other, the repo is not what the spec assumes — **do not soften it, do not guess,
 and do not declare victory.** Say so, on stdout, exactly like this:
 
 {IMPASSE_OPEN}
@@ -44,7 +44,7 @@ and do not declare victory.** Say so, on stdout, exactly like this:
  "what_would_satisfy": "what would have to be true for it to be met"}}
 {IMPASSE_CLOSE}
 
-An honest impasse is a good outcome. It goes to a reviewer who can change the brief. A criterion
+An honest impasse is a good outcome. It goes to a reviewer who can change the spec. A criterion
 quietly lowered until it passes goes to nobody, and is the failure this whole system was built to
 catch."""
 
@@ -71,9 +71,9 @@ where declaring one always works.
 
 ## Your three verdicts
 
-- **`revise`** — the sub-issue is doable, and the brief is what got in the way. It was ambiguous, it
+- **`revise`** — the sub-issue is doable, and the spec is what got in the way. It was ambiguous, it
   assumed something false about the repo, or it left out what the Implementer needed to know.
-  **Rewrite it.** The next session starts from a clean worktree with your brief and nothing else —
+  **Rewrite it.** The next session starts from a clean worktree with your spec and nothing else —
   no memory of this attempt survives except what you write down.
 - **`planning-defect`** — the sub-issue cannot be done as specified, and no rewrite by you can fix
   it. The acceptance criteria contradict each other, or depend on something that does not exist and
@@ -82,11 +82,11 @@ where declaring one always works.
 - **`inconclusive`** — you genuinely cannot tell. Say so. A confident wrong verdict costs more than
   an honest shrug, because it spends another cycle to learn what you already suspected.
 
-## Rewriting the brief
+## Rewriting the spec
 
 If, and only if, you return `revise`:
 
-- The brief is the **bar**. Keep it. If you find yourself softening an acceptance criterion so that
+- The spec is the **bar**. Keep it. If you find yourself softening an acceptance criterion so that
   the next session can pass it, stop — the honest verdict you are reaching for is `planning-defect`.
   A criterion quietly lowered until it passes is the single failure mode this whole system exists to
   prevent, and you are the last checkpoint before it.
@@ -103,8 +103,8 @@ available to you.** The harness will refuse it and page a human anyway, so retur
 the last thing anyone will read.
 
 Decide between `planning-defect` and `inconclusive`. If you believe the sub-issue is doable and the
-brief is nearly right, `inconclusive` with your reasoning is worth far more to the human who picks
-this up than a fourth brief nobody will run."""
+spec is nearly right, `inconclusive` with your reasoning is worth far more to the human who picks
+this up than a fourth spec nobody will run."""
 
 VERDICT = f"""\
 ## How to answer
@@ -113,7 +113,7 @@ End your session with exactly this, on its own:
 
 {VERDICT_OPEN}
 {{"verdict": "revise | planning-defect | inconclusive",
- "revised_brief": "the whole rewritten sub-issue, in markdown. omit unless the verdict is revise.",
+ "revised_spec": "the whole rewritten sub-issue, in markdown. omit unless the verdict is revise.",
  "revised_findings": "what you learned about the repo. omit to keep the existing findings.",
  "rationale": "why. one paragraph, addressed to the human who may have to act on it."}}
 {VERDICT_CLOSE}
@@ -174,7 +174,7 @@ def _facts(failure: FailureReport) -> str:
 
 
 def editor_prompt(
-    brief: Brief, findings: Findings, failure: FailureReport, must_be_terminal: bool
+    spec: Spec, findings: Findings, failure: FailureReport, must_be_terminal: bool
 ) -> str:
     """`must_be_terminal` is surfaced **in the prompt** — and enforced nowhere near it.
 
@@ -186,7 +186,7 @@ def editor_prompt(
     if must_be_terminal:
         parts.append(FINAL_CYCLE)
     parts += [
-        f"## The sub-issue, as the Implementer received it\n\n{brief.body}",
+        f"## The sub-issue, as the Implementer received it\n\n{spec.body}",
         _facts(failure),
     ]
     if findings.body.strip():
@@ -195,14 +195,14 @@ def editor_prompt(
     return "\n\n".join(parts)
 
 
-def implementer_prompt(brief: Brief, findings: Findings) -> str:
-    """The brief, whatever an earlier cycle learned, and the two protocols the harness enforces.
+def implementer_prompt(spec: Spec, findings: Findings) -> str:
+    """The spec, whatever an earlier cycle learned, and the two protocols the harness enforces.
 
-    The findings are a **separate section**, never folded into the brief. They add information; the
-    brief sets the bar. Merging them is how a bar gets lowered by accident — and by the third
+    The findings are a **separate section**, never folded into the spec. They add information; the
+    spec sets the bar. Merging them is how a bar gets lowered by accident — and by the third
     cycle, nobody could tell whether it had been.
     """
-    parts = [brief.body]
+    parts = [spec.body]
     if findings.body.strip():
         parts.append(f"## Findings from an earlier attempt\n\n{findings.body}")
     parts.append(COMMIT)

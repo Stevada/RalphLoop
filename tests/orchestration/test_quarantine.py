@@ -199,7 +199,7 @@ async def test_one_notification_says_which_to_open_first(
     """The bar: *if you cannot tell from it alone whether to spend your first ten minutes reading a
     diff or rewriting a PRD, the notification has failed.*
 
-    Two failures. 01 declared an impasse and is holding up two sub-issues — that is a brief to
+    Two failures. 01 declared an impasse and is holding up two sub-issues — that is a spec to
     rewrite. 02 committed a red suite and is holding up nothing — that is a diff to read. The
     impasse comes first, and the notification says why, in the model's own words.
     """

@@ -26,7 +26,7 @@ from ralph.adapters.runtime.turn_stream import (
     run_turn_stream,
 )
 from ralph.harness import EditorVerdict, SessionTelemetry, Verdict
-from ralph.issues import Brief, Findings
+from ralph.issues import Findings, Spec
 from ralph.ports import Budget
 
 log = logging.getLogger(__name__)
@@ -148,11 +148,11 @@ def parse_verdict(output: str) -> EditorVerdict | None:
     try:
         raw = json.loads(body)
         verdict = Verdict(raw["verdict"])
-        brief = raw.get("revised_brief")
+        spec = raw.get("revised_spec")
         findings = raw.get("revised_findings")
         return EditorVerdict(
             verdict=verdict,
-            revised_brief=Brief(body=brief) if brief else None,
+            revised_spec=Spec(body=spec) if spec else None,
             revised_findings=Findings(body=findings) if findings else None,
             rationale=raw["rationale"],
         )

@@ -23,7 +23,7 @@ from ralph.harness import (
     SuiteResult,
     Verdict,
 )
-from ralph.issues import Brief, Findings, IssueGraph, SubIssue, SubIssueState
+from ralph.issues import Findings, IssueGraph, Spec, SubIssue, SubIssueState
 from ralph.issues.store import IssueStore
 from ralph.ports import (
     Budget,
@@ -45,7 +45,7 @@ from tests.fakes import (
     FakeTestRunner,
 )
 
-FROZEN = [SubIssue, IssueGraph, Brief, Findings, SessionTelemetry, SuiteResult, EditorVerdict]
+FROZEN = [SubIssue, IssueGraph, Spec, Findings, SessionTelemetry, SuiteResult, EditorVerdict]
 ENUMS = [Actor, Outcome, SubIssueState, Destination, Verdict]
 
 
@@ -143,14 +143,14 @@ def test_the_worktree_knows_where_it_came_from() -> None:
 def test_session_context_groups_the_shared_actor_inputs() -> None:
     wt = Worktree(path=Path("/tmp/wt"), branch="ralph/01", base="integration")
     context = SessionContext(
-        brief=Brief(body="build it"),
+        spec=Spec(body="build it"),
         findings=Findings(body="facts"),
         worktree=wt,
         budget=Budget(wall_clock_s=1.0),
     )
 
     assert [f.name for f in dataclasses.fields(SessionContext)] == [
-        "brief",
+        "spec",
         "findings",
         "worktree",
         "budget",

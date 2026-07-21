@@ -1,12 +1,12 @@
 """**The Editor closes the loop.**
 
 A failed sub-issue goes to an Editor, comes back with a verdict, and — on `revise` — **restarts
-clean** against a rewritten brief. This is the file where the harness stops being a runner and
+clean** against a rewritten spec. This is the file where the harness stops being a runner and
 starts being a harness.
 
 The distinction it exists to defend: **a cycle is not a retry.** A retry runs the same actor against
-the same brief and hopes for a better sample. A cycle runs a *different actor* over the failure,
-which rewrites the brief, and only then runs the Implementer again — against something that has
+the same spec and hopes for a better sample. A cycle runs a *different actor* over the failure,
+which rewrites the spec, and only then runs the Implementer again — against something that has
 changed. If any test here would still pass with the Editor deleted and the session simply re-run,
 it is testing the wrong thing.
 
@@ -29,7 +29,7 @@ from ralph.harness import (
     Verdict,
     route,
 )
-from ralph.issues import Brief, Findings, SessionConsumption, SubIssueId, SubIssueState
+from ralph.issues import Findings, SessionConsumption, Spec, SubIssueId, SubIssueState
 from ralph.cli import render, run
 from ralph.mergequeue import MergeQueue
 from ralph.ports import Budget, Editor
@@ -116,17 +116,17 @@ def test_exactly_two_outcomes_reach_the_editor() -> None:
 async def test_an_implementer_failure_is_handed_to_the_editor(
     session: SessionTelemetry, expected: Outcome
 ) -> None:
-    """The Editor is given the brief, the findings, and the failure report — the model's story
+    """The Editor is given the spec, the findings, and the failure report — the model's story
     checked against the harness's facts. Not the transcript, and not a summary the harness wrote."""
     store = store_of("01")
-    store.contents[ONE] = (Brief(body="the original brief"), Findings(body="what we knew"))
+    store.contents[ONE] = (Spec(body="the original spec"), Findings(body="what we knew"))
     editor = FakeEditor(scripted=[(telemetry(commits=0), verdict(Verdict.PLANNING_DEFECT))])
 
     await run_with(store, FakeImplementer(scripted=[session]), editor)
 
     assert len(editor.calls) == 1
     context, failure, must_be_terminal = editor.calls[0]
-    assert context.brief.body == "the original brief"
+    assert context.spec.body == "the original spec"
     assert context.findings.body == "what we knew"
     assert failure.outcome is expected
     assert must_be_terminal is False  # first cycle of three
@@ -149,24 +149,24 @@ async def test_integration_failed_spends_a_cycle_exactly_like_an_impasse() -> No
     assert report.failed == {ONE: Outcome.INTEGRATION_FAILED}
 
 
-# --- revise: the work is discarded, the brief is rewritten ---------------------------------------
+# --- revise: the work is discarded, the spec is rewritten ---------------------------------------
 
 
-async def test_a_revise_discards_the_work_and_restarts_clean_against_the_revised_brief() -> None:
+async def test_a_revise_discards_the_work_and_restarts_clean_against_the_revised_spec() -> None:
     """The whole sub-issue lifecycle in one test.
 
-    The Implementer declares an impasse. The Editor rewrites the brief. The second Implementer
-    session gets a **fresh worktree cut from the integration branch** and the **revised** brief —
-    not its own abandoned diff, and not the brief it already failed against.
+    The Implementer declares an impasse. The Editor rewrites the spec. The second Implementer
+    session gets a **fresh worktree cut from the integration branch** and the **revised** spec —
+    not its own abandoned diff, and not the spec it already failed against.
     """
     store = store_of("01")
-    store.contents[ONE] = (Brief(body="the original brief"), Findings(body="what we knew"))
+    store.contents[ONE] = (Spec(body="the original spec"), Findings(body="what we knew"))
     implementer = FakeImplementer(scripted=[IMPASSE, SUCCESS])
     editor = FakeEditor(
         scripted=[
             (
                 telemetry(commits=0),
-                verdict(Verdict.REVISE, brief="build it with the API that exists"),
+                verdict(Verdict.REVISE, spec="build it with the API that exists"),
             )
         ]
     )
@@ -183,10 +183,10 @@ async def test_a_revise_discards_the_work_and_restarts_clean_against_the_revised
     # And the second was cut fresh from the integration branch, not from the wreckage.
     assert [wt.base for wt in git.worktrees] == ["integration", "integration"]
 
-    # The second session read the Editor's brief. This is the assertion that separates a cycle from
-    # a retry: a retry would show "the original brief" twice.
-    assert [context.brief.body for context in implementer.calls] == [
-        "the original brief",
+    # The second session read the Editor's spec. This is the assertion that separates a cycle from
+    # a retry: a retry would show "the original spec" twice.
+    assert [context.spec.body for context in implementer.calls] == [
+        "the original spec",
         "build it with the API that exists",
     ]
 
@@ -195,13 +195,13 @@ async def test_knowledge_survives_only_through_the_findings() -> None:
     """The diff is discarded. The transcript is discarded. What the Editor chose to write into the
     findings is **all** the next session gets — and that choice is the Editor's judgment, unmandated.
 
-    The findings are kept out of the brief on purpose: they are a channel for adding information
+    The findings are kept out of the spec on purpose: they are a channel for adding information
     *without* lowering the bar. An Editor that could only help by editing the acceptance criteria
     would have no way to say "the retry logic swallows the error" except by making the sub-issue
     easier.
     """
     store = store_of("01")
-    store.contents[ONE] = (Brief(body="the bar"), Findings(body=""))
+    store.contents[ONE] = (Spec(body="the bar"), Findings(body=""))
     implementer = FakeImplementer(scripted=[IMPASSE, SUCCESS])
     editor = FakeEditor(
         scripted=[
@@ -209,7 +209,7 @@ async def test_knowledge_survives_only_through_the_findings() -> None:
                 telemetry(commits=0),
                 verdict(
                     Verdict.REVISE,
-                    brief="the bar",  # unchanged: the bar is not lowered
+                    spec="the bar",  # unchanged: the bar is not lowered
                     findings="the client's retry logic swallows the expected error",
                 ),
             )
@@ -219,7 +219,7 @@ async def test_knowledge_survives_only_through_the_findings() -> None:
     await run_with(store, implementer, editor)
 
     second = implementer.calls[1]
-    assert second.brief.body == "the bar"  # the bar did not move
+    assert second.spec.body == "the bar"  # the bar did not move
     assert second.findings.body == "the client's retry logic swallows the expected error"
 
 
@@ -235,7 +235,7 @@ async def test_each_session_consumption_is_persisted_for_the_sub_issue() -> None
         scripted=[
             (
                 telemetry(commits=0, consumed_tokens=50_000, auto_compactions=1),
-                verdict(Verdict.REVISE, brief="try the supported API"),
+                verdict(Verdict.REVISE, spec="try the supported API"),
             )
         ]
     )
@@ -293,20 +293,20 @@ async def test_run_report_and_notification_include_persisted_consumption_for_qua
     assert "02  impasse" in text
 
 
-async def test_a_revision_may_change_the_findings_without_the_brief() -> None:
-    """Brief and findings round-trip as **separate** fields. An Editor that returns no findings has
+async def test_a_revision_may_change_the_findings_without_the_spec() -> None:
+    """Spec and findings round-trip as **separate** fields. An Editor that returns no findings has
     left them alone, and the harness must carry the old ones forward rather than blanking them."""
     store = store_of("01")
-    store.contents[ONE] = (Brief(body="the bar"), Findings(body="what the last session learned"))
+    store.contents[ONE] = (Spec(body="the bar"), Findings(body="what the last session learned"))
     implementer = FakeImplementer(scripted=[IMPASSE, SUCCESS])
     editor = FakeEditor(
-        scripted=[(telemetry(commits=0), verdict(Verdict.REVISE, brief="a clearer bar"))]
+        scripted=[(telemetry(commits=0), verdict(Verdict.REVISE, spec="a clearer bar"))]
     )
 
     await run_with(store, implementer, editor)
 
-    _, brief, findings = store.revisions[0]
-    assert brief.body == "a clearer bar"  # changed
+    _, spec, findings = store.revisions[0]
+    assert spec.body == "a clearer bar"  # changed
     assert findings.body == "what the last session learned"  # untouched, not blanked
 
 
@@ -315,7 +315,7 @@ async def test_a_revision_may_change_the_findings_without_the_brief() -> None:
 
 @pytest.mark.parametrize("terminal", [Verdict.PLANNING_DEFECT, Verdict.INCONCLUSIVE])
 async def test_a_terminal_verdict_quarantines_immediately(terminal: Verdict) -> None:
-    """`planning-defect`: the brief cannot be satisfied as written, and rewriting it is a Planner's
+    """`planning-defect`: the spec cannot be satisfied as written, and rewriting it is a Planner's
     call. `inconclusive`: the Editor could not tell. Neither spends a second cycle — another
     Implementer session would be a coin flip we have already paid for once.
     """
@@ -371,7 +371,7 @@ async def test_the_scheduler_and_only_the_scheduler_rejects_a_third_cycle_revise
     assert [must_be_terminal for _, _, must_be_terminal in editor.calls] == [False, False, True]
 
     # Refused: the third `revise` was returned, and ignored. Two revisions were stored, not three —
-    # the rejected one never became a brief, because nothing would ever have read it.
+    # the rejected one never became a spec, because nothing would ever have read it.
     assert len(store.revisions) == 2
     assert report.failed == {ONE: Outcome.IMPASSE}
     assert not report.clean
@@ -406,7 +406,7 @@ async def test_an_editor_that_returns_no_verdict_escalates_as_infra_failed() -> 
     **Editor's** failure, not the Implementer's.
 
     The sub-issue's own impasse is no longer the interesting fact. That the harness cannot
-    adjudicate it is: a human reading `impasse` here would go and rewrite a brief, when what actually
+    adjudicate it is: a human reading `impasse` here would go and rewrite a spec, when what actually
     needs fixing is the Editor.
     """
     store = store_of("01")
@@ -450,7 +450,7 @@ async def test_a_killed_editor_still_spends_its_cycle() -> None:
 
 async def test_the_scheduler_writes_every_event_and_the_adapters_write_none() -> None:
     """`Editor.adjudicate` and `Implementer.run` take no `RunLog`, by design — they are given a
-    brief and a worktree and they return what they found. Everything that *happened* is the
+    spec and a worktree and they return what they found. Everything that *happened* is the
     scheduler's to record, and the log below is the proof that it recorded all of it.
 
     Every line names its actor. Without that, a cycle's two `session-finished` lines are ambiguous,
@@ -470,7 +470,7 @@ async def test_the_scheduler_writes_every_event_and_the_adapters_write_none() ->
         ("01", "editor", "session-started", "in-progress"),
         ("01", "editor", "session-finished", "success"),  # the Editor's session
         ("01", "editor", "verdict-recorded", "revise"),
-        ("01", "implementer", "session-started", "in-progress"),  # against a new brief
+        ("01", "implementer", "session-started", "in-progress"),  # against a new spec
         ("01", "implementer", "session-finished", "success"),
         ("01", "implementer", "sub-issue-closed", "landed"),
     ]
@@ -512,7 +512,7 @@ async def test_a_revise_really_discards_the_work_and_the_sub_issue_really_lands(
         scripted=[
             (
                 telemetry(commits=0),
-                verdict(Verdict.REVISE, brief="use the API that exists", findings="it is `add()`"),
+                verdict(Verdict.REVISE, spec="use the API that exists", findings="it is `add()`"),
             )
         ]
     )
@@ -552,7 +552,7 @@ async def test_the_planners_original_survives_a_real_run(
     repo.write_graph({"01": []})
     original = (repo.issues_dir / "01-sub.md").read_text()
     editor = FakeEditor(
-        scripted=[(telemetry(commits=0), verdict(Verdict.REVISE, brief="a clearer bar"))]
+        scripted=[(telemetry(commits=0), verdict(Verdict.REVISE, spec="a clearer bar"))]
     )
 
     await run(
@@ -564,8 +564,8 @@ async def test_the_planners_original_survives_a_real_run(
     )
 
     revisions = repo.issues_dir / "revisions" / "01"
-    assert (revisions / "0-brief.md").read_text() == original
-    assert (revisions / "1-brief.md").read_text() == "a clearer bar"
+    assert (revisions / "0-spec.md").read_text() == original
+    assert (revisions / "1-spec.md").read_text() == "a clearer bar"
 
     # The live file moved on — `Status: landed` — which is exactly why the snapshot has to exist.
     assert "Status: landed" in (repo.issues_dir / "01-sub.md").read_text()

@@ -1,7 +1,7 @@
 """Turning a finished session into an Outcome.
 
 Two classifiers, because `impasse` can only come from an Implementer — an Editor session cannot
-fail to deliver a brief it was never given — and the Editor's classifier is structurally incapable
+fail to deliver a spec it was never given — and the Editor's classifier is structurally incapable
 of returning it.
 
 `INTEGRATION_FAILED` is unreachable from either: it does not classify a session at all. The

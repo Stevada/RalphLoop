@@ -20,10 +20,10 @@ from pathlib import Path
 
 from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
 from ralph.issues import (
-    Brief,
     Findings,
     IssueGraph,
     SessionConsumption,
+    Spec,
     SubIssueId,
     SubIssueState,
 )
@@ -79,24 +79,24 @@ class FakeIssueStore:
 
     graph: IssueGraph
     states: dict[SubIssueId, SubIssueState] = field(default_factory=dict)
-    contents: dict[SubIssueId, tuple[Brief, Findings]] = field(default_factory=dict)
+    contents: dict[SubIssueId, tuple[Spec, Findings]] = field(default_factory=dict)
     mirrored: list[Event] = field(default_factory=list)
-    revisions: list[tuple[SubIssueId, Brief, Findings]] = field(default_factory=list)
+    revisions: list[tuple[SubIssueId, Spec, Findings]] = field(default_factory=list)
     consumption_records: list[tuple[SubIssueId, SessionConsumption]] = field(default_factory=list)
     notifications: list[str] = field(default_factory=list)
 
     def read_graph(self) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]:
         return self.graph, dict(self.states)
 
-    def content(self, id: SubIssueId) -> tuple[Brief, Findings]:
-        return self.contents.get(id, (Brief(body=f"build {id}"), Findings(body="")))
+    def content(self, id: SubIssueId) -> tuple[Spec, Findings]:
+        return self.contents.get(id, (Spec(body=f"build {id}"), Findings(body="")))
 
     def consumption(self, id: SubIssueId) -> tuple[SessionConsumption, ...]:
         return tuple(record for issue, record in self.consumption_records if issue == id)
 
-    async def record_revision(self, id: SubIssueId, brief: Brief, findings: Findings) -> None:
-        self.contents[id] = (brief, findings)
-        self.revisions.append((id, brief, findings))
+    async def record_revision(self, id: SubIssueId, spec: Spec, findings: Findings) -> None:
+        self.contents[id] = (spec, findings)
+        self.revisions.append((id, spec, findings))
 
     async def record_consumption(self, id: SubIssueId, record: SessionConsumption) -> None:
         self.consumption_records.append((id, record))

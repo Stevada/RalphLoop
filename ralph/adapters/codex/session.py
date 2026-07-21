@@ -18,7 +18,7 @@ from ralph.adapters.runtime.turn_stream import (
     TurnStreamAsk,
     TurnStreamSession,
 )
-from ralph.issues import Brief, Findings
+from ralph.issues import Findings, Spec
 from ralph.ports import Worktree
 
 MODEL = "gpt-5.3-codex"
@@ -37,7 +37,7 @@ class CodexUsageError(ValueError):
 
 
 def codex_argv(
-    brief: Brief,
+    spec: Spec,
     findings: Findings,
     worktree: Worktree,
     *,
@@ -45,7 +45,7 @@ def codex_argv(
 ) -> Sequence[str]:
     """`--json` is not optional: it is how the session reports completed-turn usage."""
     return _codex_exec_argv(
-        prompt=implementer_prompt(brief, findings),
+        prompt=implementer_prompt(spec, findings),
         cwd=worktree.path,
         sandbox=sandbox,
     )

@@ -28,7 +28,7 @@ class FailureReport:
     """Which cycle produced this — 1 on the first Implementer session, at most `MAX_CYCLES`.
 
     A harness fact, and the Editor's most valuable piece of context after the diff itself: *"you
-    have already rewritten this brief twice and it still fails the same way"* is a much stronger
+    have already rewritten this spec twice and it still fails the same way"* is a much stronger
     reason to return `planning-defect` than anything in the transcript. `must_be_terminal` tells the
     Editor it is out of road; this tells it how much road it has already used.
 

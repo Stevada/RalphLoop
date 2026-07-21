@@ -66,7 +66,7 @@ load-bearing facts:
 - **No retry anywhere.** A failed sub-issue is quarantined (`needs-human`, worktree preserved, its
   dependents never become eligible); everything unaffected still lands. The run never stops early; the
   human is paged **once**, at the end.
-- **The Editor writes nothing but brief and findings,** enforced by a tool allowlist (not the
+- **The Editor writes nothing but spec and findings,** enforced by a tool allowlist (not the
   prompt): `adapters/runtime/editor.py` for the model-agnostic half. At most **three cycles**, enforced by the
   scheduler alone.
 
@@ -90,7 +90,8 @@ load-bearing facts:
 - Sub-issues are Markdown in `<repo>/.scratch/<phase>/issues/*.md`, matched by numeric prefix.
   `Status:` values are exactly `ready` → `in-progress` → `landed` | `needs-human` — anything else is
   a loud, fatal parse error. `landed` is set by the merge queue; never by hand. A `PRD.md` one level
-  above `issues/` is injected into every session.
+  above `issues/` is not injected into any prompt; it is discoverable directly, since sessions read
+  the full repo checkout.
 - Worktrees live at `<repo>/.worktrees/active/`; failures preserved at `<repo>/.worktrees/failed/`.
 - Target repos stay agnostic — Ralph reads `.scratch/`, a repo-level context file (`CLAUDE.md` for
   Copilot; `AGENTS.md` then `CLAUDE.md` for Codex), and `.env` at the repo root, and modifies

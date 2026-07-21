@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import re
 
-from ralph.issues.content import Brief, Findings
+from ralph.issues.content import Findings, Spec
 from ralph.issues.linear.model import LinearComment, LinearIssue, LinearIssueStoreError
 
-BRIEF_HEADING = "## Brief"
+SPEC_HEADING = "## Spec"
 FINDINGS_HEADING = "## Findings"
 ACCEPTANCE_HEADING = "## Acceptance criteria"
 REVISION = re.compile(r"<!--\s*ralph:revision:(\d+)\s*-->")
@@ -15,27 +15,27 @@ REVISION = re.compile(r"<!--\s*ralph:revision:(\d+)\s*-->")
 
 def parse_content(issue: LinearIssue) -> tuple[str, str]:
     body = issue.description
-    brief = _brief_section(body)
+    spec = _spec_section(body)
     findings = _section(body, FINDINGS_HEADING)
-    if not brief:
-        brief = _without_findings(body).strip()
-    if ACCEPTANCE_HEADING not in brief:
+    if not spec:
+        spec = _without_findings(body).strip()
+    if ACCEPTANCE_HEADING not in spec:
         raise LinearIssueStoreError(
             f"{issue.identifier} has no `{ACCEPTANCE_HEADING}` in its Linear description"
         )
-    return brief.strip(), findings.strip()
+    return spec.strip(), findings.strip()
 
 
-def render_description(brief: Brief, findings: Findings) -> str:
-    return f"{BRIEF_HEADING}\n\n{brief.body.strip()}\n\n{FINDINGS_HEADING}\n\n{findings.body.strip()}\n"
+def render_description(spec: Spec, findings: Findings) -> str:
+    return f"{SPEC_HEADING}\n\n{spec.body.strip()}\n\n{FINDINGS_HEADING}\n\n{findings.body.strip()}\n"
 
 
-def render_revision(revision: int, brief: Brief, findings: Findings) -> str:
+def render_revision(revision: int, spec: Spec, findings: Findings) -> str:
     return (
         f"<!-- ralph:revision:{revision} -->\n"
         f"## Ralph revision {revision}\n\n"
-        "### Brief\n\n"
-        f"{brief.body.strip()}\n\n"
+        "### Spec\n\n"
+        f"{spec.body.strip()}\n\n"
         "### Findings\n\n"
         f"{findings.body.strip()}\n"
     )
@@ -52,11 +52,11 @@ def latest_revision(comments: tuple[LinearComment, ...]) -> int:
     return max(versions) if versions else 0
 
 
-def _brief_section(body: str) -> str:
-    start = body.find(BRIEF_HEADING)
+def _spec_section(body: str) -> str:
+    start = body.find(SPEC_HEADING)
     if start == -1:
         return ""
-    rest = body[start + len(BRIEF_HEADING) :]
+    rest = body[start + len(SPEC_HEADING) :]
     end = rest.find(FINDINGS_HEADING)
     return rest if end == -1 else rest[:end]
 

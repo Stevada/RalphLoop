@@ -185,7 +185,7 @@ def test_an_incoherent_issue_source_is_refused_on_a_real_repo(repo: TargetRepo) 
 
 
 def test_a_sub_issue_with_no_acceptance_criteria_is_refused(repo: TargetRepo) -> None:
-    """An unattended agent has nothing else to aim at. A brief with no acceptance criteria does not
+    """An unattended agent has nothing else to aim at. A spec with no acceptance criteria does not
     fail the run — it produces a session that cannot be judged, which is worse."""
     (repo.issues_dir / "01-first.md").write_text("# 01 — first\n\nStatus: ready\n\nDo the thing.\n")
     repo.git("commit", "-am", "drop the criteria")

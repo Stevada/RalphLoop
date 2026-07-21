@@ -214,7 +214,7 @@ class Scheduler:
             if closed is not None:
                 return closed
             # `revise`: the work is discarded and the sub-issue restarts clean against the
-            # rewritten brief. This cannot spin — `_cycle` returns None only after spending a
+            # rewritten spec. This cannot spin — `_cycle` returns None only after spending a
             # cycle, and the third spend makes `must_be_terminal` true, which no longer lets a
             # `revise` through.
 
@@ -232,10 +232,10 @@ class Scheduler:
             f"ralph/{sub.id}", self._repo / ACTIVE / str(sub.id), self._integration
         )
         # The newest revision, or the Planner's original if the Editor has never touched this. On
-        # cycle two this is the **rewritten** brief — which is what makes this a cycle, not a retry.
-        brief, findings = self._store.content(sub.id)
+        # cycle two this is the **rewritten** spec — which is what makes this a cycle, not a retry.
+        spec, findings = self._store.content(sub.id)
 
-        context = SessionContext(brief=brief, findings=findings, worktree=wt, budget=self._budget)
+        context = SessionContext(spec=spec, findings=findings, worktree=wt, budget=self._budget)
         telemetry = await self._implementer.run(context)
         await self._store.record_consumption(
             sub.id,
@@ -292,7 +292,7 @@ class Scheduler:
     ) -> _Closed | None:
         """The Editor half of the cycle: read the failure, return a verdict, and act on it.
 
-        **The Editor never writes code.** It reads the brief, the findings, the failure report and
+        **The Editor never writes code.** It reads the spec, the findings, the failure report and
         the failed worktree, and it returns a judgment. Every *consequence* of that judgment —
         storing the revision, writing the run log, spending the cycle, refusing a fourth — happens
         here, in the scheduler, and nowhere else. The port takes no `RunLog` and no `IssueStore` on
@@ -324,7 +324,7 @@ class Scheduler:
             # The Editor itself was killed, or came back with nothing. Escalate on the **Editor's**
             # outcome and telemetry: the Implementer's failure is no longer the interesting fact —
             # that the harness cannot adjudicate it is. A human told `impasse` here would go and
-            # rewrite a brief, when what actually needs fixing is the Editor.
+            # rewrite a spec, when what actually needs fixing is the Editor.
             #
             # (`verdict is None` is already covered by the route above: `classify_editor` calls a
             # verdictless Editor `infra-failed`, which routes to the human. It is restated only
@@ -335,7 +335,7 @@ class Scheduler:
         await self._record(sub.id, Actor.EDITOR, EventKind.VERDICT_RECORDED, verdict.verdict)
 
         if verdict.verdict.is_terminal:
-            # `planning-defect` — the brief cannot be satisfied as written, and rewriting it is a
+            # `planning-defect` — the spec cannot be satisfied as written, and rewriting it is a
             # Planner's call, not an Editor's. `inconclusive` — the Editor could not tell. Both are
             # terminal: another Implementer session would be a coin flip we have already paid for.
             return await self._quarantine(sub.id, Actor.EDITOR, context.worktree, report)
@@ -353,14 +353,14 @@ class Scheduler:
             )
             return await self._quarantine(sub.id, Actor.EDITOR, context.worktree, report)
 
-        revised_brief, revised_findings = verdict.revision
+        revised_spec, revised_findings = verdict.revision
         # Knowledge survives **only** through the findings. Nothing else crosses: the diff is
         # discarded, the transcript is discarded, and what the Editor chose to write down is all the
         # next session gets. That choice is the Editor's judgment, unmandated — and keeping it out
-        # of the brief is what lets a session be *helped* without the bar being *lowered*.
+        # of the spec is what lets a session be *helped* without the bar being *lowered*.
         await self._store.record_revision(
             sub.id,
-            revised_brief,
+            revised_spec,
             revised_findings if revised_findings is not None else context.findings,
         )
         self._git.discard_worktree(context.worktree)

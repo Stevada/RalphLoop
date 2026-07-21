@@ -123,7 +123,7 @@ def test_a_wall_clocked_editor_is_infra_failed() -> None:
 
 
 def test_classify_editor_cannot_return_impasse_for_any_input() -> None:
-    """Structural, not incidental: an Editor has no brief of its own to fail to deliver, declared
+    """Structural, not incidental: an Editor has no spec of its own to fail to deliver, declared
     or not. Assert over the input space, not one example."""
     forbidden = {Outcome.IMPASSE, Outcome.INTEGRATION_FAILED}
     telemetries = [
@@ -339,7 +339,7 @@ def test_the_notification_counts_what_each_failure_stranded() -> None:
 
 def test_the_outcome_decides_what_kind_of_ten_minutes_you_are_about_to_spend() -> None:
     """Infra first — it means the harness itself broke, and nothing else this run says is
-    trustworthy. Then the outcomes that send you to a brief, then the ones that send you to a diff.
+    trustworthy. Then the outcomes that send you to a spec, then the ones that send you to a diff.
     """
     assert ATTENTION_ORDER[Outcome.INFRA_FAILED] < ATTENTION_ORDER[Outcome.IMPASSE]
     assert ATTENTION_ORDER[Outcome.IMPASSE] < ATTENTION_ORDER[Outcome.INTEGRATION_FAILED]

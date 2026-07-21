@@ -86,7 +86,7 @@ Sub-issues are Markdown files in the target repo's `.scratch/<phase>/issues/` di
 
 Status: ready
 
-Brief description of the work.
+Short description of the work.
 
 ## Acceptance criteria
 - [ ] Users can sign in with email/password
@@ -109,8 +109,9 @@ by hand.
 or bare filenames. A sub-issue becomes eligible only once every sub-issue it is blocked by has
 `landed`. `Blocked` refers to this edge and nothing else.
 
-**PRD:** place a `PRD.md` one level above the `issues/` directory. It is injected into every
-session as design context.
+**PRD:** place a `PRD.md` one level above the `issues/` directory. Ralph does not inject it into
+any prompt; it is discoverable directly, since Implementer and Editor sessions read the full repo
+checkout, PRD included.
 
 ## Linear issue source
 
@@ -125,9 +126,9 @@ The Linear parent issue's sub-issues are Ralph's sub-issues. Linear's native iss
 `blocked by` supplies graph edges. Each sub-issue description stores the current Ralph content:
 
 ```markdown
-## Brief
+## Spec
 
-The current brief, including acceptance criteria.
+The current spec, including acceptance criteria.
 
 ## Findings
 
@@ -135,7 +136,7 @@ The current findings, if any.
 ```
 
 When the Editor records a revision, Ralph snapshots the original description as `Ralph revision 0`
-in a Linear comment, updates the sub-issue description to the latest brief/findings, then appends
+in a Linear comment, updates the sub-issue description to the latest spec/findings, then appends
 the new revision as another Ralph comment. The description stays readable; the revision trail stays
 attached to the sub-issue.
 

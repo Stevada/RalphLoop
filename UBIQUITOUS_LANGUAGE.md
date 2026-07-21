@@ -14,9 +14,9 @@ This file points at nothing: it is where the vocabulary bottoms out.
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Planner** | The actor that owns the shape of the work: the sub-issue graph and the first draft of every brief. | architect, decomposer |
-| **Editor** | The actor that rewrites a brief and its findings after an impasse, and returns a verdict. | reviewer, mentor, critic |
-| **Implementer** | The actor that writes all code and tests, working from a single brief. | worker, agent, coder |
+| **Planner** | The actor that owns the shape of the work: the sub-issue graph and the first draft of every spec. | architect, decomposer |
+| **Editor** | The actor that rewrites a spec and its findings after an impasse, and returns a verdict. | reviewer, mentor, critic |
+| **Implementer** | The actor that writes all code and tests, working from a single spec. | worker, agent, coder |
 
 ## Adapters and transports
 
@@ -48,18 +48,19 @@ Two bounds and one guide, kept distinct. The terms name them:
 | ---- | ---------- | ---------------- |
 | **Parent issue** | The unit of work that yields exactly one PR against exactly one repo. | epic, story, feature |
 | **Sub-issue** | An immutable node in the graph: one worktree, one Implementer, one merge. | task, ticket, issue |
-| **Brief** | A sub-issue's mutable spec — acceptance criteria in prose, including its tests as prose. | description, sub-issue document |
+| **Spec** | A sub-issue's mutable content: its full text — acceptance criteria, and everything else the Planner wrote, minus its `## Findings` section — as currently understood. | brief, description, sub-issue document |
 | **Findings** | A sub-issue's mutable record of repo facts the Editor discovered in a failed worktree, carried into the next Implementer session. | guidance, advice, hints, notes |
 
 A **Sub-issue** is fixed for the life of a **Run**. Two fields on it are mutable, and only the
 **Editor** writes them:
 
-- The **Brief** says *what "done" means* — the thing a human diffs against the Planner's
-  original intent.
+- The **Spec** says *what "done" means* — the thing a human diffs against the Planner's
+  original intent. It starts as the Planner's file verbatim; the Editor may rewrite it whole
+  on a `revise` verdict.
 - The **Findings** say *what the last session learned about the repo* — "the client's retry
   logic swallows the expected error," "the API is really called X." Difficulty-neutral by
-  intent: a channel for adding information **without** lowering the bar, kept out of the brief
-  so the brief stays clean as spec.
+  intent: a channel for adding information **without** lowering the bar, kept out of the spec
+  so the spec stays a clean bar, not a running commentary.
 
 The graph's shape carries everything the runtime needs: the node blocked by nothing is
 dispatched first, the node blocked by everything last. The **Planner** reasons about contract,
@@ -81,7 +82,7 @@ condition it found, never merely that the run cannot start.
 | `uncommitted-changes` | Tracked changes in the working tree the merge queue would fight. |
 | `uninstalled-pre-commit-hooks` | The repo configures pre-commit, but no hook is installed. |
 | `invalid-issue-source` | The issue source could not be read — unreachable or misconfigured. |
-| `invalid-issue-graph` | The source read, but its graph is malformed — a cycle, or a brief with no acceptance criteria. |
+| `invalid-issue-graph` | The source read, but its graph is malformed — a cycle, or a spec with no acceptance criteria. |
 
 ## Session outcomes
 
@@ -95,7 +96,7 @@ state; the harness's word for everything the model cannot observe about itself.
 | `integration-failed` | Prospective merge conflicts or goes red after rebase onto the integration head (merge queue, not a session) | Editor |
 | `infra-failed` | Setup failure, wall-clock timeout, rate limit, OOM (either actor) | Human — from either actor. Never the Editor. |
 
-`impasse` can only come from an Implementer session — an Editor cannot fail to deliver a brief
+`impasse` can only come from an Implementer session — an Editor cannot fail to deliver a spec
 it was never given. `infra-failed` can come from either actor. `integration-failed` is not a
 session outcome at all: the Implementer session succeeded green in isolation, and the merge queue
 raises it when that tree will not integrate with a sibling that landed first. It routes to the
@@ -108,9 +109,9 @@ Editor on the first failure and counts as a **cycle** like any other.
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
 | **Sentinel** | A fixed marker string the model prints for the harness to grep, e.g. `<impasse>`. The channel for a model's word about its own state. | flag, marker, token |
-| **Impasse** | The outcome of an Implementer session that could not satisfy its brief — whether the model **declared** it via the `<impasse>` sentinel, or the suite **caught** it undeclared (no commits, or a red suite). | blocked, stuck, giving up, silent-red |
+| **Impasse** | The outcome of an Implementer session that could not satisfy its spec — whether the model **declared** it via the `<impasse>` sentinel, or the suite **caught** it undeclared (no commits, or a red suite). | blocked, stuck, giving up, silent-red |
 | **Impasse report** | The Implementer's structured exit artifact, corroborated by harness-supplied facts. | blocker report, failure report |
-| **Revision** | The Editor's rewrite of a brief (and its findings), recorded alongside the Planner's original rather than over it. | edit, fix, update |
+| **Revision** | The Editor's rewrite of a spec (and its findings), recorded alongside the Planner's original rather than over it. | edit, fix, update |
 | **Verdict** | The Editor's decision when its session succeeds: `revise`, `planning-defect`, or `inconclusive`. | outcome, ruling, judgment |
 | **Run log** | An append-only file, one line per event, recording session states and Editor verdicts for a run — nothing heavier. | trace, audit log, journal |
 
@@ -121,7 +122,7 @@ Editor on the first failure and counts as a **cycle** like any other.
 
 | Verdict | The Editor is saying | Effect |
 | ------- | -------------------- | ------ |
-| `revise` | "The brief was wrong and I have fixed it." | Implementer restarts clean. |
+| `revise` | "The spec was wrong and I have fixed it." | Implementer restarts clean. |
 | `planning-defect` | "The cut is wrong. This sub-issue should not exist in this shape." | Quarantine; page the human. |
 | `inconclusive` | "I have spent my cycles and I cannot tell you why this will not land." | Quarantine; page the human. |
 
@@ -167,7 +168,7 @@ every green result is produced inside the blast radius of the thing being tested
 ## Relationships
 
 - A **Parent issue** contains many **Sub-issues** and produces exactly one PR.
-- A **Sub-issue** has one **Brief** and one **Findings**.
+- A **Sub-issue** has one **Spec** and one **Findings**.
 - A **Cycle** is one Implementer **Session** plus one Editor **Session**; at most three.
 - Every **Session** is bounded by wall clock; the harness also bounds cycles at three.
 - An Implementer **Session** ends in a green delivery or an **Impasse**.

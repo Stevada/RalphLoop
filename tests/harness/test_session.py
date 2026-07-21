@@ -11,21 +11,21 @@ import pytest
 from ralph.adapters.git import GitCli
 from ralph.adapters.runtime.implementer import ImpasseParseError, SubprocessImplementer, parse_impasse
 from ralph.harness import Outcome, SuiteResult, classify_implementer
-from ralph.issues import Brief, Findings
+from ralph.issues import Findings, Spec
 from ralph.ports import Budget, SessionContext, Worktree
 from tests.testbed import Behaviour, StandInAgent, TargetRepo
 
-BRIEF, FINDINGS = Brief(body="make it work"), Findings(body="")
+SPEC, FINDINGS = Spec(body="make it work"), Findings(body="")
 GENEROUS = Budget(wall_clock_s=60.0)
 
 
 def context(wt: Worktree, budget: Budget = GENEROUS) -> SessionContext:
-    return SessionContext(brief=BRIEF, findings=FINDINGS, worktree=wt, budget=budget)
+    return SessionContext(spec=SPEC, findings=FINDINGS, worktree=wt, budget=budget)
 
 
 def implementer(agent: StandInAgent, behaviour: Behaviour) -> SubprocessImplementer:
     return SubprocessImplementer(
-        build_argv=lambda brief, findings, wt: agent.argv(
+        build_argv=lambda spec, findings, wt: agent.argv(
             behaviour, wt.branch.removeprefix("ralph/")
         )
     )

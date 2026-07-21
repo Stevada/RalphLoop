@@ -1,6 +1,6 @@
 """The issue tracker seam.
 
-The scheduler reads the issue graph once, asks for the current brief/findings per sub-issue, and
+The scheduler reads the issue graph once, asks for the current spec/findings per sub-issue, and
 mirrors run-log events back for humans. Filesystem markdown and Linear both satisfy this interface.
 """
 
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from ralph.issues.content import Brief, Findings
+from ralph.issues.content import Findings, Spec
 from ralph.issues.consumption import SessionConsumption
 from ralph.issues.graph import IssueGraph, SubIssueId
 from ralph.issues.state import SubIssueState
@@ -27,11 +27,11 @@ class IssueStore(Protocol):
 
     def read_graph(self) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]: ...
 
-    def content(self, id: SubIssueId) -> tuple[Brief, Findings]: ...
+    def content(self, id: SubIssueId) -> tuple[Spec, Findings]: ...
 
     def consumption(self, id: SubIssueId) -> tuple[SessionConsumption, ...]: ...
 
-    async def record_revision(self, id: SubIssueId, brief: Brief, findings: Findings) -> None: ...
+    async def record_revision(self, id: SubIssueId, spec: Spec, findings: Findings) -> None: ...
 
     async def record_consumption(self, id: SubIssueId, record: SessionConsumption) -> None: ...
 

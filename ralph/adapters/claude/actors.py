@@ -15,9 +15,9 @@ from ralph.ports import SessionContext
 
 @dataclass(frozen=True, slots=True)
 class ClaudeCodeEditor:
-    """The Editor as the rest of the harness sees it: a brief in, a verdict out.
+    """The Editor as the rest of the harness sees it: a spec in, a verdict out.
 
-    It does not write the verdict to the run log, store the revised brief, spend a cycle, or decide
+    It does not write the verdict to the run log, store the revised spec, spend a cycle, or decide
     what a `revise` on the final cycle means. All of that is the scheduler's, and keeping it there
     is why this class is twenty lines.
     """
@@ -37,7 +37,7 @@ class ClaudeCodeEditor:
         session = self.open_session(
             TurnStreamAsk(
                 prompt=editor_prompt(
-                    context.brief, context.findings, failure, must_be_terminal
+                    context.spec, context.findings, failure, must_be_terminal
                 ),
                 cwd=context.worktree.path,
                 permit=lambda tool, input: read_only(tool, input, self.suite),

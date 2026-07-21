@@ -19,7 +19,7 @@ from ralph.harness import (
     SuiteResult,
     Verdict,
 )
-from ralph.issues import Brief, Findings, IssueGraph, SubIssue, SubIssueId
+from ralph.issues import Findings, IssueGraph, Spec, SubIssue, SubIssueId
 
 
 def telemetry(
@@ -72,14 +72,14 @@ def impasse(
 def verdict(
     v: Verdict = Verdict.INCONCLUSIVE,
     *,
-    brief: str = "the brief, rewritten",
+    spec: str = "the spec, rewritten",
     findings: str | None = None,
     rationale: str = "because",
 ) -> EditorVerdict:
-    """A `revise` carries the brief to restart against; a terminal verdict may not carry one at all.
+    """A `revise` carries the spec to restart against; a terminal verdict may not carry one at all.
 
     The builder mirrors the invariant rather than working around it — `verdict(Verdict.REVISE)` gets
-    a brief because a `revise` without one is not a thing that can exist.
+    a spec because a `revise` without one is not a thing that can exist.
 
     `findings=None` means the Editor left them alone, which is the common case: most revisions
     rewrite the bar, not what was learned about the repo.
@@ -87,7 +87,7 @@ def verdict(
     revising = v is Verdict.REVISE
     return EditorVerdict(
         verdict=v,
-        revised_brief=Brief(body=brief) if revising else None,
+        revised_spec=Spec(body=spec) if revising else None,
         revised_findings=Findings(body=findings) if findings is not None else None,
         rationale=rationale,
     )

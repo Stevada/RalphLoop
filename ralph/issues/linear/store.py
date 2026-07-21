@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 
-from ralph.issues.content import Brief, Findings
+from ralph.issues.content import Findings, Spec
 from ralph.issues.consumption import (
     CONSUMPTION_MARKER,
     SessionConsumption,
@@ -70,10 +70,10 @@ class LinearIssueStore:
 
         return IssueGraph(graph), states
 
-    def content(self, id: SubIssueId) -> tuple[Brief, Findings]:
+    def content(self, id: SubIssueId) -> tuple[Spec, Findings]:
         issue = self._issue(id)
-        brief, findings = parse_content(issue)
-        return Brief(body=brief, revision=latest_revision(issue.comments)), Findings(body=findings)
+        spec, findings = parse_content(issue)
+        return Spec(body=spec, revision=latest_revision(issue.comments)), Findings(body=findings)
 
     def consumption(self, id: SubIssueId) -> tuple[SessionConsumption, ...]:
         issue = self._issue(id)
@@ -84,22 +84,22 @@ class LinearIssueStore:
             records.extend(parse_consumption_records(comment.body))
         return tuple(records)
 
-    async def record_revision(self, id: SubIssueId, brief: Brief, findings: Findings) -> None:
+    async def record_revision(self, id: SubIssueId, spec: Spec, findings: Findings) -> None:
         issue = self._issue(id)
         latest = latest_revision(issue.comments)
         if latest == 0 and not revision_comments(issue.comments):
-            original_brief, original_findings = parse_content(issue)
+            original_spec, original_findings = parse_content(issue)
             original = render_revision(
-                0, Brief(body=original_brief), Findings(body=original_findings)
+                0, Spec(body=original_spec), Findings(body=original_findings)
             )
             original_comment = LinearComment(id=f"ralph-revision-0-{issue.id}", body=original)
             self.client.create_comment(issue.id, original)
             issue = self._append_cached_comment(id, original_comment)
 
         next_revision = latest + 1
-        description = render_description(brief, findings)
+        description = render_description(spec, findings)
         self.client.update_issue_description(issue.id, description)
-        comment_body = render_revision(next_revision, brief, findings)
+        comment_body = render_revision(next_revision, spec, findings)
         self.client.create_comment(issue.id, comment_body)
 
         issue = replace(

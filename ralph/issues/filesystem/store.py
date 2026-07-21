@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from ralph.issues.content import Brief, Findings
+from ralph.issues.content import Findings, Spec
 from ralph.issues.consumption import (
     SessionConsumption,
     parse_consumption_records,
@@ -37,7 +37,7 @@ the graph — never sees a revision and mistakes it for a sub-issue.
 """
 
 CONSUMPTION = "consumption"
-"""One markdown file per sub-issue, outside the live brief so telemetry is durable but not prompt
+"""One markdown file per sub-issue, outside the live spec so telemetry is durable but not prompt
 material for the next Implementer session."""
 
 
@@ -173,33 +173,33 @@ class FilesystemIssueStore:
         dir = self._revisions_of(id)
         if not dir.is_dir():
             return None
-        numbers = [int(n.group()) for p in dir.glob("*-brief.md") if (n := _ID.match(p.name))]
+        numbers = [int(n.group()) for p in dir.glob("*-spec.md") if (n := _ID.match(p.name))]
         return max(numbers) if numbers else None
 
-    def _planners_original(self, id: SubIssueId) -> tuple[Brief, Findings]:
-        """Revision 0: the sub-issue file exactly as the Planner wrote it. The brief is the file;
+    def _planners_original(self, id: SubIssueId) -> tuple[Spec, Findings]:
+        """Revision 0: the sub-issue file exactly as the Planner wrote it. The spec is the file;
         the findings are the one section the Editor owns."""
         body = self._path_of(id).read_text()
-        return Brief(body=body), Findings(body=_section(body, _FINDINGS).strip())
+        return Spec(body=body), Findings(body=_section(body, _FINDINGS).strip())
 
     def _consumption_path(self, id: SubIssueId) -> Path:
         return self.issues_dir / CONSUMPTION / f"{id}.md"
 
-    def content(self, id: SubIssueId) -> tuple[Brief, Findings]:
+    def content(self, id: SubIssueId) -> tuple[Spec, Findings]:
         """What the next Implementer session works from: the newest revision, or the Planner's
         original when there is none.
 
-        Brief and findings round-trip as **separate** fields, which is the point of storing them in
+        Spec and findings round-trip as **separate** fields, which is the point of storing them in
         separate files. A revision may change one and leave the other alone — the findings are a
         channel for adding information *without* lowering the bar, and conflating them with the
-        brief is exactly how a bar gets lowered by accident.
+        spec is exactly how a bar gets lowered by accident.
         """
         latest = self._latest_revision(id)
         if latest is None:
             return self._planners_original(id)
         dir = self._revisions_of(id)
         return (
-            Brief(body=(dir / f"{latest}-brief.md").read_text(), revision=latest),
+            Spec(body=(dir / f"{latest}-spec.md").read_text(), revision=latest),
             Findings(body=(dir / f"{latest}-findings.md").read_text()),
         )
 
@@ -210,12 +210,12 @@ class FilesystemIssueStore:
             return ()
         return parse_consumption_records(path.read_text())
 
-    async def record_revision(self, id: SubIssueId, brief: Brief, findings: Findings) -> None:
+    async def record_revision(self, id: SubIssueId, spec: Spec, findings: Findings) -> None:
         """Written **alongside** the Planner's original, never over it.
 
         Revision 0 is what a human diffs against to see whether the spec drifted — whether three
         rounds of Editor revision quietly softened "reject the request" into "log a warning". If the
-        harness overwrote the brief in place, the evidence for the one bet most likely to fail
+        harness overwrote the spec in place, the evidence for the one bet most likely to fail
         (`docs/prd.md` §8: spec drift) would be destroyed by the very mechanism under suspicion.
 
         So revision 0 is snapshotted here, on the first revision, before anything is written. The
@@ -231,13 +231,13 @@ class FilesystemIssueStore:
 
         latest = self._latest_revision(id)
         if latest is None:
-            original_brief, original_findings = self._planners_original(id)
-            (dir / "0-brief.md").write_text(original_brief.body)
+            original_spec, original_findings = self._planners_original(id)
+            (dir / "0-spec.md").write_text(original_spec.body)
             (dir / "0-findings.md").write_text(original_findings.body)
             latest = 0
 
         next = latest + 1
-        (dir / f"{next}-brief.md").write_text(brief.body)
+        (dir / f"{next}-spec.md").write_text(spec.body)
         (dir / f"{next}-findings.md").write_text(findings.body)
 
     async def record_consumption(self, id: SubIssueId, record: SessionConsumption) -> None:

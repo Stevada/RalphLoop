@@ -45,7 +45,7 @@ ralph/
   issues/          issue tracker values + seam + storage adapters.
     __init__.py    ← THE INTERFACE for issue values.
     graph.py       SubIssueId, SubIssue, IssueGraph, GraphError
-    content.py     Brief, Findings
+    content.py     Spec, Findings
     state.py       SubIssueState
     store.py       IssueStore Protocol
     filesystem/    FilesystemIssueStore, IssueParseError
@@ -98,7 +98,7 @@ adapter used today.
 
 ### Structure vs. content
 
-A **sub-issue** is immutable for the life of a **run**; its **brief** and **findings** are not (the
+A **sub-issue** is immutable for the life of a **run**; its **spec** and **findings** are not (the
 **Editor** rewrites them). So structure is a frozen value and content lives behind a store — which
 is what makes "the Editor may never add, remove, or re-link a sub-issue" a property of the *types*
 rather than a rule someone must remember.
@@ -106,7 +106,7 @@ rather than a rule someone must remember.
 | Type | Module | What it is |
 |---|---|---|
 | `SubIssueId`, `SubIssue`, `IssueGraph`, `GraphError` | [graph.py](../ralph/issues/graph.py) | The immutable graph. `IssueGraph` raises on cycles and dangling edges at construction. There is **no `kind`** field — contract/impl/integration roles are fully encoded in the `blocked by` edges, and a `kind` would be a second, un-checkable source of truth. |
-| `Brief`, `Findings` | [content.py](../ralph/issues/content.py) | The two mutable fields. `Brief` = *what "done" means* (revision 0 is the Planner's, never overwritten); `Findings` = *what the last session learned*, difficulty-neutral, kept out of the brief so the brief stays clean as spec. |
+| `Spec`, `Findings` | [content.py](../ralph/issues/content.py) | The two mutable fields. `Spec` = *what "done" means* (revision 0 is the Planner's, never overwritten); `Findings` = *what the last session learned*, difficulty-neutral, kept out of the spec so the spec stays a clean bar. |
 | `SubIssueState` | [state.py](../ralph/issues/state.py) | `ready` → `in-progress` → `landed` \| `needs-human`. `landed` is a sub-issue's terminal state; `done` is the *parent's* and is banned here. |
 
 `IssueStore` ([store.py](../ralph/issues/store.py)) is the tracker seam: filesystem markdown or
@@ -122,9 +122,9 @@ same record as best-effort sub-issue comments.
 sub-issues and `blocked by` relations into the same `IssueGraph`. The scheduler does not know which
 store it is using.
 
-In Linear mode, the current brief and findings live in the sub-issue description. Editor revisions
+In Linear mode, the current spec and findings live in the sub-issue description. Editor revisions
 are append-only Ralph comments on that sub-issue: revision 0 snapshots the Planner's original, and
-each later revision records the brief/findings Ralph just wrote back into the description.
+each later revision records the spec/findings Ralph just wrote back into the description.
 
 ---
 
@@ -159,7 +159,7 @@ Only `SUCCESS` needs to know who is asking (Implementer → merge queue, Editor 
 
 | Type / function | Module | What it is |
 |---|---|---|
-| `Verdict`, `EditorVerdict` | [verdict.py](../ralph/harness/model/verdict.py) | `Verdict.is_terminal` is `True` for everything but `revise`. `EditorVerdict.revised_brief` is required iff `revise`. |
+| `Verdict`, `EditorVerdict` | [verdict.py](../ralph/harness/model/verdict.py) | `Verdict.is_terminal` is `True` for everything but `revise`. `EditorVerdict.revised_spec` is required iff `revise`. |
 | `CycleLedger` | [cycles.py](../ralph/harness/rules/cycles.py) | The cap of three, hard-enforced. `must_be_terminal(id)` is `True` on the final cycle — the Editor may not return `revise`, and the **scheduler** refuses it rather than trusting the Editor to remember. One rule, one home. |
 | `eligible`, `never_eligible` | [eligibility.py](../ralph/harness/rules/eligibility.py) | `eligible` = every blocker has `LANDED`, **derived never stored**. `never_eligible` is report-time only: a sub-issue still `ready` at run end whose blockers never landed **never got a turn** — distinct from `needs-human` ("I failed") without inventing a state for it. Nothing propagates a skip through the graph. |
 
@@ -172,7 +172,7 @@ needs a real model, network, or `codex` binary is in the wrong layer.
 
 | Protocol | The seam | Notes that don't show in the signature |
 |---|---|---|
-| `Implementer` | writes code from a brief → `SessionTelemetry` | Either Codex or Copilot. |
+| `Implementer` | writes code from a spec → `SessionTelemetry` | Either Codex or Copilot. |
 | `Editor` | adjudicates a failure → `(SessionTelemetry, EditorVerdict \| None)` | Bounded exactly like an Implementer — same `Budget`, same telemetry. Takes `must_be_terminal`; takes **no** `RunLog` or `IssueStore`, so every *consequence* of a verdict happens in the scheduler. |
 | `RunLog` | the harness's **authoritative** record | A Protocol, not the JSONL adapter, because the merge queue and scheduler both take one and orchestration may not name an adapter. |
 | `TestRunner` | a suite run → `SuiteResult` | The harness runs the tests; the model's exit code is only its opinion. |
@@ -189,12 +189,12 @@ rewriting quietly softened the spec (`docs/design.md` §8, the bet most likely t
 .scratch/<phase>/issues/
   01-sub.md                     ← the Planner's, live. Its Status: line is mirrored into it.
   revisions/01/
-    0-brief.md  0-findings.md   ← snapshotted on the FIRST revision, never rewritten
-    1-brief.md  1-findings.md   ← the Editor's
-    2-brief.md  2-findings.md
+    0-spec.md  0-findings.md   ← snapshotted on the FIRST revision, never rewritten
+    1-spec.md  1-findings.md   ← the Editor's
+    2-spec.md  2-findings.md
 ```
 
-Brief and findings are separate files because a revision may change one and leave the other alone.
+Spec and findings are separate files because a revision may change one and leave the other alone.
 
 ---
 
@@ -231,11 +231,11 @@ telemetry core after `turn_stream.py` collects their output. Everything that mak
 session an Implementer session — counting commits, reading the diffstat, finding the `<impasse>`
 sentinel — lives once in `implementer.py`, the twin of `editor.py`; each concrete adapter supplies
 either an argv or a `TurnStreamSession`.
-[prompt.py](../ralph/adapters/runtime/prompt.py) is the one place a `Brief` becomes
+[prompt.py](../ralph/adapters/runtime/prompt.py) is the one place a `Spec` becomes
 text a model reads, shared by Codex and Copilot so their failures stay comparable; findings go in as
-a **separate section**, never folded into the brief.
+a **separate section**, never folded into the spec.
 
-### The Editor writes nothing but brief and findings — enforced, not asked
+### The Editor writes nothing but spec and findings — enforced, not asked
 
 The Editor may read anything and run read-only commands; the moment it commits it is an Implementer
 with a different name. **This is enforced, not prompted.** What counts as mutating is decided
@@ -338,7 +338,7 @@ cycle's worth reads as a story with two characters:
 01  editor       session-started    in-progress
 01  editor       session-finished   success     ← the EDITOR's session succeeded…
 01  editor       verdict-recorded   revise      ← …and this is what it found
-01  implementer  session-started    in-progress ← cycle two, against a rewritten brief
+01  implementer  session-started    in-progress ← cycle two, against a rewritten spec
 01  implementer  session-finished   success
 01  implementer  sub-issue-closed   landed
 ```

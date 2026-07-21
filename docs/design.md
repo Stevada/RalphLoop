@@ -13,14 +13,14 @@ those terms and does not define them.
 
 ## 1. Actors
 
-Three actors. They never talk to each other. They talk to a sub-issue's **brief** and
+Three actors. They never talk to each other. They talk to a sub-issue's **spec** and
 **findings**.
 
 | Actor | Backed by | Writes | Reads |
 |---|---|---|---|
-| **Planner** | Claude Opus, in conversation | The issue graph and the first draft of every brief | PRD, codebase, integration branch |
-| **Editor** | Claude Code, Codex, **or** Copilot | A single sub-issue's brief and findings | Everything; may run read-only commands |
-| **Implementer** | Codex **or** Copilot | All code, tests included | Its brief and findings, the repo |
+| **Planner** | Claude Opus, in conversation | The issue graph and the first draft of every spec | PRD, codebase, integration branch |
+| **Editor** | Claude Code, Codex, **or** Copilot | A single sub-issue's spec and findings | Everything; may run read-only commands |
+| **Implementer** | Codex **or** Copilot | All code, tests included | Its spec and findings, the repo |
 
 The Planner is invoked by a human, in conversation. The Editor and Implementer run
 unattended inside a run.
@@ -69,13 +69,13 @@ is read-only under that sandbox, or the Editor session will fail visibly as infr
 
 These are load-bearing. Violating any of them collapses a boundary drawn elsewhere.
 
-1. **A sub-issue's brief and findings are the only channel between actors.**
+1. **A sub-issue's spec and findings are the only channel between actors.**
 2. **Structure is immutable within a run.** The Planner's graph — sub-issues and their
-   blocking edges — is fixed when the run reads it at start. The Editor may rewrite a brief
+   blocking edges — is fixed when the run reads it at start. The Editor may rewrite a spec
    and its findings; it may never add, remove, or re-link a sub-issue.
 3. **A run reads the issue graph exactly once, at start.** No mid-run reads. Human
    intervention ends the run; resumption is a new run that re-reads the graph.
-4. **The Editor writes only the brief and findings.** It may read anything and run read-only
+4. **The Editor writes only the spec and findings.** It may read anything and run read-only
    commands. It never commits, never cherry-picks, never touches a worktree except to
    read it. The moment the Editor commits, it is an Implementer with a different name.
 5. **Nothing enters the integration branch unverified.** Therefore nothing after
@@ -92,7 +92,7 @@ One repo. One Kanban. One parent issue. One PR.
 ```
                  ┌──────────────────┐
                  │ contract         │   interfaces, stubs, schema
-                 │ sub-issue        │   (no tests — tests are prose in each brief)
+                 │ sub-issue        │   (no tests — tests are prose in each spec)
                  └────────┬─────────┘
           ┌───────────────┼───────────────┐
           ▼               ▼               ▼
@@ -236,7 +236,7 @@ If bash performed the merge, the break would surface waves later — no worktree
 no attribution. Under the merge queue the failure is caught the moment it happens, on the
 prospective merge against the exact sibling that landed first, and the **worktree is
 preserved** for the Editor. A live actor with the failing tree in front of it decides
-whether 105's brief should adapt to 104's rename or whether the two were badly cut — a
+whether 105's spec should adapt to 104's rename or whether the two were badly cut — a
 decision bash could never make, and one the already-exited Implementer is no longer around
 to make either.
 
@@ -272,12 +272,12 @@ Triggered by an `impasse` — declared or not — or an `integration-failed` mer
 
 The Editor:
 
-- reads the brief, the findings, the failure report (an Implementer impasse report, or — for
+- reads the spec, the findings, the failure report (an Implementer impasse report, or — for
   `integration-failed` — the harness's record, since the Implementer authored none), and the
   **failed worktree**;
 - **runs read-only commands** — re-runs the suite, greps, checks whether the API the
   Implementer complained about actually exists;
-- rewrites the brief and records findings;
+- rewrites the spec and records findings;
 - returns a verdict.
 
 Reproduction, not inference. The difference between *"this cannot be done as specified"*
@@ -286,14 +286,14 @@ is cheap, the Editor's ability to check the Implementer's story against the repo
 the only thing standing between us and a system where declaring an impasse always works.
 
 **On Editor entry, the Implementer's work is discarded.** It restarts clean against the
-revised brief. No code survives. Knowledge survives only if the Editor writes it into the
+revised spec. No code survives. Knowledge survives only if the Editor writes it into the
 findings — that is the Editor's judgment, unmandated.
 
 Verdicts:
 
 | Verdict | Effect |
 |---|---|
-| `revise` | Brief and findings rewritten; Implementer restarts clean. |
+| `revise` | Spec and findings rewritten; Implementer restarts clean. |
 | `planning-defect` | Sub-issue quarantined; **always pages the human.** |
 | `inconclusive` | Sub-issue quarantined; pages the human. |
 
@@ -400,7 +400,7 @@ An Opus Editor now spins up, reads the worktree, and is asked whether the **spec
 is wrong.
 
 That is a full Editor session, at Opus prices, diagnosing `npm ci`. It can happen three
-times before the human is paged, with the Editor rewriting a perfectly good brief each
+times before the human is paged, with the Editor rewriting a perfectly good spec each
 cycle. The notification finally reads *"inconclusive after three cycles"* — the most
 alarming message the system can send — and it means the lockfile was stale.
 
@@ -435,7 +435,7 @@ verdicts to Linear as they happen — best-effort telemetry. A failed Linear wri
 and retried at run end; it never fails a run. Nothing is ever read back from Linear during
 a run.
 
-Editor revisions land as **comments plus a distinguished revised-brief field**, never as
+Editor revisions land as **comments plus a distinguished revised-spec field**, never as
 an overwrite of the Planner's original description. The original intent is the only thing a
 bad outcome can later be diffed against.
 
@@ -464,7 +464,7 @@ atomic. **Merge first, then write.**
 This fails toward redundant work (a `landed` sub-issue looks pending; the next run
 redispatches it, an Implementer finds the tests already green, one session wasted) rather
 than toward missing code (a pending sub-issue looks `landed`; dependents build against a
-baseline that never received it, and an Editor is summoned to diagnose a brief that is
+baseline that never received it, and an Editor is summoned to diagnose a spec that is
 fine).
 
 Note the ordering protects against **the harness dying**, not against Linear being down. If
@@ -512,7 +512,7 @@ These are bets, not assumptions. They were argued and taken with the costs visib
 
 ### 1. The Implementer's self-authored tests match the prose spec
 
-The brief specifies tests in prose. The Implementer writes both the test and the code that
+The spec states tests in prose. The Implementer writes both the test and the code that
 passes it. **No mechanical check on that correspondence exists.**
 
 *"Invalid credentials return 401"* is satisfied, in letter, by a test that constructs a
@@ -525,7 +525,7 @@ and human PR review.
 
 ### 2. The Editor does not soften specs into meaninglessness
 
-The Editor rewrites the brief — including its tests — in response to an impasse report
+The Editor rewrites the spec — including its tests — in response to an impasse report
 authored by the actor that failed. It may do this up to twice more. **There is no budget on
 softening and no record of drift.**
 

@@ -12,7 +12,7 @@ from dataclasses import replace
 import pytest
 
 from ralph.harness import Actor
-from ralph.issues import Brief, Findings, SessionConsumption, SubIssueId, SubIssueState
+from ralph.issues import Findings, SessionConsumption, Spec, SubIssueId, SubIssueState
 from ralph.issues.linear import (
     LinearComment,
     LinearIssue,
@@ -23,8 +23,8 @@ from ralph.issues.linear import (
 from ralph.runlog import EventKind, event
 
 
-def description(brief: str, findings: str = "") -> str:
-    return f"## Brief\n\n{brief}\n\n## Findings\n\n{findings}\n"
+def description(spec: str, findings: str = "") -> str:
+    return f"## Spec\n\n{spec}\n\n## Findings\n\n{findings}\n"
 
 
 class FakeLinearClient:
@@ -91,7 +91,7 @@ def sub_issue(
     id: str | None = None,
     title: str = "Build it",
     state: str = "ready",
-    brief: str = "Do it.\n\n## Acceptance criteria\n\n- [ ] It works.",
+    spec: str = "Do it.\n\n## Acceptance criteria\n\n- [ ] It works.",
     findings: str = "",
     blocked_by: tuple[str, ...] = (),
     comments: tuple[LinearComment, ...] = (),
@@ -100,7 +100,7 @@ def sub_issue(
         id=id or f"{identifier}-uuid",
         identifier=identifier,
         title=title,
-        description=description(brief, findings),
+        description=description(spec, findings),
         state=state,
         blocked_by=blocked_by,
         comments=comments,
@@ -138,7 +138,7 @@ def test_content_comes_from_the_linear_sub_issue_description() -> None:
         parent_with(
             sub_issue(
                 "RAL-2",
-                brief="Add auth.\n\n## Acceptance criteria\n\n- [ ] Invalid credentials return 401.",
+                spec="Add auth.\n\n## Acceptance criteria\n\n- [ ] Invalid credentials return 401.",
                 findings="The client swallows retry errors.",
             )
         )
@@ -146,10 +146,10 @@ def test_content_comes_from_the_linear_sub_issue_description() -> None:
     store = LinearIssueStore(parent_identifier="RAL-1", client=client)
     store.read_graph()
 
-    brief, findings = store.content(SubIssueId("RAL-2"))
+    spec, findings = store.content(SubIssueId("RAL-2"))
 
-    assert "Invalid credentials return 401" in brief.body
-    assert brief.revision == 0
+    assert "Invalid credentials return 401" in spec.body
+    assert spec.revision == 0
     assert findings.body == "The client swallows retry errors."
 
 
@@ -160,7 +160,7 @@ async def test_record_revision_snapshots_original_then_updates_the_sub_issue_des
 
     await store.record_revision(
         SubIssueId("RAL-2"),
-        Brief(body="Rewritten brief\n\n## Acceptance criteria\n\n- [ ] Still works."),
+        Spec(body="Rewritten spec\n\n## Acceptance criteria\n\n- [ ] Still works."),
         Findings(body="Repo fact."),
     )
 
@@ -169,18 +169,18 @@ async def test_record_revision_snapshots_original_then_updates_the_sub_issue_des
     assert "<!-- ralph:revision:0 -->" in client.created_comments[0][1]
     assert "Do it." in client.created_comments[0][1]
     assert "<!-- ralph:revision:1 -->" in client.created_comments[1][1]
-    assert "Rewritten brief" in client.created_comments[1][1]
+    assert "Rewritten spec" in client.created_comments[1][1]
 
     assert client.updated_descriptions == [
         (
             "linear-2",
-            "## Brief\n\nRewritten brief\n\n## Acceptance criteria\n\n- [ ] Still works.\n\n"
+            "## Spec\n\nRewritten spec\n\n## Acceptance criteria\n\n- [ ] Still works.\n\n"
             "## Findings\n\nRepo fact.\n",
         )
     ]
-    brief, findings = store.content(SubIssueId("RAL-2"))
-    assert (brief.body, brief.revision, findings.body) == (
-        "Rewritten brief\n\n## Acceptance criteria\n\n- [ ] Still works.",
+    spec, findings = store.content(SubIssueId("RAL-2"))
+    assert (spec.body, spec.revision, findings.body) == (
+        "Rewritten spec\n\n## Acceptance criteria\n\n- [ ] Still works.",
         1,
         "Repo fact.",
     )
@@ -194,7 +194,7 @@ async def test_existing_revision_comments_are_continued_not_restarted() -> None:
 
     await store.record_revision(
         SubIssueId("RAL-2"),
-        Brief(body="v3\n\n## Acceptance criteria\n\n- [ ] x"),
+        Spec(body="v3\n\n## Acceptance criteria\n\n- [ ] x"),
         Findings(body="f3"),
     )
 

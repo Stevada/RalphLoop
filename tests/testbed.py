@@ -22,7 +22,7 @@ from pathlib import Path
 
 from ralph.adapters.runtime.implementer import SubprocessImplementer
 from ralph.cli import RunOptions
-from ralph.issues import Brief, Findings
+from ralph.issues import Findings, Spec
 from ralph.ports import Implementer, Worktree
 
 # The suite the throwaway repo ships with. Real pytest, run as a real subprocess, in the venv
@@ -201,7 +201,7 @@ def stand_in_implementer(agent: StandInAgent, behaviour: Behaviour | str) -> Imp
     """The scripted stand-in as an `Implementer`, for `run(implementer=…)`. The sub-issue id is on
     the worktree's branch — the harness put it there — so that is the only channel the agent needs."""
 
-    def build_argv(brief: Brief, findings: Findings, worktree: Worktree) -> Sequence[str]:
+    def build_argv(spec: Spec, findings: Findings, worktree: Worktree) -> Sequence[str]:
         tag = worktree.branch.removeprefix(BRANCH_PREFIX)
         return agent.argv(behaviour, tag)
 

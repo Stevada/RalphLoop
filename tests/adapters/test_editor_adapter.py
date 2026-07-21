@@ -36,19 +36,19 @@ from ralph.harness import (
     classify_editor,
     failure_report,
 )
-from ralph.issues import Brief, Findings
+from ralph.issues import Findings, Spec
 from ralph.ports import Budget, SessionContext, Worktree
 from tests.builders import impasse, suite, telemetry
 
 SUITE: Sequence[str] = ("python", "-m", "pytest", "-q")
-BRIEF = Brief(body="# 01 — make it add\n\n## Acceptance criteria\n\n- [ ] `add(1, 2) == 3`")
+SPEC = Spec(body="# 01 — make it add\n\n## Acceptance criteria\n\n- [ ] `add(1, 2) == 3`")
 FINDINGS = Findings(body="")
 WORKTREE = Worktree(path=Path("/w/01"), branch="ralph/01", base="integration")
 GENEROUS = Budget(wall_clock_s=10.0)
 
 
 def session_context(budget: Budget = GENEROUS) -> SessionContext:
-    return SessionContext(brief=BRIEF, findings=FINDINGS, worktree=WORKTREE, budget=budget)
+    return SessionContext(spec=SPEC, findings=FINDINGS, worktree=WORKTREE, budget=budget)
 
 FAILURE = failure_report(
     Outcome.IMPASSE,
@@ -186,39 +186,39 @@ def test_a_denial_tells_the_model_why() -> None:
 # ── what the Editor must return ──────────────────────────────────────────────────────────────
 
 
-def test_a_revise_carries_the_brief_to_restart_against() -> None:
-    v = parse_verdict(verdict_json("revise", revised_brief="# 01 — use add() from calculator.py"))
+def test_a_revise_carries_the_spec_to_restart_against() -> None:
+    v = parse_verdict(verdict_json("revise", revised_spec="# 01 — use add() from calculator.py"))
 
     assert v is not None
     assert v.verdict is Verdict.REVISE
     assert v.revision[0].body.startswith("# 01")
 
 
-def test_a_revision_may_add_findings_without_touching_the_brief() -> None:
+def test_a_revision_may_add_findings_without_touching_the_spec() -> None:
     v = parse_verdict(
-        verdict_json("revise", revised_brief="# 01", revised_findings="`add()` is in calculator.py")
+        verdict_json("revise", revised_spec="# 01", revised_findings="`add()` is in calculator.py")
     )
 
     assert v is not None
-    brief, findings = v.revision
+    spec, findings = v.revision
     assert findings is not None
     assert "calculator.py" in findings.body
 
 
 def test_omitted_findings_mean_leave_them_alone() -> None:
-    v = parse_verdict(verdict_json("revise", revised_brief="# 01"))
+    v = parse_verdict(verdict_json("revise", revised_spec="# 01"))
 
     assert v is not None
     assert v.revision[1] is None
 
 
 @pytest.mark.parametrize("terminal", ["planning-defect", "inconclusive"])
-def test_the_terminal_verdicts_carry_no_brief(terminal: str) -> None:
+def test_the_terminal_verdicts_carry_no_spec(terminal: str) -> None:
     v = parse_verdict(verdict_json(terminal))
 
     assert v is not None
     assert v.verdict.is_terminal
-    assert v.revised_brief is None
+    assert v.revised_spec is None
 
 
 def test_a_session_that_answered_nothing_returns_no_verdict() -> None:
@@ -315,7 +315,7 @@ async def test_the_editor_returns_its_verdict_and_the_harnesss_facts() -> None:
         [
             "Looking at the worktree.",
             TokenUsage(consumed_tokens=31_000),
-            verdict_json("revise", revised_brief="# 01 — use the API that exists"),
+            verdict_json("revise", revised_spec="# 01 — use the API that exists"),
         ]
     )
 
@@ -336,7 +336,7 @@ async def test_an_editor_runs_to_completion_with_usage_turns() -> None:
             TokenUsage(consumed_tokens=60_000),
             TokenUsage(consumed_tokens=130_000),
             "still thinking...",
-            verdict_json("revise", revised_brief="# 01 — try again"),
+            verdict_json("revise", revised_spec="# 01 — try again"),
         ],
         pause=0.02,
     )
@@ -373,7 +373,7 @@ async def test_the_adapter_does_not_itself_reject_a_final_cycle_revise() -> None
     """It returns exactly what the Editor said. Refusing it here would put the cycle cap in two
     places, and the scheduler — which is the only thing that knows how many cycles were spent — is
     the one that owns it."""
-    defiant = StubSession([verdict_json("revise", revised_brief="# 01 — one more time")])
+    defiant = StubSession([verdict_json("revise", revised_spec="# 01 — one more time")])
 
     _, v = await adjudicate(defiant, must_be_terminal=True)
 
@@ -410,7 +410,7 @@ async def test_the_prompt_hands_over_the_claim_and_the_facts_to_check_it_against
     )
     prompt = asks[0].prompt
 
-    assert "add(1, 2) == 3" in prompt  # the brief
+    assert "add(1, 2) == 3" in prompt  # the spec
     assert FAILURE.claim is not None
     assert FAILURE.claim.unsatisfiable_criterion in prompt  # what it claims
     assert "commits: 0" in prompt  # what the harness saw

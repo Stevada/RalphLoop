@@ -12,7 +12,7 @@ import pytest
 
 from ralph.issues.filesystem import FilesystemIssueStore, IssueParseError
 from ralph.harness import Actor
-from ralph.issues import Brief, Findings, SessionConsumption, SubIssueId, SubIssueState
+from ralph.issues import Findings, SessionConsumption, Spec, SubIssueId, SubIssueState
 from ralph.runlog import EventKind, event
 
 READY = "Status: ready\n\n## Acceptance criteria\n\n- [ ] It works.\n"
@@ -97,17 +97,17 @@ def test_an_empty_issue_directory_is_a_loud_error(tmp_path: Path) -> None:
         FilesystemIssueStore(issues_dir=tmp_path).read_graph()
 
 
-def test_content_hands_back_the_brief_and_the_findings(tmp_path: Path) -> None:
+def test_content_hands_back_the_spec_and_the_findings(tmp_path: Path) -> None:
     issue(
         tmp_path,
         "01-first.md",
         READY + "\n## Findings\n\nThe client's retry logic swallows the expected error.\n",
     )
 
-    brief, findings = FilesystemIssueStore(issues_dir=tmp_path).content(SubIssueId("01"))
+    spec, findings = FilesystemIssueStore(issues_dir=tmp_path).content(SubIssueId("01"))
 
-    assert "Acceptance criteria" in brief.body
-    assert brief.revision == 0
+    assert "Acceptance criteria" in spec.body
+    assert spec.revision == 0
     assert findings.body == "The client's retry logic swallows the expected error."
 
 
@@ -178,10 +178,10 @@ async def test_a_revision_is_stored_beside_the_planners_original_never_over_it(
 ) -> None:
     """**Revision 0 is what a human diffs against.**
 
-    It is the evidence for the one design bet most likely to fail: that the Editor rewrites briefs
+    It is the evidence for the one design bet most likely to fail: that the Editor rewrites specs
     without softening them. Three rounds of revision quietly turning "reject the request" into "log
     a warning" is *spec drift*, and the only way to catch it is to still have the original. A harness
-    that rewrote the brief in place would destroy the evidence with the very mechanism under
+    that rewrote the spec in place would destroy the evidence with the very mechanism under
     suspicion.
     """
     issue(tmp_path, "01-first.md", title="01 — as the Planner wrote it")
@@ -189,49 +189,49 @@ async def test_a_revision_is_stored_beside_the_planners_original_never_over_it(
     original = (tmp_path / "01-first.md").read_bytes()
 
     await store.record_revision(
-        SubIssueId("01"), Brief(body="rewritten once"), Findings(body="we learned a thing")
+        SubIssueId("01"), Spec(body="rewritten once"), Findings(body="we learned a thing")
     )
     await store.record_revision(
-        SubIssueId("01"), Brief(body="rewritten twice"), Findings(body="we learned another")
+        SubIssueId("01"), Spec(body="rewritten twice"), Findings(body="we learned another")
     )
 
     # Two revisions later, revision 0 is byte-for-byte what the Planner wrote.
     revisions = tmp_path / "revisions" / "01"
-    assert (revisions / "0-brief.md").read_bytes() == original
-    assert "as the Planner wrote it" in (revisions / "0-brief.md").read_text()
+    assert (revisions / "0-spec.md").read_bytes() == original
+    assert "as the Planner wrote it" in (revisions / "0-spec.md").read_text()
 
     # And every revision is kept, not just the newest — the drift is only visible as a sequence.
-    assert (revisions / "1-brief.md").read_text() == "rewritten once"
-    assert (revisions / "2-brief.md").read_text() == "rewritten twice"
+    assert (revisions / "1-spec.md").read_text() == "rewritten once"
+    assert (revisions / "2-spec.md").read_text() == "rewritten twice"
 
 
 async def test_the_next_session_reads_the_newest_revision(tmp_path: Path) -> None:
     """`content` is what the next Implementer session works from, and after a revision that is the
-    Editor's brief — not the one the last session already failed against."""
+    Editor's spec — not the one the last session already failed against."""
     issue(tmp_path, "01-first.md")
     store = FilesystemIssueStore(issues_dir=tmp_path)
 
     assert store.content(SubIssueId("01"))[0].revision == 0  # the Planner's
 
-    await store.record_revision(SubIssueId("01"), Brief(body="v1"), Findings(body="f1"))
-    await store.record_revision(SubIssueId("01"), Brief(body="v2"), Findings(body="f2"))
+    await store.record_revision(SubIssueId("01"), Spec(body="v1"), Findings(body="f1"))
+    await store.record_revision(SubIssueId("01"), Spec(body="v2"), Findings(body="f2"))
 
-    brief, findings = store.content(SubIssueId("01"))
-    assert (brief.body, brief.revision) == ("v2", 2)
+    spec, findings = store.content(SubIssueId("01"))
+    assert (spec.body, spec.revision) == ("v2", 2)
     assert findings.body == "f2"
 
 
-async def test_brief_and_findings_round_trip_as_separate_fields(tmp_path: Path) -> None:
+async def test_spec_and_findings_round_trip_as_separate_fields(tmp_path: Path) -> None:
     """A revision may change one without the other. They are separate files because they are
-    separate ideas: the brief is the bar, the findings are what was learned about the repo."""
+    separate ideas: the spec is the bar, the findings are what was learned about the repo."""
     issue(tmp_path, "01-first.md")
     store = FilesystemIssueStore(issues_dir=tmp_path)
 
-    await store.record_revision(SubIssueId("01"), Brief(body="the bar"), Findings(body="learned x"))
-    await store.record_revision(SubIssueId("01"), Brief(body="the bar"), Findings(body="learned y"))
+    await store.record_revision(SubIssueId("01"), Spec(body="the bar"), Findings(body="learned x"))
+    await store.record_revision(SubIssueId("01"), Spec(body="the bar"), Findings(body="learned y"))
 
-    brief, findings = store.content(SubIssueId("01"))
-    assert brief.body == "the bar"  # unmoved across a revision that changed only the findings
+    spec, findings = store.content(SubIssueId("01"))
+    assert spec.body == "the bar"  # unmoved across a revision that changed only the findings
     assert findings.body == "learned y"
 
 
@@ -242,7 +242,7 @@ async def test_a_revision_directory_is_not_mistaken_for_a_sub_issue(tmp_path: Pa
     issue(tmp_path, "01-first.md")
     store = FilesystemIssueStore(issues_dir=tmp_path)
 
-    await store.record_revision(SubIssueId("01"), Brief(body="v1"), Findings(body=""))
+    await store.record_revision(SubIssueId("01"), Spec(body="v1"), Findings(body=""))
 
     graph, _ = store.read_graph()
     assert set(graph.sub_issues) == {SubIssueId("01")}

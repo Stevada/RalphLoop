@@ -15,14 +15,14 @@ ATTENTION_ORDER: Mapping[Outcome, int] = {
     # know why, so it does not matter what else is in the list.
     Outcome.INFRA_FAILED: 0,
     # The model declared an impasse and explained itself: an acceptance criterion it believes cannot
-    # be satisfied. If it is right, you are rewriting a brief, not a function.
+    # be satisfied. If it is right, you are rewriting a spec, not a function.
     Outcome.IMPASSE: 1,
     # Green alone, red together. The defect is in how the work was cut across sub-issues, so the
     # diff to read is the *pair* of them.
     Outcome.INTEGRATION_FAILED: 2,
 }
 
-# An undeclared impasse: no brief to reconsider, just a diff to read, so it is opened last.
+# An undeclared impasse: no spec to reconsider, just a diff to read, so it is opened last.
 _UNDECLARED_IMPASSE = 3
 
 

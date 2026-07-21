@@ -36,21 +36,21 @@ from ralph.harness import (
     classify_implementer,
     failure_report,
 )
-from ralph.issues import Brief, Findings
+from ralph.issues import Findings, Spec
 from ralph.ports import Budget, SessionContext, Worktree
 from tests.builders import impasse, suite, telemetry
 from tests.testbed import TargetRepo
 
-BRIEF = Brief(body="# 01 — make it add\n\n## Acceptance criteria\n\n- [ ] `add(1, 2) == 3`")
+SPEC = Spec(body="# 01 — make it add\n\n## Acceptance criteria\n\n- [ ] `add(1, 2) == 3`")
 FINDINGS = Findings(body="`add()` is already in calculator.py")
 GENEROUS = Budget(wall_clock_s=30.0)
 GREEN = SuiteResult(green=True, output="", duration_s=0.0)
 
 
 def session_context(
-    wt: Worktree, brief: Brief = BRIEF, findings: Findings = FINDINGS, budget: Budget = GENEROUS
+    wt: Worktree, spec: Spec = SPEC, findings: Findings = FINDINGS, budget: Budget = GENEROUS
 ) -> SessionContext:
-    return SessionContext(brief=brief, findings=findings, worktree=wt, budget=budget)
+    return SessionContext(spec=spec, findings=findings, worktree=wt, budget=budget)
 
 
 # ── the argv ─────────────────────────────────────────────────────────────────────────────────
@@ -58,15 +58,15 @@ def session_context(
 
 def test_the_session_is_asked_for_json() -> None:
     """`--json` is how the session reports completed-turn usage."""
-    argv = codex_argv(BRIEF, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="main"))
+    argv = codex_argv(SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="main"))
 
     assert argv[:4] == ["codex", "--ask-for-approval", "never", "exec"]
     assert "--json" in argv
     assert "--cd" in argv and "/w" in argv
 
 
-def test_the_brief_and_the_findings_both_reach_the_model() -> None:
-    prompt = codex_argv(BRIEF, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"))[-1]
+def test_the_spec_and_the_findings_both_reach_the_model() -> None:
+    prompt = codex_argv(SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"))[-1]
 
     assert "`add(1, 2) == 3`" in prompt
     assert "already in calculator.py" in prompt
@@ -74,7 +74,7 @@ def test_the_brief_and_the_findings_both_reach_the_model() -> None:
 
 
 def test_how_codex_is_driven_is_fixed_not_configured() -> None:
-    argv = codex_argv(BRIEF, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"))
+    argv = codex_argv(SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"))
 
     assert "--sandbox" in argv and IMPLEMENTER_SANDBOX in argv
     assert "--ask-for-approval" in argv and "never" in argv
@@ -271,7 +271,7 @@ async def test_the_codex_editor_reuses_the_editor_core_under_read_only_sandbox(t
     editor = CodexEditor(open_session=open_session, suite=("uv", "run", "pytest", "-q"))
     t, verdict = await editor.adjudicate(
         SessionContext(
-            brief=Brief(body="build it"),
+            spec=Spec(body="build it"),
             findings=Findings(body=""),
             worktree=Worktree(path=tmp_path, branch="ralph/01", base="integration"),
             budget=Budget(wall_clock_s=10.0),
@@ -295,7 +295,7 @@ def _recording_editor_argv(
     seen.append((ask, sandbox))
     answer = {
         "verdict": "planning-defect",
-        "rationale": "the brief contradicts itself",
+        "rationale": "the spec contradicts itself",
     }
     return (
         sys.executable,
@@ -320,7 +320,7 @@ async def test_a_real_codex_session_lands_a_real_sub_issue(repo: TargetRepo) -> 
     """The only test in the suite that calls a model."""
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
-    brief = Brief(
+    spec = Spec(
         body=textwrap.dedent("""\
             # 01 — multiply
 
@@ -332,7 +332,7 @@ async def test_a_real_codex_session_lands_a_real_sub_issue(repo: TargetRepo) -> 
     )
 
     t = await codex_implementer().run(
-        session_context(wt, brief=brief, findings=Findings(body=""), budget=Budget(wall_clock_s=600.0))
+        session_context(wt, spec=spec, findings=Findings(body=""), budget=Budget(wall_clock_s=600.0))
     )
 
     assert t.killed is None

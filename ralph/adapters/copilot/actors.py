@@ -42,7 +42,7 @@ class CopilotImplementer:
     async def run(self, context: SessionContext) -> SessionTelemetry:
         session = self.open_session(
             TurnStreamAsk(
-                prompt=implementer_prompt(context.brief, context.findings),
+                prompt=implementer_prompt(context.spec, context.findings),
                 cwd=context.worktree.path,
                 permit=allow_all,
             )
@@ -70,7 +70,7 @@ class CopilotEditor:
         session = self.open_session(
             TurnStreamAsk(
                 prompt=editor_prompt(
-                    context.brief, context.findings, failure, must_be_terminal
+                    context.spec, context.findings, failure, must_be_terminal
                 ),
                 cwd=context.worktree.path,
                 permit=lambda tool, input: read_only(tool, input, self.suite),

@@ -23,7 +23,7 @@ from ralph.harness import (
     Verdict,
     failure_report,
 )
-from ralph.issues import Brief, Findings, SessionConsumption, SubIssueId, SubIssueState
+from ralph.issues import Findings, SessionConsumption, Spec, SubIssueId, SubIssueState
 from ralph.issues.filesystem import FilesystemIssueStore
 from ralph.issues.linear import LinearIssueStore
 from ralph.notification import notify
@@ -38,7 +38,7 @@ FAILURE = failure_report(
     Outcome.IMPASSE, telemetry(commits=0, impasse_report=impasse()), suite(green=True)
 )
 
-BRIEF = Brief(body="# 01 — build it\n\n## Acceptance criteria\n\n- [ ] Add a file.")
+SPEC = Spec(body="# 01 — build it\n\n## Acceptance criteria\n\n- [ ] Add a file.")
 FINDINGS = Findings(body="Start from the existing calculator module.")
 
 
@@ -225,7 +225,7 @@ async def test_the_implementer_parses_an_impasse_from_the_sdk_output(repo: Targe
             }
         ],
         "unsatisfiable_criterion": "Call widget().",
-        "what_would_satisfy": "A brief that names an existing API.",
+        "what_would_satisfy": "A spec that names an existing API.",
     }
 
     def open_session(_ask: TurnStreamAsk) -> StubTurnStreamSession:
@@ -234,7 +234,7 @@ async def test_the_implementer_parses_an_impasse_from_the_sdk_output(repo: Targe
     t = await CopilotImplementer(open_session=open_session).run(_context(wt))
 
     assert t.impasse_report is not None
-    assert t.impasse_report.what_would_satisfy == "A brief that names an existing API."
+    assert t.impasse_report.what_would_satisfy == "A spec that names an existing API."
 
 
 async def test_the_implementer_is_killed_through_the_sdk_session(repo: TargetRepo) -> None:
@@ -252,7 +252,7 @@ async def test_the_implementer_is_killed_through_the_sdk_session(repo: TargetRep
 
 
 def _context(wt: Worktree, budget: Budget = Budget(wall_clock_s=20.0)) -> SessionContext:
-    return SessionContext(brief=BRIEF, findings=FINDINGS, worktree=wt, budget=budget)
+    return SessionContext(spec=SPEC, findings=FINDINGS, worktree=wt, budget=budget)
 
 
 # ── the whole Editor, against a stub SDK session ─────────────────────────────────────────────
@@ -283,7 +283,7 @@ async def test_the_editor_reads_the_verdict_out_of_the_sdk_session(tmp_path: Pat
 
     assert verdict is not None
     assert verdict.verdict is Verdict.PLANNING_DEFECT
-    assert verdict.rationale.startswith("the brief assumed")
+    assert verdict.rationale.startswith("the spec assumed")
 
 
 async def test_the_prompt_and_worktree_reach_the_sdk_session(tmp_path: Path) -> None:
@@ -291,7 +291,7 @@ async def test_the_prompt_and_worktree_reach_the_sdk_session(tmp_path: Path) -> 
     await _adjudicate(tmp_path, consumed_tokens=9_000, verdict=Verdict.REVISE, seen=seen)
 
     assert "You are the **Editor**" in seen[0].prompt
-    assert "build it" in seen[0].prompt  # the brief the Implementer was given
+    assert "build it" in seen[0].prompt  # the spec the Implementer was given
     assert seen[0].cwd == tmp_path / ".worktrees" / "active" / "02-thing"
 
 
@@ -311,7 +311,7 @@ async def test_the_editor_denies_mutating_tools_through_the_shared_permit(tmp_pa
 
     await CopilotEditor(open_session=open_session, suite=SUITE).adjudicate(
         SessionContext(
-            brief=Brief(body="build it"),
+            spec=Spec(body="build it"),
             findings=Findings(body=""),
             worktree=_worktree(tmp_path),
             budget=Budget(wall_clock_s=20.0),
@@ -335,12 +335,12 @@ async def _adjudicate(
     if verdict is not None:
         answer: dict[str, str] = {
             "verdict": verdict.value,
-            "rationale": "the brief assumed a module that is not there",
+            "rationale": "the spec assumed a module that is not there",
         }
         if verdict is Verdict.REVISE:
-            # Only a `revise` may carry one. A terminal verdict with a brief attached is a
+            # Only a `revise` may carry one. A terminal verdict with a spec attached is a
             # contradiction the harness refuses to construct — nothing would ever read it.
-            answer["revised_brief"] = "do it again, better"
+            answer["revised_spec"] = "do it again, better"
         said = f"<verdict>{json.dumps(answer)}</verdict>"
 
     def open_session(ask: TurnStreamAsk) -> StubTurnStreamSession:
@@ -354,7 +354,7 @@ async def _adjudicate(
 
     return await CopilotEditor(open_session=open_session, suite=SUITE).adjudicate(
         SessionContext(
-            brief=Brief(body="build it"),
+            spec=Spec(body="build it"),
             findings=Findings(body=""),
             worktree=_worktree(tmp_path),
             budget=Budget(wall_clock_s=20.0),

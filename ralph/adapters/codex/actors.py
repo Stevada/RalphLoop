@@ -23,7 +23,7 @@ class CodexImplementer:
     async def run(self, context: SessionContext) -> SessionTelemetry:
         session = self.open_session(
             TurnStreamAsk(
-                prompt=implementer_prompt(context.brief, context.findings),
+                prompt=implementer_prompt(context.spec, context.findings),
                 cwd=context.worktree.path,
             )
         )
@@ -47,7 +47,7 @@ class CodexEditor:
         session = self.open_session(
             TurnStreamAsk(
                 prompt=editor_prompt(
-                    context.brief, context.findings, failure, must_be_terminal
+                    context.spec, context.findings, failure, must_be_terminal
                 ),
                 cwd=context.worktree.path,
             )

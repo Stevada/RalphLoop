@@ -21,12 +21,12 @@ from ralph.adapters.git import run_git
 from ralph.adapters.runtime.session import Session, run_session
 from ralph.adapters.runtime.turn_stream import TurnStreamSession, run_turn_stream
 from ralph.harness import Approach, ImpasseReport, SessionTelemetry
-from ralph.issues import Brief, Findings
+from ralph.issues import Findings, Spec
 from ralph.ports import Budget, SessionContext, Worktree
 
 IMPASSE_OPEN, IMPASSE_CLOSE = "<impasse>", "</impasse>"
 
-BuildArgv = Callable[[Brief, Findings, Worktree], Sequence[str]]
+BuildArgv = Callable[[Spec, Findings, Worktree], Sequence[str]]
 """What separates one Implementer from another: how you spell the command."""
 
 
@@ -146,7 +146,7 @@ class SubprocessImplementer:
     async def run(self, context: SessionContext) -> SessionTelemetry:
         worktree = context.worktree
         return await run_agent(
-            self.build_argv(context.brief, context.findings, worktree),
+            self.build_argv(context.spec, context.findings, worktree),
             worktree,
             context.budget,
             self.final_consumed_tokens,

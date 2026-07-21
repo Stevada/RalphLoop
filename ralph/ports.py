@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
-from ralph.issues import Brief, Findings
+from ralph.issues import Findings, Spec
 from ralph.runlog import Event
 
 
@@ -37,7 +37,7 @@ class Worktree:
 class SessionContext:
     """The shared inputs for one bounded actor session."""
 
-    brief: Brief
+    spec: Spec
     findings: Findings
     worktree: Worktree
     budget: Budget

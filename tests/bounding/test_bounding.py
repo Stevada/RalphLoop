@@ -9,7 +9,7 @@ from ralph.adapters.runtime.bounding import Bound, run_bounded
 from ralph.adapters.git import GitCli
 from ralph.adapters.runtime.implementer import SubprocessImplementer
 from ralph.harness import Outcome, SuiteResult, classify_implementer
-from ralph.issues import Brief, Findings
+from ralph.issues import Findings, Spec
 from ralph.ports import Budget, SessionContext
 from tests.testbed import TargetRepo
 
@@ -51,12 +51,12 @@ async def test_real_session_telemetry_has_no_context_peak(repo: TargetRepo) -> N
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
     implementer = SubprocessImplementer(
-        build_argv=lambda brief, findings, worktree: (sys.executable, "-c", AT_ONCE),
+        build_argv=lambda spec, findings, worktree: (sys.executable, "-c", AT_ONCE),
     )
 
     t = await implementer.run(
         SessionContext(
-            brief=Brief(body="build it"),
+            spec=Spec(body="build it"),
             findings=Findings(body=""),
             worktree=wt,
             budget=GENEROUS_CLOCK,
