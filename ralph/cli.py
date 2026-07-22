@@ -93,8 +93,7 @@ class Readiness:
     """The pre-flight result plus the commands it discovered, when discovery succeeded."""
 
     refusals: tuple[Refusal, ...]
-    test_command: tuple[str, ...] | None
-    install_command: tuple[str, ...] | None
+    commands: RepoCommands | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,12 +270,12 @@ def _discover_commands(
         return None, str(exc)
 
 
-def facts_about(
+def _facts_and_commands(
     repo: Path,
     issue_source: str | None,
     options: RunOptions,
     command_source: CommandSource | None = None,
-) -> RepoFacts:
+) -> tuple[RepoFacts, RepoCommands | None]:
     """Ask the world the pre-flight questions, and hand the answers to a rule that cannot ask anything.
 
     Each `except` is narrow and each keeps the raiser's own message: `IssueParseError` already says
@@ -296,18 +295,30 @@ def facts_about(
     except (FileNotFoundError, IssueSourceError, LinearApiError) as exc:
         source_error = str(exc)
 
-    return RepoFacts(
-        head_branch=git.head_branch(),
-        protected=options.protected,
-        dirty=git.dirty_files(),
-        test_command=commands.test if commands is not None and commands.test else None,
-        install_command=commands.install if commands is not None else None,
-        command_error=command_error,
-        source_error=source_error,
-        graph_error=graph_error,
-        pre_commit_config=pre_commit_config,
-        pre_commit_installed=installed,
+    return (
+        RepoFacts(
+            head_branch=git.head_branch(),
+            protected=options.protected,
+            dirty=git.dirty_files(),
+            has_test_command=commands is not None and bool(commands.test),
+            command_error=command_error,
+            source_error=source_error,
+            graph_error=graph_error,
+            pre_commit_config=pre_commit_config,
+            pre_commit_installed=installed,
+        ),
+        commands,
     )
+
+
+def facts_about(
+    repo: Path,
+    issue_source: str | None,
+    options: RunOptions,
+    command_source: CommandSource | None = None,
+) -> RepoFacts:
+    facts, _ = _facts_and_commands(repo, issue_source, options, command_source)
+    return facts
 
 
 def validate(
@@ -327,11 +338,10 @@ def readiness(
 ) -> Readiness:
     options = options or _options_for()
     validate_agents(options)
-    facts = facts_about(repo.resolve(), issue_source, options, command_source)
+    facts, commands = _facts_and_commands(repo.resolve(), issue_source, options, command_source)
     return Readiness(
         refusals=refusals(facts),
-        test_command=facts.test_command,
-        install_command=facts.install_command,
+        commands=commands if commands is not None and commands.test else None,
     )
 
 
@@ -349,10 +359,10 @@ def render_readiness(result: Readiness) -> str:
     lines = [
         "ready to run.",
         "commands:",
-        f"  test: {shlex.join(result.test_command or ())}",
+        f"  test: {shlex.join(result.commands.test if result.commands is not None else ())}",
     ]
-    if result.install_command is not None:
-        lines.append(f"  install: {shlex.join(result.install_command)}")
+    if result.commands is not None and result.commands.install is not None:
+        lines.append(f"  install: {shlex.join(result.commands.install)}")
     return "\n".join(lines)
 
 
@@ -407,9 +417,9 @@ async def run(
     ready = readiness(repo, issue_source, options, command_source)
     if ready.refusals:
         raise Refused(render_refusals(ready.refusals))
-    if ready.test_command is None:
+    if ready.commands is None:
         raise AssertionError("readiness accepted a run without a test command")
-    commands = RepoCommands(test=ready.test_command, install=ready.install_command)
+    commands = ready.commands
 
     git = GitCli(repo=repo)
     integration = git.head_branch()
@@ -569,6 +579,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1 if ready.refusals else 0
 
     if args.dry_run:
+        ready = readiness(args.repo, args.issue_source, options)
+        if ready.refusals:
+            print(render_refusals(ready.refusals))
+            return 1
         print(render_plan(args.repo, args.issue_source, options))
         return 0
 

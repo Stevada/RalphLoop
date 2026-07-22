@@ -41,8 +41,7 @@ CLEAN = RepoFacts(
     head_branch="feature/x",
     protected=frozenset({"main", "master"}),
     dirty=(),
-    test_command=READY_COMMANDS.test,
-    install_command=READY_COMMANDS.install,
+    has_test_command=True,
     command_error=None,
     source_error=None,
     graph_error=None,
@@ -68,8 +67,7 @@ def test_each_refusal_says_which_morning_it_is() -> None:
                 head_branch="main",
                 protected=frozenset({"main", "master"}),
                 dirty=("src/app.py",),
-                test_command=None,
-                install_command=None,
+                has_test_command=False,
                 command_error=None,
                 source_error="Linear issue 'ENG-1' was not found",
                 graph_error="03-sub.md has no `## Acceptance criteria`",
@@ -311,6 +309,21 @@ def test_the_dry_run_opens_no_session_and_touches_no_branch(
     assert repo.head("integration") == before
     assert not repo.branch_exists("ralph/01")
     assert not (repo.path / ".worktrees").exists()
+
+
+def test_the_dry_run_refuses_without_a_discoverable_test_command(
+    repo: TargetRepo,
+    command_source: FakeCommandSource,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    command_source.commands = RepoCommands(test=(), install=None)
+
+    assert main(["run", "--dry-run", str(repo.path)]) == 1
+
+    out = capsys.readouterr().out
+    assert "missing-test-command" in out
+    assert "sub-issues" not in out
+    assert not repo.branch_exists("ralph/01")
 
 
 def test_the_build_order_is_derived_from_the_rule_the_scheduler_asks() -> None:

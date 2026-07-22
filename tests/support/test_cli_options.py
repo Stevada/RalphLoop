@@ -20,7 +20,7 @@ def test_cli_options_have_the_current_defaults() -> None:
     assert options.linear_api_key is None
 
 
-def test_command_flags_are_retired(tmp_path: Path) -> None:
+def test_retired_command_options_are_rejected(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         main(["validate", str(tmp_path), "--test-cmd", "uv run pytest"])
 

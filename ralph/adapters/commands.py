@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, cast
 
+from ralph.adapters.git import GitError, run_git
 from ralph.ports import RepoCommands
 
 DESCRIPTOR_NAME = ".ralph.toml"
@@ -33,17 +34,22 @@ class DescriptorCommandTypeError(DescriptorCommandError):
     """A command field is present but is not a string."""
 
 
+class DescriptorUntrackedError(DescriptorCommandError):
+    """The command descriptor exists locally but is not tracked by git."""
+
+
 @dataclass(frozen=True, slots=True)
 class DescriptorCommandSource:
     def discover(self, repo: Path) -> RepoCommands:
         descriptor = repo / DESCRIPTOR_NAME
+        if not descriptor.exists():
+            raise DescriptorMissingError(
+                f"{descriptor}: missing {DESCRIPTOR_NAME} command descriptor"
+            )
+        _ensure_tracked(repo, descriptor)
         try:
             with descriptor.open("rb") as f:
                 data: Mapping[str, object] = tomllib.load(f)
-        except FileNotFoundError as e:
-            raise DescriptorMissingError(
-                f"{descriptor}: missing {DESCRIPTOR_NAME} command descriptor"
-            ) from e
         except tomllib.TOMLDecodeError as e:
             raise DescriptorTomlError(f"{descriptor}: malformed TOML: {e}") from e
 
@@ -57,6 +63,19 @@ class DescriptorCommandSource:
             test=_required_test(descriptor, commands),
             install=_optional_command(descriptor, commands, "install"),
         )
+
+
+def _ensure_tracked(repo: Path, descriptor: Path) -> None:
+    try:
+        rel = descriptor.relative_to(repo)
+    except ValueError:
+        rel = descriptor
+    try:
+        run_git(repo, "ls-files", "--error-unmatch", str(rel))
+    except GitError as e:
+        raise DescriptorUntrackedError(
+            f"{descriptor}: command descriptor must be tracked by git"
+        ) from e
 
 
 def _required_test(descriptor: Path, commands: Mapping[str, object]) -> tuple[str, ...]:

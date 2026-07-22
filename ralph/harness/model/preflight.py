@@ -56,11 +56,8 @@ class RepoFacts:
     dirty: tuple[str, ...]
     """Paths with uncommitted changes, as git reports them. Empty is clean."""
 
-    test_command: tuple[str, ...] | None
-    """The repo's discovered test command. `None` means no runnable command was found."""
-
-    install_command: tuple[str, ...] | None
-    """The repo's discovered install command, if it declares one."""
+    has_test_command: bool
+    """Whether command discovery found a runnable test command."""
 
     command_error: str | None
     """The message from command discovery when it could not discover a runnable test command."""

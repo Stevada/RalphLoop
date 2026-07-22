@@ -62,7 +62,7 @@ def refusals(facts: RepoFacts) -> tuple[Refusal, ...]:
 
     if facts.command_error is not None:
         found.append(Refusal(Check.MISSING_TEST_COMMAND, facts.command_error))
-    elif facts.test_command is None:
+    elif not facts.has_test_command:
         found.append(
             Refusal(
                 Check.MISSING_TEST_COMMAND,
