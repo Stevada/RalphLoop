@@ -15,6 +15,7 @@ through the fake rather than a real descriptor file.
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import replace
 from pathlib import Path
 
@@ -31,7 +32,7 @@ from ralph.harness import (
 from ralph.issues import IssueGraph, SubIssue, SubIssueId, SubIssueState
 from ralph.ports import RepoCommands
 from tests.fakes import FakeCommandSource
-from tests.testbed import TargetRepo, make_options
+from tests.testbed import TEST_CMD, TargetRepo, make_options
 
 BUILD_HARNESS = Path(__file__).parents[2] / ".scratch" / "build_harness" / "issues"
 READY_COMMANDS = RepoCommands(test=("uv", "run", "pytest"), install=("uv", "sync"))
@@ -236,8 +237,8 @@ def test_validate_prints_the_discovered_commands(
 
     out = capsys.readouterr().out
     assert "ready to run." in out
-    assert "test: uv run pytest" in out
-    assert "install: uv sync" in out
+    assert f"test: {shlex.join(TEST_CMD)}" in out
+    assert "install:" not in out
 
 
 def test_validate_rejects_editor_none(repo: TargetRepo) -> None:

@@ -1,9 +1,9 @@
 """The suite runner, the installer, and the run log.
 
 Three small adapters, and one shared theme: each of them has a failure mode whose *silent* version
-would be catastrophic. The suite command and install command are CLI-owned — the harness detects
-nothing — so an install that failed must not be shrugged at, and a log line that cannot be parsed
-must not be skipped.
+would be catastrophic. The suite command and install command are discovered before a run starts, so
+an install that failed must not be shrugged at, and a log line that cannot be parsed must not be
+skipped.
 """
 
 from __future__ import annotations

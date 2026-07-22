@@ -19,13 +19,14 @@ from ralph.adapters.git import GitCli
 from ralph.cli import run
 from ralph.harness import Outcome, Verdict
 from ralph.issues import SubIssueId, SubIssueState
-from ralph.ports import Budget
+from ralph.ports import Budget, RepoCommands
 from ralph.scheduler import BaseIsRed
 from tests.builders import telemetry, verdict as editor_verdict
-from tests.fakes import FakeEditor
+from tests.fakes import FakeCommandSource, FakeEditor
 from tests.testbed import (
     Behaviour,
     StandInAgent,
+    TEST_CMD,
     TargetRepo,
     make_options,
     stand_in_implementer as stand_in,
@@ -39,7 +40,7 @@ def terminal_editor() -> FakeEditor:
 
 
 async def test_ralph_run_lands_a_sub_issue_end_to_end(
-    repo: TargetRepo, agent: StandInAgent
+    repo: TargetRepo, agent: StandInAgent, command_source: FakeCommandSource
 ) -> None:
     report = await run(
         repo.path,
@@ -51,6 +52,7 @@ async def test_ralph_run_lands_a_sub_issue_end_to_end(
     # Both sub-issues in the fixture's graph land, and 02 could only start once 01 had.
     assert report.landed == (SubIssueId("01"), SubIssueId("02"))
     assert report.clean
+    assert command_source.calls == [repo.path.resolve()]
 
     # The work is on the integration branch.
     assert (repo.path / "feature_01.py").exists()
@@ -117,11 +119,17 @@ async def test_a_red_base_aborts_the_run_before_a_single_agent_starts(
 async def test_a_failed_install_aborts_the_run_before_a_single_agent_starts(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    options = make_options(install_cmd=("false",))
+    commands = FakeCommandSource(RepoCommands(test=TEST_CMD, install=("false",)))
 
     with pytest.raises(Exception, match="exited 1"):
-        await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED), options=options)
+        await run(
+            repo.path,
+            None,
+            implementer=stand_in(agent, Behaviour.SUCCEED),
+            command_source=commands,
+        )
 
+    assert commands.calls == [repo.path.resolve()]
     assert not repo.branch_exists("ralph/01")
 
 
@@ -133,12 +141,61 @@ async def test_the_install_runs_once_in_the_base_checkout_never_per_worktree(
     ledger = repo.path.parent / "installs"
     installer = repo.path.parent / "install.py"
     installer.write_text(f"open({str(ledger)!r}, 'a').write('x')\n")
-    options = make_options(install_cmd=(sys.executable, str(installer)))
+    commands = FakeCommandSource(
+        RepoCommands(test=TEST_CMD, install=(sys.executable, str(installer)))
+    )
 
-    report = await run(repo.path, None, implementer=stand_in(agent, Behaviour.SUCCEED), options=options)
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        command_source=commands,
+    )
 
     assert len(report.landed) == 2
+    assert commands.calls == [repo.path.resolve()]
     assert ledger.read_text() == "x"
+
+
+async def test_a_repo_without_install_command_skips_base_install(
+    repo: TargetRepo, agent: StandInAgent
+) -> None:
+    ledger = repo.path.parent / "installs"
+    commands = FakeCommandSource(RepoCommands(test=TEST_CMD, install=None))
+
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        command_source=commands,
+    )
+
+    assert len(report.landed) == 2
+    assert commands.calls == [repo.path.resolve()]
+    assert not ledger.exists()
+
+
+async def test_the_editor_allowlist_uses_the_discovered_test_command(
+    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commands = FakeCommandSource(RepoCommands(test=TEST_CMD, install=None))
+    seen: list[tuple[str, ...]] = []
+
+    def editor_for(suite: tuple[str, ...]) -> FakeEditor:
+        seen.append(suite)
+        return terminal_editor()
+
+    monkeypatch.setattr("ralph.cli.claude_editor", editor_for)
+
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        command_source=commands,
+    )
+
+    assert report.clean
+    assert seen == [TEST_CMD]
 
 
 async def test_an_undeclared_impasse_session_does_not_land(

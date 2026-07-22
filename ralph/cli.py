@@ -62,8 +62,6 @@ DEFAULT_ISSUE_MODE = FILESYSTEM
 DEFAULT_IMPLEMENTER = CODEX
 DEFAULT_EDITOR = CLAUDE
 DEFAULT_PROTECTED = ("main", "master")
-DEFAULT_TEST_CMD = ("uv", "run", "pytest", "-q")
-DEFAULT_INSTALL_CMD = ("uv", "sync")
 
 LINEAR_API_KEY = "LINEAR_API_KEY"
 ENV_FILE = ".env"
@@ -106,8 +104,6 @@ class RunOptions:
     implementer: str = DEFAULT_IMPLEMENTER
     editor: str = DEFAULT_EDITOR
     protected: frozenset[str] = frozenset(DEFAULT_PROTECTED)
-    test_cmd: tuple[str, ...] = DEFAULT_TEST_CMD
-    install_cmd: tuple[str, ...] = DEFAULT_INSTALL_CMD
     linear_api_key: str | None = None
 
     def loggable(self) -> str:
@@ -116,8 +112,6 @@ class RunOptions:
             f"implementer={self.implementer} "
             f"editor={self.editor} "
             f"protected={{{', '.join(sorted(self.protected))}}} "
-            f"test_cmd={shlex.join(self.test_cmd)} "
-            f"install_cmd={shlex.join(self.install_cmd)} "
             f"linear_api_key={'set' if self.linear_api_key else 'unset'}"
         )
 
@@ -129,16 +123,12 @@ def _options_for(
     implementer: str = DEFAULT_IMPLEMENTER,
     editor: str = DEFAULT_EDITOR,
     protected: Sequence[str] = DEFAULT_PROTECTED,
-    test_cmd: str = shlex.join(DEFAULT_TEST_CMD),
-    install_cmd: str = shlex.join(DEFAULT_INSTALL_CMD),
 ) -> RunOptions:
     return RunOptions(
         issue_mode=issue_mode,
         implementer=implementer,
         editor=editor,
         protected=frozenset(protected),
-        test_cmd=tuple(shlex.split(test_cmd)),
-        install_cmd=tuple(shlex.split(install_cmd)),
         linear_api_key=env.get(LINEAR_API_KEY),
     )
 
@@ -169,16 +159,6 @@ def _add_option_flags(parser: argparse.ArgumentParser) -> None:
         metavar="BRANCH",
         help="branch a run refuses to start from. Repeat for more. Defaults to main and master.",
     )
-    parser.add_argument(
-        "--test-cmd",
-        default=shlex.join(DEFAULT_TEST_CMD),
-        help=f"test command to run in each worktree. Defaults to {shlex.join(DEFAULT_TEST_CMD)!r}.",
-    )
-    parser.add_argument(
-        "--install-cmd",
-        default=shlex.join(DEFAULT_INSTALL_CMD),
-        help=f"install command to run once in the base checkout. Defaults to {shlex.join(DEFAULT_INSTALL_CMD)!r}.",
-    )
 
 
 def validate_agents(options: RunOptions) -> None:
@@ -193,7 +173,7 @@ def validate_agents(options: RunOptions) -> None:
         )
 
 
-def editor_of(options: RunOptions) -> Editor:
+def editor_of(options: RunOptions, suite: tuple[str, ...]) -> Editor:
     """Which model adjudicates a failed session.
 
     The Editor and the Implementer should not be the same model on the same failure — an Editor
@@ -202,11 +182,11 @@ def editor_of(options: RunOptions) -> Editor:
     """
     named = options.editor
     if named == CLAUDE:
-        return claude_editor(suite=options.test_cmd)
+        return claude_editor(suite=suite)
     if named == CODEX:
-        return codex_editor(suite=options.test_cmd)
+        return codex_editor(suite=suite)
     if named == COPILOT:
-        return copilot_editor(suite=options.test_cmd)
+        return copilot_editor(suite=suite)
     validate_agents(options)
     raise AssertionError("validate_agents accepted an unknown Editor")
 
@@ -365,7 +345,11 @@ def render_refusals(found: tuple[Refusal, ...]) -> str:
 def render_readiness(result: Readiness) -> str:
     if result.refusals:
         return render_refusals(result.refusals)
-    lines = ["ready to run.", "commands:", f"  test: {shlex.join(result.test_command or ())}"]
+    lines = [
+        "ready to run.",
+        "commands:",
+        f"  test: {shlex.join(result.test_command or ())}",
+    ]
     if result.install_command is not None:
         lines.append(f"  install: {shlex.join(result.install_command)}")
     return "\n".join(lines)
@@ -422,17 +406,21 @@ async def run(
     ready = readiness(repo, issue_source, options, command_source)
     if ready.refusals:
         raise Refused(render_refusals(ready.refusals))
+    if ready.test_command is None:
+        raise AssertionError("readiness accepted a run without a test command")
+    commands = RepoCommands(test=ready.test_command, install=ready.install_command)
 
     git = GitCli(repo=repo)
     integration = git.head_branch()
 
     # Install runs once in the base checkout, before anything is dispatched.
-    runner = SubprocessTestRunner(cmd=options.test_cmd)
-    await install_once(repo, options.install_cmd)
+    runner = SubprocessTestRunner(cmd=commands.test)
+    if commands.install is not None:
+        await install_once(repo, commands.install)
 
     store = issue_store(repo, issue_source, options)
     selected_implementer = implementer if implementer is not None else implementer_of(options)
-    selected_editor = editor if editor is not None else editor_of(options)
+    selected_editor = editor if editor is not None else editor_of(options, commands.test)
     scheduler = Scheduler(
         repo=repo,
         git=git,
@@ -562,8 +550,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         implementer=args.implementer,
         editor=args.editor,
         protected=args.protected or DEFAULT_PROTECTED,
-        test_cmd=args.test_cmd,
-        install_cmd=args.install_cmd,
     )
     try:
         validate_agents(options)

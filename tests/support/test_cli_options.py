@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ralph.cli import ENV_FILE, _load_env, _options_for, validate_agents
+from ralph.cli import ENV_FILE, main, _load_env, _options_for, validate_agents
 
 
 def test_cli_options_have_the_current_defaults() -> None:
@@ -17,15 +17,15 @@ def test_cli_options_have_the_current_defaults() -> None:
     assert options.implementer == "codex"
     assert options.editor == "claude"
     assert options.protected == frozenset({"main", "master"})
-    assert options.test_cmd == ("uv", "run", "pytest", "-q")
-    assert options.install_cmd == ("uv", "sync")
+    assert options.linear_api_key is None
 
 
-def test_command_options_are_split_like_shell_words() -> None:
-    options = _options_for({}, test_cmd="uv run pytest 'tests/a test.py'", install_cmd="uv sync")
+def test_command_flags_are_retired(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        main(["validate", str(tmp_path), "--test-cmd", "uv run pytest"])
 
-    assert options.test_cmd == ("uv", "run", "pytest", "tests/a test.py")
-    assert options.install_cmd == ("uv", "sync")
+    with pytest.raises(SystemExit):
+        main(["validate", str(tmp_path), "--install-cmd", "uv sync"])
 
 
 def test_codex_is_a_known_editor() -> None:

@@ -29,9 +29,6 @@ from ralph.ports import Implementer, Worktree
 # interpreter — the same one the harness itself will detect and run.
 TEST_CMD: tuple[str, ...] = (sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider")
 
-# Nothing to install; a real command that exits 0, since `install_cmd` is required.
-INSTALL_CMD: tuple[str, ...] = (sys.executable, "-c", "")
-
 BRANCH_PREFIX = "ralph/"
 
 IMPASSE_OPEN, IMPASSE_CLOSE = "<impasse>", "</impasse>"
@@ -190,8 +187,6 @@ def make_options(**overrides: object) -> RunOptions:
         "implementer": "codex",
         "editor": "claude",
         "protected": frozenset({"main", "master"}),
-        "test_cmd": TEST_CMD,
-        "install_cmd": INSTALL_CMD,
         "linear_api_key": None,
     }
     return RunOptions(**{**base, **overrides})  # type: ignore[arg-type]

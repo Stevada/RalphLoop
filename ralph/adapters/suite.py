@@ -3,8 +3,7 @@
 **The suite result, not the exit code, is the outcome.** This is the module that makes that true:
 the harness runs the tests itself, in the worktree, and does not ask the model how it went.
 
-`--test-cmd` and `--install-cmd` are CLI options. The harness detects nothing and guesses nothing
-beyond those defaults.
+The target repo declares the command; the harness executes it and judges the suite result.
 """
 
 from __future__ import annotations
@@ -66,7 +65,7 @@ async def install_once(repo: Path, cmd: tuple[str, ...]) -> None:
 
 @dataclass(frozen=True, slots=True)
 class SubprocessTestRunner:
-    """The suite command, from CLI options; run many times, in worktrees."""
+    """The discovered suite command, run many times in worktrees."""
 
     cmd: tuple[str, ...]
 
