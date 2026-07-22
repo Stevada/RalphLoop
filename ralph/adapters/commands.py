@@ -46,7 +46,6 @@ class DescriptorCommandSource:
             raise DescriptorMissingError(
                 f"{descriptor}: missing {DESCRIPTOR_NAME} command descriptor"
             )
-        _ensure_tracked(repo, descriptor)
         try:
             with descriptor.open("rb") as f:
                 data: Mapping[str, object] = tomllib.load(f)
@@ -63,19 +62,6 @@ class DescriptorCommandSource:
             test=_required_test(descriptor, commands),
             install=_optional_command(descriptor, commands, "install"),
         )
-
-
-def _ensure_tracked(repo: Path, descriptor: Path) -> None:
-    try:
-        rel = descriptor.relative_to(repo)
-    except ValueError:
-        rel = descriptor
-    try:
-        run_git(repo, "ls-files", "--error-unmatch", str(rel))
-    except GitError as e:
-        raise DescriptorUntrackedError(
-            f"{descriptor}: command descriptor must be tracked by git"
-        ) from e
 
 
 def _required_test(descriptor: Path, commands: Mapping[str, object]) -> tuple[str, ...]:
