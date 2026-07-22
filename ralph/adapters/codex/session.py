@@ -21,7 +21,7 @@ from ralph.adapters.runtime.turn_stream import (
 from ralph.issues import Findings, Spec
 from ralph.ports import Worktree
 
-MODEL = "gpt-5.3-codex"
+MODEL = "gpt-5.4"
 IMPLEMENTER_SANDBOX = "workspace-write"
 EDITOR_SANDBOX = "read-only"
 APPROVAL = "never"

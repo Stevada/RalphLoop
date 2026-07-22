@@ -27,6 +27,8 @@ else:
     SdkPermissionRequest = object
     SdkPermissionResult = object
 
+MODEL = "claude-sonnet-5"
+
 ASSISTANT_MESSAGE_DELTA = "assistant.message_delta"
 ASSISTANT_MESSAGE = "assistant.message"
 ASSISTANT_USAGE = "assistant.usage"
@@ -235,6 +237,7 @@ async def _open_real_session(
         session = cast(
             RunningCopilotSession,
             await client.create_session(
+                model=MODEL,
                 streaming=True,
                 on_permission_request=on_permission_request,
             ),
