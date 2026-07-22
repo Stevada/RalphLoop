@@ -38,7 +38,7 @@ from ralph.harness import (
 )
 from ralph.issues import Findings, Spec
 from ralph.ports import Budget, SessionContext, Worktree
-from tests.builders import impasse, suite, telemetry
+from tests.builders import impasse, telemetry
 
 SUITE: Sequence[str] = ("python", "-m", "pytest", "-q")
 SPEC = Spec(body="# 01 — make it add\n\n## Acceptance criteria\n\n- [ ] `add(1, 2) == 3`")
@@ -53,7 +53,6 @@ def session_context(budget: Budget = GENEROUS) -> SessionContext:
 FAILURE = failure_report(
     Outcome.IMPASSE,
     telemetry(commits=0, impasse_report=impasse()),
-    suite(green=True),
 )
 
 
@@ -414,6 +413,7 @@ async def test_the_prompt_hands_over_the_claim_and_the_facts_to_check_it_against
     assert FAILURE.claim is not None
     assert FAILURE.claim.unsatisfiable_criterion in prompt  # what it claims
     assert "commits: 0" in prompt  # what the harness saw
+    assert "not run by the harness for this failure" in prompt
     assert "Reproduce. Do not infer." in prompt  # and what to do about the gap
 
 

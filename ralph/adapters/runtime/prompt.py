@@ -21,8 +21,9 @@ from ralph.issues import Findings, Spec
 COMMIT = """\
 ## What the harness will do when you stop
 
-It will count your commits and run the suite. Commit your work — an uncommitted change is
-indistinguishable, from out here, from work you never did, and it will be thrown away.
+It will count your commits, then send committed work to the merge queue. Commit your work — an
+uncommitted change is indistinguishable, from out here, from work you never did, and it will be
+thrown away.
 
 Zero commits is not a way of saying the sub-issue needed no code. It is a failure, and it will be
 reported as one."""
@@ -127,6 +128,12 @@ A session that ends without one is a session that was asked a question and did n
 will be reported as a harness failure, and a human will be paged to find out why."""
 
 
+def _suite_observation(failure: FailureReport) -> str:
+    if failure.suite is None:
+        return "not run by the harness for this failure; re-run it in the worktree"
+    return "green" if failure.suite.green else "RED"
+
+
 def _facts(failure: FailureReport) -> str:
     """The harness's observations — never the model's narration of them. The Implementer's claim is
     quoted **as a claim**, beside the facts it is to be checked against."""
@@ -137,7 +144,7 @@ def _facts(failure: FailureReport) -> str:
         f"- outcome: **{failure.outcome.value}**",
         f"- cycle {failure.cycles} of {CycleLedger.MAX_CYCLES}",
         f"- commits: {t.commits}",
-        f"- the suite: {'green' if failure.suite.green else 'RED'}",
+        f"- the suite: {_suite_observation(failure)}",
         f"- it ran for {t.wall_clock_s:.0f}s"
         + (f", and was killed on the {t.killed}" if t.killed else ""),
     ]
@@ -145,7 +152,7 @@ def _facts(failure: FailureReport) -> str:
         lines.append(f"- the merge queue rejected it: {failure.integration_detail}")
     if t.diffstat.strip():
         lines += ["", "It changed:", "", "```", t.diffstat.strip(), "```"]
-    if not failure.suite.green and failure.suite.output.strip():
+    if failure.suite is not None and not failure.suite.green and failure.suite.output.strip():
         lines += ["", "The suite said:", "", "```", failure.suite.output.strip()[-4000:], "```"]
 
     if failure.claim is None:

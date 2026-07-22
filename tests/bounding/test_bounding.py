@@ -8,14 +8,13 @@ import sys
 from ralph.adapters.runtime.bounding import Bound, run_bounded
 from ralph.adapters.git import GitCli
 from ralph.adapters.runtime.implementer import SubprocessImplementer
-from ralph.harness import Outcome, SuiteResult, classify_implementer
+from ralph.harness import Outcome, classify_implementer
 from ralph.issues import Findings, Spec
 from ralph.ports import Budget, SessionContext
 from tests.testbed import TargetRepo
 
 SHORT_CLOCK = Budget(wall_clock_s=0.3)
 GENEROUS_CLOCK = Budget(wall_clock_s=10.0)
-GREEN = SuiteResult(green=True, output="", duration_s=0.0)
 
 
 async def spawn(*python: str) -> asyncio.subprocess.Process:
@@ -67,4 +66,4 @@ async def test_real_session_telemetry_has_no_context_peak(repo: TargetRepo) -> N
     assert not hasattr(t, "peak_context_tokens")
     assert t.consumed_tokens == 0
     assert t.commits == 0
-    assert classify_implementer(t, GREEN) is Outcome.IMPASSE
+    assert classify_implementer(t) is Outcome.IMPASSE

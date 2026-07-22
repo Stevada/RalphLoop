@@ -32,20 +32,20 @@ def terminal_editor() -> FakeEditor:
 
 def scheduler_over(
     store: FakeIssueStore, implementer: FakeImplementer, git: FakeGit, log: FakeRunLog
-) -> Scheduler:
+) -> tuple[Scheduler, FakeTestRunner]:
     runner = FakeTestRunner()
-    return Scheduler(
+    scheduler = Scheduler(
         repo=REPO,
         git=git,
         store=store,
         run_log=log,
-        runner=runner,
         implementer=implementer,
         editor=terminal_editor(),
         merge_queue=MergeQueue(git=git, runner=runner, integration="integration"),
         integration="integration",
         budget=Budget(),
     )
+    return scheduler, runner
 
 
 async def test_an_infra_failure_goes_straight_to_a_human_and_never_to_the_editor() -> None:
@@ -59,10 +59,12 @@ async def test_an_infra_failure_goes_straight_to_a_human_and_never_to_the_editor
     )
     git, log = FakeGit(head="integration"), FakeRunLog()
 
-    report = await scheduler_over(store, implementer, git, log).run()
+    scheduler, runner = scheduler_over(store, implementer, git, log)
+    report = await scheduler.run()
 
     assert report.failed == {SubIssueId("01"): Outcome.INFRA_FAILED}
     assert git.merged == []  # it never reached the merge queue
+    assert runner.runs == []  # and the scheduler did not run a post-session suite
     assert len(implementer.calls) == 1  # and it was never run a second time
 
     # 02 stands behind it, so it never got a turn — and carries no state saying so.
@@ -80,9 +82,11 @@ async def test_the_quarantined_worktree_is_moved_out_of_the_way() -> None:
     implementer = FakeImplementer(scripted=[telemetry(commits=0)])  # undeclared impasse
     git, log = FakeGit(head="integration"), FakeRunLog()
 
-    await scheduler_over(store, implementer, git, log).run()
+    scheduler, runner = scheduler_over(store, implementer, git, log)
+    await scheduler.run()
 
     assert git.moved == [("ralph/01", REPO / ".worktrees" / "failed" / "01")]
+    assert runner.runs == []
 
 
 async def test_a_landed_sub_issue_leaves_its_worktree_where_it_was() -> None:
@@ -93,7 +97,9 @@ async def test_a_landed_sub_issue_leaves_its_worktree_where_it_was() -> None:
     )
     git, log = FakeGit(head="integration"), FakeRunLog()
 
-    report = await scheduler_over(store, FakeImplementer(), git, log).run()
+    scheduler, runner = scheduler_over(store, FakeImplementer(), git, log)
+    report = await scheduler.run()
 
     assert report.landed == (SubIssueId("01"),)
     assert git.moved == []
+    assert runner.runs == [REPO / ".worktrees" / "active" / "01"]

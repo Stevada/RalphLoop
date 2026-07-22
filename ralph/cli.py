@@ -28,6 +28,7 @@ from ralph.adapters.git import GitCli, run_git
 from ralph.adapters.suite import SubprocessTestRunner, install_once
 from ralph.harness import (
     CycleLedger,
+    FailureReport,
     Refusal,
     RepoFacts,
     build_order,
@@ -426,7 +427,6 @@ async def run(
         git=git,
         store=store,
         run_log=JsonlRunLog(path=repo / ".scratch" / "run.jsonl"),
-        runner=runner,
         implementer=selected_implementer,
         editor=selected_editor,
         merge_queue=MergeQueue(git=git, runner=runner, integration=integration),
@@ -486,10 +486,16 @@ def render(n: Notification) -> str:
         commits = e.report.telemetry.commits
         lines.append(
             f"    harness: {commits} commit{'' if commits == 1 else 's'}, "
-            f"suite {'green' if e.report.suite.green else 'red'}, "
+            f"suite {_suite_summary(e.report)}, "
             f"worktree preserved at .worktrees/failed/{e.sub_issue}"
         )
     return "\n".join(lines)
+
+
+def _suite_summary(report: FailureReport) -> str:
+    if report.suite is None:
+        return "not run"
+    return "green" if report.suite.green else "red"
 
 
 def _load_env(repo: Path) -> None:

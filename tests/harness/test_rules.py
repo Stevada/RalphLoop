@@ -30,72 +30,71 @@ from tests.builders import graph_of, impasse, suite, telemetry, verdict
 # --- classify_implementer: one test per row of the taxonomy -------------------------------------
 
 
-def test_a_green_session_that_committed_is_success() -> None:
-    assert classify_implementer(telemetry(), suite(green=True)) is Outcome.SUCCESS
+def test_a_committed_impasse_free_session_is_success() -> None:
+    assert classify_implementer(telemetry()) is Outcome.SUCCESS
 
 
 def test_the_impasse_sentinel_is_an_impasse() -> None:
     t = telemetry(exit_code=1, impasse_report=impasse())
-    assert classify_implementer(t, suite(green=False)) is Outcome.IMPASSE
+    assert classify_implementer(t) is Outcome.IMPASSE
 
 
 def test_zero_commits_is_an_impasse_never_success() -> None:
     """`no commits - skipping` was the prototype's worst lie. A session that produced nothing
-    did not succeed, whatever the suite says about the tree it never touched — it is an impasse
-    the model never declared."""
-    assert classify_implementer(telemetry(commits=0), suite(green=True)) is Outcome.IMPASSE
+    did not succeed — it is an impasse the model never declared."""
+    assert classify_implementer(telemetry(commits=0)) is Outcome.IMPASSE
 
 
-def test_a_session_that_committed_but_left_the_suite_red_is_an_impasse() -> None:
-    """The suite result, not the exit code. The model exited 0 and is wrong about it — an
-    undeclared impasse, caught by the suite rather than confessed."""
+def test_a_committed_session_is_success_without_a_post_session_suite() -> None:
+    """A committed session with no sentinel reaches the merge queue. The scheduler no longer
+    re-runs the suite to turn it into an undeclared impasse."""
     t = telemetry(exit_code=0, commits=3)
-    assert classify_implementer(t, suite(green=False)) is Outcome.IMPASSE
+    assert classify_implementer(t) is Outcome.SUCCESS
 
 
 def test_a_wall_clock_kill_is_infra_failed() -> None:
     t = telemetry(exit_code=124, killed="wall-clock", commits=0)
-    assert classify_implementer(t, suite(green=False)) is Outcome.INFRA_FAILED
+    assert classify_implementer(t) is Outcome.INFRA_FAILED
 
 
 def test_exit_124_is_infra_failed_even_if_the_harness_did_not_do_the_killing() -> None:
     """`timeout(1)` may have got there first. Same failure, same route."""
     t = telemetry(exit_code=124, killed=None, commits=0)
-    assert classify_implementer(t, suite(green=False)) is Outcome.INFRA_FAILED
+    assert classify_implementer(t) is Outcome.INFRA_FAILED
 
 
 def test_a_declared_impasse_that_committed_nothing_is_an_impasse() -> None:
     """Declaring an impasse and committing nothing is the *expected* shape of a declared impasse.
     The sentinel and the empty tree agree; the model stood behind a claim, which the report keeps."""
     t = telemetry(commits=0, impasse_report=impasse())
-    assert classify_implementer(t, suite(green=False)) is Outcome.IMPASSE
-    assert failure_report(Outcome.IMPASSE, t, suite(green=False)).claim is not None
+    assert classify_implementer(t) is Outcome.IMPASSE
+    assert failure_report(Outcome.IMPASSE, t).claim is not None
 
 
 def test_a_non_zero_exit_without_a_sentinel_is_an_undeclared_impasse() -> None:
     """The process died without declaring anything. It is still an impasse — it did not deliver —
     but an undeclared one: the harness must not manufacture a claim the model never made."""
     t = telemetry(exit_code=1, commits=0, impasse_report=None)
-    assert classify_implementer(t, suite(green=False)) is Outcome.IMPASSE
-    assert failure_report(Outcome.IMPASSE, t, suite(green=False)).claim is None
+    assert classify_implementer(t) is Outcome.IMPASSE
+    assert failure_report(Outcome.IMPASSE, t).claim is None
 
 
 def test_the_implementer_never_classifies_integration_failed() -> None:
     """It does not classify a session at all. Only the merge queue raises it."""
-    for t, s in [
-        (telemetry(), suite(green=True)),
-        (telemetry(commits=0), suite(green=False)),
-        (telemetry(killed="wall-clock"), suite(green=False)),
-        (telemetry(impasse_report=impasse()), suite(green=False)),
+    for t in [
+        telemetry(),
+        telemetry(commits=0),
+        telemetry(killed="wall-clock"),
+        telemetry(impasse_report=impasse()),
     ]:
-        assert classify_implementer(t, s) is not Outcome.INTEGRATION_FAILED
+        assert classify_implementer(t) is not Outcome.INTEGRATION_FAILED
 
 
 def test_neither_classifier_can_produce_the_retired_ceiling_outcome() -> None:
     produced = {
-        classify_implementer(telemetry(), suite(green=True)).value,
-        classify_implementer(telemetry(commits=0), suite(green=False)).value,
-        classify_implementer(telemetry(killed="wall-clock"), suite(green=False)).value,
+        classify_implementer(telemetry()).value,
+        classify_implementer(telemetry(commits=0)).value,
+        classify_implementer(telemetry(killed="wall-clock")).value,
         classify_editor(telemetry(), verdict()).value,
         classify_editor(telemetry(exit_code=0), None).value,
         classify_editor(telemetry(killed="wall-clock"), None).value,
@@ -275,10 +274,11 @@ def test_an_untouched_sub_issue_has_spent_nothing() -> None:
 
 
 def test_the_claim_is_only_ever_what_the_model_actually_emitted() -> None:
-    report = failure_report(Outcome.IMPASSE, telemetry(impasse_report=impasse()), suite(green=False))
+    report = failure_report(Outcome.IMPASSE, telemetry(impasse_report=impasse()))
 
     assert report.claim is not None
     assert report.claim.unsatisfiable_criterion == "the third acceptance criterion"
+    assert report.suite is None
 
 
 def test_a_session_that_emitted_no_sentinel_gets_no_claim() -> None:
@@ -286,32 +286,45 @@ def test_a_session_that_emitted_no_sentinel_gets_no_claim() -> None:
     synthesising one from a partial transcript would be the least honest artifact the system could
     produce — a story with no author, handed to the Editor as though a model stood behind it.
     """
-    report = failure_report(
-        Outcome.INFRA_FAILED, telemetry(killed="wall-clock", commits=0), suite(green=False)
-    )
+    report = failure_report(Outcome.INFRA_FAILED, telemetry(killed="wall-clock", commits=0))
 
     assert report.claim is None
     assert report.telemetry.killed == "wall-clock"  # what is left is what the harness saw itself
+    assert report.suite is None
 
 
-def test_the_report_carries_the_claim_and_the_contradicting_facts_together() -> None:
-    """An Implementer that says "all tests pass" beside a red suite produces a report carrying both. The
-    two disagreeing is the signal, and a report that dropped either half would hide it."""
-    claimed_green = telemetry(session_output="All tests pass!", impasse_report=impasse())
+def test_a_non_integration_report_carries_no_harness_suite_result() -> None:
+    """The Editor must reproduce non-integration failures in the worktree; the scheduler no longer
+    hands it a post-session suite result."""
+    report = failure_report(
+        Outcome.IMPASSE,
+        telemetry(session_output="All tests pass!", impasse_report=impasse()),
+    )
 
-    report = failure_report(Outcome.IMPASSE, claimed_green, suite(green=False, output="1 failed"))
-
-    assert report.claim is not None  # the model's story
+    assert report.claim is not None
     assert "All tests pass" in report.telemetry.session_output
-    assert not report.suite.green  # and the fact it is contradicted by
+    assert report.suite is None
+
+
+def test_an_integration_failure_report_carries_the_merge_queue_suite() -> None:
+    report = failure_report(
+        Outcome.INTEGRATION_FAILED,
+        telemetry(),
+        suite(green=False, output="1 failed"),
+        "suite-red",
+    )
+
+    assert report.suite is not None
+    assert not report.suite.green
     assert report.suite.output == "1 failed"
+    assert report.integration_detail == "suite-red"
 
 
 # --- notify: one notification, and which one to open first ---------------------------------------
 
 
 def escalate(outcome: Outcome) -> FailureReport:
-    return failure_report(outcome, telemetry(), suite(green=False))
+    return failure_report(outcome, telemetry())
 
 
 def test_the_notification_counts_what_each_failure_stranded() -> None:
@@ -351,10 +364,8 @@ def test_a_declared_impasse_opens_before_an_undeclared_one() -> None:
     could not meet — is read before an integration failure; an undeclared one, the suite catching a
     session that thought it was done, is read after. The split is taken from the report's `claim`,
     not from a second outcome."""
-    declared = failure_report(
-        Outcome.IMPASSE, telemetry(impasse_report=impasse()), suite(green=False)
-    )
-    undeclared = failure_report(Outcome.IMPASSE, telemetry(commits=0), suite(green=False))
+    declared = failure_report(Outcome.IMPASSE, telemetry(impasse_report=impasse()))
+    undeclared = failure_report(Outcome.IMPASSE, telemetry(commits=0))
     integration = failure_report(Outcome.INTEGRATION_FAILED, telemetry(), suite(green=False))
 
     graph = graph_of({"01": [], "02": [], "03": []})

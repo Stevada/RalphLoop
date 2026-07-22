@@ -5,12 +5,12 @@ fail to deliver a spec it was never given — and the Editor's classifier is str
 of returning it.
 
 `INTEGRATION_FAILED` is unreachable from either: it does not classify a session at all. The
-Implementer session already succeeded, green in isolation. Only the merge queue can raise it.
+Implementer session already succeeded. Only the merge queue can raise it.
 """
 
 from __future__ import annotations
 
-from ralph.harness.model.session import Outcome, SessionTelemetry, SuiteResult
+from ralph.harness.model.session import Outcome, SessionTelemetry
 from ralph.harness.model.verdict import EditorVerdict
 
 WALL_CLOCK_EXIT = 124
@@ -21,13 +21,11 @@ def _died_on_the_clock(t: SessionTelemetry) -> bool:
     return t.killed == "wall-clock" or t.exit_code == WALL_CLOCK_EXIT
 
 
-def classify_implementer(t: SessionTelemetry, suite: SuiteResult) -> Outcome:
-    """Zero commits is never a benign skip — it is an `impasse`. The suite result, not the exit
-    code, is the outcome: a model's exit code is its opinion, the suite is a fact.
-    """
+def classify_implementer(t: SessionTelemetry) -> Outcome:
+    """Zero commits is never a benign skip — it is an `impasse`."""
     if _died_on_the_clock(t):
         return Outcome.INFRA_FAILED
-    if t.impasse_report is not None or t.commits == 0 or not suite.green:
+    if t.impasse_report is not None or t.commits == 0:
         return Outcome.IMPASSE
     return Outcome.SUCCESS
 

@@ -30,7 +30,6 @@ from ralph.adapters.runtime.session import Session
 from ralph.adapters.runtime.turn_stream import AutoCompaction, TokenUsage, Turn, TurnStreamAsk
 from ralph.harness import (
     Outcome,
-    SuiteResult,
     Verdict,
     classify_editor,
     classify_implementer,
@@ -38,15 +37,12 @@ from ralph.harness import (
 )
 from ralph.issues import Findings, Spec
 from ralph.ports import Budget, SessionContext, Worktree
-from tests.builders import impasse, suite, telemetry
+from tests.builders import impasse, telemetry
 from tests.testbed import TargetRepo
 
 SPEC = Spec(body="# 01 — make it add\n\n## Acceptance criteria\n\n- [ ] `add(1, 2) == 3`")
 FINDINGS = Findings(body="`add()` is already in calculator.py")
 GENEROUS = Budget(wall_clock_s=30.0)
-GREEN = SuiteResult(green=True, output="", duration_s=0.0)
-
-
 def session_context(
     wt: Worktree, spec: Spec = SPEC, findings: Findings = FINDINGS, budget: Budget = GENEROUS
 ) -> SessionContext:
@@ -200,7 +196,7 @@ async def test_a_session_runs_to_completion_without_completed_turn_usage(repo: T
     assert t.killed is None
     assert t.consumed_tokens == 0
     assert "done" in t.session_output
-    assert classify_implementer(t, GREEN) is Outcome.IMPASSE
+    assert classify_implementer(t) is Outcome.IMPASSE
 
 
 def codex_implementer_with_stub(final: int = 0) -> CodexImplementer:
@@ -254,7 +250,6 @@ def codex_implementer_with_blocking_stub() -> CodexImplementer:
 FAILURE = failure_report(
     Outcome.IMPASSE,
     telemetry(commits=0, impasse_report=impasse()),
-    suite(green=True),
 )
 
 

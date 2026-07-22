@@ -20,7 +20,6 @@ from ralph.cli import run
 from ralph.harness import Outcome, Verdict
 from ralph.issues import SubIssueId, SubIssueState
 from ralph.ports import Budget, RepoCommands
-from ralph.scheduler import BaseIsRed
 from tests.builders import telemetry, verdict as editor_verdict
 from tests.fakes import FakeCommandSource, FakeEditor
 from tests.testbed import (
@@ -94,26 +93,26 @@ async def test_the_run_log_tells_the_true_story_in_order(
     assert all(set(e) == {"ts", "sub_issue", "actor", "kind", "details"} for e in lines)
 
 
-async def test_a_red_base_aborts_the_run_before_a_single_agent_starts(
+async def test_a_red_base_is_caught_by_the_merge_queue_gate(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    """Fatal, not a warning. Every session dispatched into a broken base would fail for a reason
-    that has nothing to do with its sub-issue — and the harness would pay an Editor to diagnose
-    each one."""
+    """The scheduler no longer owns a pre-session suite run. The first committed session reaches
+    the merge queue, and the merge queue is the gate that refuses the red tree."""
     (repo.path / "calculator.py").write_text("def add(a: int, b: int) -> int:\n    return a * b\n")
     repo.git("add", "-A")
     repo.git("commit", "-m", "break the base")
 
-    with pytest.raises(BaseIsRed):
-        await run(
-            repo.path,
-            None,
-            implementer=stand_in(agent, Behaviour.SUCCEED),
-            options=make_options(),
-        )
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=terminal_editor(),
+        options=make_options(),
+    )
 
-    assert not repo.branch_exists("ralph/01")  # zero agents started
-    assert not (repo.path / ".scratch" / "run.jsonl").exists()
+    assert report.failed == {SubIssueId("01"): Outcome.INTEGRATION_FAILED}
+    assert repo.branch_exists("ralph/01")
+    assert repo.commit_count("integration") == 2
 
 
 async def test_a_failed_install_aborts_the_run_before_a_single_agent_starts(
@@ -221,11 +220,11 @@ async def test_an_undeclared_impasse_session_does_not_land(
     assert "Status: ready" in (repo.issues_dir / "02-second.md").read_text()
 
 
-async def test_a_session_that_commits_a_red_suite_does_not_land(
+async def test_a_session_that_commits_a_red_suite_fails_at_the_merge_queue(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    """The dangerous one: it exits 0, it committed, and it is broken. The harness runs the suite —
-    the model's exit code is its opinion."""
+    """The dangerous one: it exits 0, it committed, and it is broken. The scheduler calls that a
+    success; the merge queue is the harness suite gate that refuses it."""
     report = await run(
         repo.path,
         None,
@@ -234,7 +233,7 @@ async def test_a_session_that_commits_a_red_suite_does_not_land(
         options=make_options(),
     )
 
-    assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
+    assert report.failed == {SubIssueId("01"): Outcome.INTEGRATION_FAILED}
     assert repo.commit_count("integration") == 1
     assert repo.run_suite() is True  # integration was never touched, so it is still green
 

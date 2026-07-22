@@ -341,8 +341,8 @@ def act(behaviour: str, tag: str, cwd: Path) -> int:
             "def test_broken() -> None:\\n    assert 1 == 2, 'the agent shipped this'\\n"
         )
         commit(f"feat({tag}): looks green to me")
-        # It says so, in as many words, and it is wrong. The failure report must carry both this
-        # sentence and the red suite the harness observed; the two disagreeing is the signal.
+        # It says so, in as many words, and it is wrong. The merge queue is the harness gate that
+        # catches the red suite before this reaches integration.
         print(f"[{tag}] All tests pass. The implementation is complete.")
         return 0
 

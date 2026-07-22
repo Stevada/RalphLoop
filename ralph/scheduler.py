@@ -1,4 +1,4 @@
-"""The run: read the graph, refuse a red base, dispatch on eligibility, quarantine, drain, notify.
+"""The run: read the graph, dispatch on eligibility, quarantine, drain, notify.
 
 Sub-issues run in parallel but land one at a time (the merge queue's lock).
 There is no wave barrier: the dispatch loop re-derives eligibility on every completion, so a
@@ -44,7 +44,6 @@ from ralph.ports import (
     Implementer,
     RunLog,
     SessionContext,
-    TestRunner,
     Worktree,
 )
 from ralph.runlog import EventKind, event
@@ -53,16 +52,6 @@ log = logging.getLogger("ralph")
 
 ACTIVE = Path(".worktrees") / "active"
 QUARANTINE = Path(".worktrees") / "failed"
-
-
-class BaseIsRed(RuntimeError):
-    """The suite is red before a single session has started. Fatal.
-
-    Not a warning, and not something to run anyway. A red base means a stale lockfile, a broken
-    environment, a half-merged previous run, or trunk itself being broken — and every session
-    dispatched into it would fail for a reason that has nothing to do with its sub-issue. The
-    harness would classify N honest failures and pay an Editor to diagnose each one.
-    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,7 +113,6 @@ class Scheduler:
         git: Git,
         store: IssueStore,
         run_log: RunLog,
-        runner: TestRunner,
         implementer: Implementer,
         merge_queue: MergeQueue,
         integration: str,
@@ -135,7 +123,6 @@ class Scheduler:
         self._git = git
         self._store = store
         self._run_log = run_log
-        self._runner = runner
         self._implementer = implementer
         self._editor = editor
         self._merge_queue = merge_queue
@@ -144,8 +131,6 @@ class Scheduler:
         self._ledger = CycleLedger()
 
     async def run(self) -> RunReport:
-        await self._refuse_a_red_base()
-
         graph, states = self._store.read_graph()
         consumption_offsets = {
             id: len(self._store.consumption(id)) for id in graph.sub_issues
@@ -195,14 +180,6 @@ class Scheduler:
             if running:
                 await asyncio.gather(*running, return_exceptions=True)
 
-    async def _refuse_a_red_base(self) -> None:
-        base = await self._runner.run(self._repo)
-        if not base.green:
-            raise BaseIsRed(
-                f"the suite is red on {self._integration} before any session has started. "
-                f"No agent will be dispatched into a broken base.\n\n{base.output}"
-            )
-
     async def _pipeline(self, sub: SubIssue) -> _Closed:
         """One sub-issue, to a terminal state — however many cycles that takes.
 
@@ -245,9 +222,8 @@ class Scheduler:
                 auto_compactions=telemetry.auto_compactions,
             ),
         )
-        # The suite result, not the exit code, is the outcome. The harness runs the tests.
-        suite = await self._runner.run(wt.path)
-        outcome = classify_implementer(telemetry, suite)
+        outcome = classify_implementer(telemetry)
+        suite = None
         detail: str | None = None
 
         if route(Actor.IMPLEMENTER, outcome) is Destination.MERGE_QUEUE:
@@ -263,14 +239,12 @@ class Scheduler:
                 )
                 return _Closed(sub.id, None)
 
-            # Green in isolation, and it will not integrate. The Implementer could not have observed
-            # this about itself — which is why it goes to the Editor rather than back to the actor
-            # that produced it, and why it spends a cycle exactly like an impasse does.
+            # The merge queue is the first harness suite gate. A red prospective merge goes to the
+            # Editor with that gate's evidence, and spends a cycle exactly like an impasse does.
             outcome, detail = Outcome.INTEGRATION_FAILED, land.result.value
             if land.suite is not None:
-                # The suite on the *prospective merge*, not the one that was green in the worktree
-                # as it stood. Handing the Editor an `integration-failed` alongside a green
-                # SuiteResult would be handing it a contradiction we manufactured.
+                # The suite on the *prospective merge*. This is the only suite evidence the
+                # scheduler is allowed to hand the Editor for an Implementer failure.
                 suite = land.suite
 
         await self._record(sub.id, Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, outcome)

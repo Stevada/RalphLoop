@@ -28,14 +28,14 @@ from ralph.issues.filesystem import FilesystemIssueStore
 from ralph.issues.linear import LinearIssueStore
 from ralph.notification import notify
 from ralph.ports import Budget, SessionContext, Worktree
-from tests.builders import graph_of, impasse, suite, telemetry
+from tests.builders import graph_of, impasse, telemetry
 from tests.issues.test_linear_issue_store import FakeLinearClient, parent_with, sub_issue
 from tests.testbed import TargetRepo
 
 SUITE: Sequence[str] = ("python", "-m", "pytest")
 
 FAILURE = failure_report(
-    Outcome.IMPASSE, telemetry(commits=0, impasse_report=impasse()), suite(green=True)
+    Outcome.IMPASSE, telemetry(commits=0, impasse_report=impasse())
 )
 
 SPEC = Spec(body="# 01 — build it\n\n## Acceptance criteria\n\n- [ ] Add a file.")

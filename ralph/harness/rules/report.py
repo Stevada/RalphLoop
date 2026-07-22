@@ -21,16 +21,15 @@ from ralph.harness.model.session import Outcome, SessionTelemetry, SuiteResult
 def failure_report(
     outcome: Outcome,
     telemetry: SessionTelemetry,
-    suite: SuiteResult,
+    suite: SuiteResult | None = None,
     integration_detail: str | None = None,
     cycles: int = 1,
 ) -> FailureReport:
     """The model's story, checked against the harness's facts.
 
-    `telemetry` and `suite` are the facts: commits, diffstat, wall-clock, token consumption, and
-    the suite's own output. They are collected independently of the model's narration, so an
-    Implementer that claims "all tests pass" alongside a red suite produces a report carrying
-    **both** — and the two disagreeing is itself a signal worth surfacing.
+    `telemetry` is always present: commits, diffstat, wall-clock, and token consumption. `suite`
+    is present only when the merge queue got far enough to run the suite on the prospective merged
+    tree.
     """
     return FailureReport(
         outcome=outcome,

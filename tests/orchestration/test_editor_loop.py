@@ -81,7 +81,6 @@ async def run_with(
         git=git,
         store=store,
         run_log=log,
-        runner=runner,
         implementer=implementer,
         editor=editor,
         merge_queue=MergeQueue(git=git, runner=runner, integration="integration"),

@@ -125,15 +125,30 @@ async def test_a_killed_session_yields_a_report_built_from_harness_facts_only(
     assert escalation.report.telemetry.commits == 0
 
 
-async def test_a_report_carries_both_the_models_claim_and_the_harnesss_facts(
+async def test_a_non_integration_report_carries_no_harness_suite_result(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    """The agent says, in as many words, "All tests pass." The suite is red.
+    repo.write_graph({"01": []})
 
-    The report carries **both**, because the harness collects its facts independently of the model's
-    narration — and the two disagreeing is itself the signal. A report that quietly dropped the
-    claim would be hiding the most interesting thing in it.
-    """
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.IMPASSE),
+        editor=terminal_editor(),
+        options=make_options(),
+    )
+
+    escalation = report.notification.escalations[0]
+    assert escalation.outcome is Outcome.IMPASSE
+    assert escalation.report.suite is None
+    assert escalation.report.claim is not None
+
+
+async def test_an_integration_failure_carries_the_merge_queue_suite_result(
+    repo: TargetRepo, agent: StandInAgent
+) -> None:
+    """A committed red tree reaches the merge queue. The red suite it reports is the merge-queue
+    gate's evidence, not a scheduler post-session run."""
     repo.write_graph({"01": []})
 
     report = await run(
@@ -145,10 +160,11 @@ async def test_a_report_carries_both_the_models_claim_and_the_harnesss_facts(
     )
 
     escalation = report.notification.escalations[0]
-    assert escalation.outcome is Outcome.IMPASSE
-    assert "All tests pass" in escalation.report.telemetry.session_output  # the model's story
-    assert not escalation.report.suite.green  # the harness's fact
-    assert escalation.report.telemetry.commits == 1  # it really did commit; it was just wrong
+    assert escalation.outcome is Outcome.INTEGRATION_FAILED
+    assert "All tests pass" in escalation.report.telemetry.session_output
+    assert escalation.report.suite is not None
+    assert not escalation.report.suite.green
+    assert escalation.report.telemetry.commits == 1
 
 
 async def test_zero_commits_is_an_impasse_never_a_benign_skip(
@@ -217,6 +233,7 @@ async def test_one_notification_says_which_to_open_first(
 
     assert [e.sub_issue for e in n.escalations] == ["01", "02"]
     assert n.escalations[0].outcome is Outcome.IMPASSE
+    assert n.escalations[1].outcome is Outcome.INTEGRATION_FAILED
     assert n.escalations[0].stranded == ("03", "04")  # transitive: 04 is behind 03 is behind 01
     assert n.escalations[1].stranded == ()
 

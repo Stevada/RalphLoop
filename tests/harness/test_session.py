@@ -10,7 +10,7 @@ import pytest
 
 from ralph.adapters.git import GitCli
 from ralph.adapters.runtime.implementer import ImpasseParseError, SubprocessImplementer, parse_impasse
-from ralph.harness import Outcome, SuiteResult, classify_implementer
+from ralph.harness import Outcome, classify_implementer
 from ralph.issues import Findings, Spec
 from ralph.ports import Budget, SessionContext, Worktree
 from tests.testbed import Behaviour, StandInAgent, TargetRepo
@@ -58,7 +58,7 @@ async def test_a_session_that_committed_nothing_is_caught_by_the_commit_count(
 
     assert t.exit_code == 0
     assert t.commits == 0
-    assert classify_implementer(t, SuiteResult(True, "", 0.0)) is Outcome.IMPASSE
+    assert classify_implementer(t) is Outcome.IMPASSE
 
 
 async def test_a_hanging_session_is_killed_on_the_wall_clock(
@@ -73,7 +73,7 @@ async def test_a_hanging_session_is_killed_on_the_wall_clock(
 
     assert t.killed == "wall-clock"
     assert t.commits == 0
-    assert classify_implementer(t, SuiteResult(False, "", 0.0)) is Outcome.INFRA_FAILED
+    assert classify_implementer(t) is Outcome.INFRA_FAILED
 
 
 async def test_the_impasse_sentinel_is_parsed_out_of_the_session(
@@ -88,7 +88,7 @@ async def test_the_impasse_sentinel_is_parsed_out_of_the_session(
     assert t.impasse_report.what_would_satisfy == "an API that exists"
     assert len(t.impasse_report.approaches) == 2
     assert t.impasse_report.approaches[0].abandoned_because == "there are none"
-    assert classify_implementer(t, SuiteResult(False, "", 0.0)) is Outcome.IMPASSE
+    assert classify_implementer(t) is Outcome.IMPASSE
 
 
 def test_no_sentinel_is_no_report() -> None:
