@@ -25,6 +25,14 @@ class Budget:
 
 
 @dataclass(frozen=True, slots=True)
+class RepoCommands:
+    """Already-split commands declared by the target repo."""
+
+    test: tuple[str, ...]
+    install: tuple[str, ...] | None
+
+
+@dataclass(frozen=True, slots=True)
 class Worktree:
     """An isolated checkout. Where a session works, and where the merge queue re-runs the suite."""
 
@@ -80,6 +88,11 @@ class RunLog(Protocol):
 @runtime_checkable
 class TestRunner(Protocol):
     async def run(self, dir: Path) -> SuiteResult: ...
+
+
+@runtime_checkable
+class CommandSource(Protocol):
+    def discover(self, repo: Path) -> RepoCommands: ...
 
 
 @runtime_checkable

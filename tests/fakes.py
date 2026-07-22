@@ -27,7 +27,7 @@ from ralph.issues import (
     SubIssueId,
     SubIssueState,
 )
-from ralph.ports import SessionContext, Worktree
+from ralph.ports import RepoCommands, SessionContext, Worktree
 from ralph.runlog import Event
 from tests.builders import telemetry
 
@@ -135,6 +135,18 @@ class FakeTestRunner:
         self.runs.append(dir)
         green = self.green and dir not in self.red_in
         return SuiteResult(green=green, output=self.output if green else "1 failed", duration_s=0.0)
+
+
+@dataclass(slots=True)
+class FakeCommandSource:
+    """Returns scripted repo commands and records which repos were queried."""
+
+    commands: RepoCommands
+    calls: list[Path] = field(default_factory=list)
+
+    def discover(self, repo: Path) -> RepoCommands:
+        self.calls.append(repo)
+        return self.commands
 
 
 @dataclass(slots=True)

@@ -27,9 +27,11 @@ from ralph.issues import Findings, IssueGraph, Spec, SubIssue, SubIssueState
 from ralph.issues.store import IssueStore
 from ralph.ports import (
     Budget,
+    CommandSource,
     Editor,
     Git,
     Implementer,
+    RepoCommands,
     RunLog,
     SessionContext,
     TestRunner,
@@ -37,6 +39,7 @@ from ralph.ports import (
 )
 from tests.builders import graph_of
 from tests.fakes import (
+    FakeCommandSource,
     FakeEditor,
     FakeGit,
     FakeImplementer,
@@ -45,7 +48,16 @@ from tests.fakes import (
     FakeTestRunner,
 )
 
-FROZEN = [SubIssue, IssueGraph, Spec, Findings, SessionTelemetry, SuiteResult, EditorVerdict]
+FROZEN = [
+    SubIssue,
+    IssueGraph,
+    Spec,
+    Findings,
+    SessionTelemetry,
+    SuiteResult,
+    EditorVerdict,
+    RepoCommands,
+]
 ENUMS = [Actor, Outcome, SubIssueState, Destination, Verdict]
 
 
@@ -95,6 +107,14 @@ def test_budget_is_only_the_wall_clock_bound() -> None:
     assert Budget().wall_clock_s == 1800.0
 
 
+def test_repo_commands_are_split_argvs_from_the_target_repo() -> None:
+    commands = RepoCommands(test=("uv", "run", "pytest", "-q"), install=None)
+
+    assert [f.name for f in dataclasses.fields(RepoCommands)] == ["test", "install"]
+    assert commands.test == ("uv", "run", "pytest", "-q")
+    assert commands.install is None
+
+
 def test_session_telemetry_carries_consumption_but_no_context_peak() -> None:
     names = {f.name for f in dataclasses.fields(SessionTelemetry)}
     assert "consumed_tokens" in names
@@ -124,6 +144,9 @@ def test_every_port_has_a_fake_that_satisfies_it() -> None:
     log: RunLog = FakeRunLog()
     runner: TestRunner = FakeTestRunner()
     git: Git = FakeGit()
+    commands: CommandSource = FakeCommandSource(
+        RepoCommands(test=("uv", "run", "pytest", "-q"), install=("uv", "sync"))
+    )
 
     assert isinstance(implementer, Implementer)
     assert isinstance(editor, Editor)
@@ -131,6 +154,8 @@ def test_every_port_has_a_fake_that_satisfies_it() -> None:
     assert isinstance(log, RunLog)
     assert isinstance(runner, TestRunner)
     assert isinstance(git, Git)
+    assert isinstance(commands, CommandSource)
+    assert commands.discover(Path("/repo")).install == ("uv", "sync")
 
 
 def test_the_worktree_knows_where_it_came_from() -> None:
