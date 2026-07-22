@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 
 from ralph.adapters.claude import claude_editor
 from ralph.adapters.codex import codex_editor, codex_implementer
+from ralph.adapters.commands import DescriptorCommandError, DescriptorCommandSource
 from ralph.adapters.copilot import copilot_editor, copilot_implementer
 from ralph.adapters.git import GitCli, run_git
 from ralph.adapters.suite import SubprocessTestRunner, install_once
@@ -44,7 +45,7 @@ from ralph.issues.linear import (
 from ralph.issues.store import IssueStore
 from ralph.mergequeue import MergeQueue
 from ralph.notification import Notification
-from ralph.ports import Budget, Editor, Implementer
+from ralph.ports import Budget, CommandSource, Editor, Implementer, RepoCommands
 from ralph.runlog import JsonlRunLog
 from ralph.scheduler import RunReport, Scheduler
 
@@ -86,6 +87,15 @@ class Refused(RuntimeError):
 
 class IssueSourceError(ValueError):
     """The CLI was not given a coherent issue source."""
+
+
+@dataclass(frozen=True, slots=True)
+class Readiness:
+    """The pre-flight result plus the commands it discovered, when discovery succeeded."""
+
+    refusals: tuple[Refusal, ...]
+    test_command: tuple[str, ...] | None
+    install_command: tuple[str, ...] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +222,10 @@ def implementer_of(options: RunOptions) -> Implementer:
     raise AssertionError("validate_agents accepted an unknown Implementer")
 
 
+def command_source_for() -> CommandSource:
+    return DescriptorCommandSource()
+
+
 def find_issues_dir(repo: Path, given: Path | None) -> Path:
     """`.scratch/<phase>/issues/` is discovered when no path is given — and an ambiguous discovery
     is an error, not a guess. Two phases in flight means the human must say which."""
@@ -267,8 +281,22 @@ def _read_graph(
     return issue_store(repo, issue_source, options).read_graph()
 
 
-def facts_about(repo: Path, issue_source: str | None, options: RunOptions) -> RepoFacts:
-    """Ask the world the five questions, and hand the answers to a rule that cannot ask anything.
+def _discover_commands(
+    repo: Path, command_source: CommandSource
+) -> tuple[RepoCommands | None, str | None]:
+    try:
+        return command_source.discover(repo), None
+    except DescriptorCommandError as exc:
+        return None, str(exc)
+
+
+def facts_about(
+    repo: Path,
+    issue_source: str | None,
+    options: RunOptions,
+    command_source: CommandSource | None = None,
+) -> RepoFacts:
+    """Ask the world the pre-flight questions, and hand the answers to a rule that cannot ask anything.
 
     Each `except` is narrow and each keeps the raiser's own message: `IssueParseError` already says
     exactly which file has no acceptance criteria, and `GraphError` already names the cycle. A
@@ -276,6 +304,7 @@ def facts_about(repo: Path, issue_source: str | None, options: RunOptions) -> Re
     """
     git = GitCli(repo=repo)
     pre_commit_config, installed = _pre_commit(repo)
+    commands, command_error = _discover_commands(repo, command_source or command_source_for())
 
     source_error: str | None = None
     graph_error: str | None = None
@@ -290,6 +319,9 @@ def facts_about(repo: Path, issue_source: str | None, options: RunOptions) -> Re
         head_branch=git.head_branch(),
         protected=options.protected,
         dirty=git.dirty_files(),
+        test_command=commands.test if commands is not None and commands.test else None,
+        install_command=commands.install if commands is not None else None,
+        command_error=command_error,
         source_error=source_error,
         graph_error=graph_error,
         pre_commit_config=pre_commit_config,
@@ -301,10 +333,25 @@ def validate(
     repo: Path,
     issue_source: str | None = None,
     options: RunOptions | None = None,
+    command_source: CommandSource | None = None,
 ) -> tuple[Refusal, ...]:
+    return readiness(repo, issue_source, options, command_source).refusals
+
+
+def readiness(
+    repo: Path,
+    issue_source: str | None = None,
+    options: RunOptions | None = None,
+    command_source: CommandSource | None = None,
+) -> Readiness:
     options = options or _options_for()
     validate_agents(options)
-    return refusals(facts_about(repo.resolve(), issue_source, options))
+    facts = facts_about(repo.resolve(), issue_source, options, command_source)
+    return Readiness(
+        refusals=refusals(facts),
+        test_command=facts.test_command,
+        install_command=facts.install_command,
+    )
 
 
 def render_refusals(found: tuple[Refusal, ...]) -> str:
@@ -312,6 +359,15 @@ def render_refusals(found: tuple[Refusal, ...]) -> str:
         return "ready to run."
     lines = [f"refusing to run ({len(found)}):"]
     lines += [f"\n  {r.check.value}\n    {r.reason}" for r in found]
+    return "\n".join(lines)
+
+
+def render_readiness(result: Readiness) -> str:
+    if result.refusals:
+        return render_refusals(result.refusals)
+    lines = ["ready to run.", "commands:", f"  test: {shlex.join(result.test_command or ())}"]
+    if result.install_command is not None:
+        lines.append(f"  install: {shlex.join(result.install_command)}")
     return "\n".join(lines)
 
 
@@ -352,6 +408,7 @@ async def run(
     implementer: Implementer | None = None,
     editor: Editor | None = None,
     options: RunOptions | None = None,
+    command_source: CommandSource | None = None,
 ) -> RunReport:
     """Explicit `implementer`/`editor` override the ones the resolved options name — those are the seams
     the tests inject the scripted stand-in and a stub Editor through, and the reason no test in the
@@ -362,9 +419,9 @@ async def run(
 
     # The same checks `ralph validate` runs, and they are not advisory. A run that starts on `main`
     # has already done the damage by the time anybody reads the warning it printed.
-    found = validate(repo, issue_source, options)
-    if found:
-        raise Refused(render_refusals(found))
+    ready = readiness(repo, issue_source, options, command_source)
+    if ready.refusals:
+        raise Refused(render_refusals(ready.refusals))
 
     git = GitCli(repo=repo)
     integration = git.head_branch()
@@ -515,9 +572,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     if args.command == "validate":
-        found = validate(args.repo, args.issue_source, options)
-        print(render_refusals(found))
-        return 1 if found else 0
+        ready = readiness(args.repo, args.issue_source, options)
+        print(render_readiness(ready))
+        return 1 if ready.refusals else 0
 
     if args.dry_run:
         print(render_plan(args.repo, args.issue_source, options))

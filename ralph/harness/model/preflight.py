@@ -11,7 +11,7 @@ from enum import StrEnum
 
 
 class Check(StrEnum):
-    """The five things the harness refuses to start without.
+    """The things the harness refuses to start without.
 
     Named, and not merely counted, because a refusal that cannot say *which* check failed is a
     refusal a human has to reproduce to understand — and the whole point of a pre-flight is that
@@ -24,6 +24,7 @@ class Check(StrEnum):
     PROTECTED_BRANCH = "protected-branch"
     UNCOMMITTED_CHANGES = "uncommitted-changes"
     UNINSTALLED_PRE_COMMIT_HOOKS = "uninstalled-pre-commit-hooks"
+    MISSING_TEST_COMMAND = "missing-test-command"
     INVALID_ISSUE_SOURCE = "invalid-issue-source"
     INVALID_ISSUE_GRAPH = "invalid-issue-graph"
 
@@ -54,6 +55,15 @@ class RepoFacts:
     protected: frozenset[str]
     dirty: tuple[str, ...]
     """Paths with uncommitted changes, as git reports them. Empty is clean."""
+
+    test_command: tuple[str, ...] | None
+    """The repo's discovered test command. `None` means no runnable command was found."""
+
+    install_command: tuple[str, ...] | None
+    """The repo's discovered install command, if it declares one."""
+
+    command_error: str | None
+    """The message from command discovery when it could not discover a runnable test command."""
 
     source_error: str | None
     """The message from a source that could not be read at all. `None` means it was read; whether

@@ -1,4 +1,4 @@
-"""Real git, against a real repo. There is no other honest way to test this.
+"""Real git, against a real repo. Zero mocks.
 
 Every assertion here is one the merge queue's correctness rests on, and a fake git would pass all
 of them while telling us nothing.

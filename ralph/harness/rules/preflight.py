@@ -60,6 +60,17 @@ def refusals(facts: RepoFacts) -> tuple[Refusal, ...]:
             )
         )
 
+    if facts.command_error is not None:
+        found.append(Refusal(Check.MISSING_TEST_COMMAND, facts.command_error))
+    elif facts.test_command is None:
+        found.append(
+            Refusal(
+                Check.MISSING_TEST_COMMAND,
+                "the target repo has no discoverable test command. Declare a test command before "
+                "starting a run.",
+            )
+        )
+
     if facts.source_error is not None:
         found.append(Refusal(Check.INVALID_ISSUE_SOURCE, facts.source_error))
 

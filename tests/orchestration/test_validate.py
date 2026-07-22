@@ -8,11 +8,9 @@ says something **specific**. "Your graph has a cycle" and "you are on `main`" ar
 mornings, and a pre-flight that only reported *that* validation failed would have given the human
 the smaller half of what it knew.
 
-The *gathering* is real: a real git repo, a real dirty tree, a real cyclic graph on disk. A refusal
-that fires on a hand-built `RepoFacts` and never on a real repository is a refusal that does not
-exist.
-
-**Zero mocks.** Nothing in this file imports `tests.fakes`.
+The *gathering* is real where the checked fact belongs to git or the issue source: a real git repo,
+a real dirty tree, a real cyclic graph on disk. Command discovery is a port, so these tests drive it
+through the fake rather than a real descriptor file.
 """
 
 from __future__ import annotations
@@ -31,14 +29,20 @@ from ralph.harness import (
     refusals,
 )
 from ralph.issues import IssueGraph, SubIssue, SubIssueId, SubIssueState
+from ralph.ports import RepoCommands
+from tests.fakes import FakeCommandSource
 from tests.testbed import TargetRepo, make_options
 
 BUILD_HARNESS = Path(__file__).parents[2] / ".scratch" / "build_harness" / "issues"
+READY_COMMANDS = RepoCommands(test=("uv", "run", "pytest"), install=("uv", "sync"))
 
 CLEAN = RepoFacts(
     head_branch="feature/x",
     protected=frozenset({"main", "master"}),
     dirty=(),
+    test_command=READY_COMMANDS.test,
+    install_command=READY_COMMANDS.install,
+    command_error=None,
     source_error=None,
     graph_error=None,
     pre_commit_config=None,
@@ -54,7 +58,7 @@ def test_a_clean_repo_is_not_refused() -> None:
 
 
 def test_each_refusal_says_which_morning_it_is() -> None:
-    """The one property the whole pre-flight exists for. Five different repositories, five different
+    """The one property the whole pre-flight exists for. Six different repositories, six different
     sentences — and none of them is "validation failed"."""
     said = {
         r.check: r.reason
@@ -63,6 +67,9 @@ def test_each_refusal_says_which_morning_it_is() -> None:
                 head_branch="main",
                 protected=frozenset({"main", "master"}),
                 dirty=("src/app.py",),
+                test_command=None,
+                install_command=None,
+                command_error=None,
                 source_error="Linear issue 'ENG-1' was not found",
                 graph_error="03-sub.md has no `## Acceptance criteria`",
                 pre_commit_config=".pre-commit-config.yaml",
@@ -71,12 +78,13 @@ def test_each_refusal_says_which_morning_it_is() -> None:
         )
     }
 
-    assert set(said) == set(Check)  # all five fire, and all five are reported
-    assert len(set(said.values())) == 5  # and no two of them say the same thing
+    assert set(said) == set(Check)  # all six fire, and all six are reported
+    assert len(set(said.values())) == 6  # and no two of them say the same thing
 
     assert "main" in said[Check.PROTECTED_BRANCH]
     assert "src/app.py" in said[Check.UNCOMMITTED_CHANGES]
     assert "pre-commit install" in said[Check.UNINSTALLED_PRE_COMMIT_HOOKS]
+    assert "test command" in said[Check.MISSING_TEST_COMMAND]
     assert "ENG-1" in said[Check.INVALID_ISSUE_SOURCE]
     assert "no `## Acceptance criteria`" in said[Check.INVALID_ISSUE_GRAPH]
 
@@ -155,6 +163,24 @@ def test_a_dirty_tree_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
     assert "calculator.py" in refused.reason
 
 
+def test_preflight_consults_the_command_source(
+    repo: TargetRepo, command_source: FakeCommandSource
+) -> None:
+    assert validate(repo.path) == ()
+
+    assert command_source.calls == [repo.path.resolve()]
+
+
+def test_a_repo_without_a_discoverable_test_command_is_refused(repo: TargetRepo) -> None:
+    missing = FakeCommandSource(RepoCommands(test=(), install=None))
+
+    (refused,) = validate(repo.path, command_source=missing)
+
+    assert missing.calls == [repo.path.resolve()]
+    assert refused.check is Check.MISSING_TEST_COMMAND
+    assert "test command" in refused.reason
+
+
 def test_the_harnesss_own_run_log_does_not_count_as_dirt(repo: TargetRepo) -> None:
     """Untracked files are not dirt. The harness writes `.scratch/run.jsonl` into the repo *while
     the run is in flight*, and a pre-flight that refused its own run log would refuse every second
@@ -203,6 +229,17 @@ def test_the_fixture_repo_is_ready_to_run(repo: TargetRepo) -> None:
     assert render_refusals(()) == "ready to run."
 
 
+def test_validate_prints_the_discovered_commands(
+    repo: TargetRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["validate", str(repo.path)]) == 0
+
+    out = capsys.readouterr().out
+    assert "ready to run." in out
+    assert "test: uv run pytest" in out
+    assert "install: uv sync" in out
+
+
 def test_validate_rejects_editor_none(repo: TargetRepo) -> None:
     with pytest.raises(NoAgent, match="Known: claude, codex, copilot"):
         validate(repo.path, options=make_options(editor="none"))
@@ -221,6 +258,19 @@ async def test_the_run_refuses_what_validate_refuses(repo: TargetRepo) -> None:
         await run(repo.path, None)
 
     assert not repo.branch_exists("ralph/01")  # zero agents started
+    assert not (repo.path / ".scratch" / "run.jsonl").exists()
+
+
+async def test_the_run_refuses_a_repo_without_a_discoverable_test_command(
+    repo: TargetRepo,
+) -> None:
+    missing = FakeCommandSource(RepoCommands(test=(), install=None))
+
+    with pytest.raises(Refused, match="test command"):
+        await run(repo.path, None, command_source=missing)
+
+    assert missing.calls == [repo.path.resolve()]
+    assert not repo.branch_exists("ralph/01")
     assert not (repo.path / ".scratch" / "run.jsonl").exists()
 
 
