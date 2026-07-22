@@ -53,7 +53,7 @@ ralph/
   notification/    Escalation, Notification, notify() — the one human-facing run artifact
   ports.py         Protocols — the seams. every one has a fake.
   runlog/          Event, EventKind, event(), JsonlRunLog — the authoritative run ledger
-  adapters/        claude, codex, copilot, context, prompt, session, turn_stream,
+  adapters/        claude, codex, copilot, commands, context, prompt, session, turn_stream,
                    git, suite
   mergequeue.py    \  the merge queue and the scheduler, so not an adapter either
   scheduler.py      } orchestration — depends on ports only, never on a concrete adapter
@@ -141,9 +141,9 @@ Pure functions over frozen dataclasses. Tested with no subprocess, no git, no mo
 | `FailureReport` | [failure.py](../ralph/harness/model/failure.py) | The claim beside the harness's facts. It sits downstream of `session.py` (which imports `impasse.py`); splitting them is what breaks the import cycle. The Editor's job is to check one against the other — *their disagreeing is itself a signal*. |
 
 `classify_implementer` / `classify_editor` ([classify.py](../ralph/harness/rules/classify.py)) turn
-telemetry + suite into an `Outcome`. Two facts to know without reading the bodies: **zero commits
-is never a benign skip** — it is an `impasse`; and `INTEGRATION_FAILED` is unreachable from either
-classifier — only the merge queue raises it.
+telemetry into an `Outcome`. Two facts to know without reading the bodies: **zero commits is never a
+benign skip** — it is an `impasse`; and `INTEGRATION_FAILED` is unreachable from either classifier —
+only the merge queue raises it.
 
 ### Routing — the taxonomy, executable
 
@@ -175,10 +175,13 @@ needs a real model, network, or `codex` binary is in the wrong layer.
 | `Implementer` | writes code from a spec → `SessionTelemetry` | Either Codex or Copilot. |
 | `Editor` | adjudicates a failure → `(SessionTelemetry, EditorVerdict \| None)` | Bounded exactly like an Implementer — same `Budget`, same telemetry. Takes `must_be_terminal`; takes **no** `RunLog` or `IssueStore`, so every *consequence* of a verdict happens in the scheduler. |
 | `RunLog` | the harness's **authoritative** record | A Protocol, not the JSONL adapter, because the merge queue and scheduler both take one and orchestration may not name an adapter. |
-| `TestRunner` | a suite run → `SuiteResult` | The harness runs the tests; the model's exit code is only its opinion. |
+| `CommandSource` | target repo → `RepoCommands` | Used during pre-flight readiness. `cli.py` names the concrete descriptor adapter and passes only the discovered value downstream. |
+| `TestRunner` | a suite run → `SuiteResult` | The merge queue owns the single harness suite run, using `RepoCommands.test`. |
 | `Git` | worktree / rebase / ff plumbing | `discard_worktree` destroys the checkout **and the branch** — the next cycle re-cuts `ralph/<id>` from integration, and `git worktree add -b` refuses an existing branch. |
 
 `Budget` ([ports.py](../ralph/ports.py)) carries the wall-clock backstop for an actor session.
+`RepoCommands` is the command discovery value: the required `test` command and optional `install`
+command, already shell-split.
 
 **Revisions are stored alongside the Planner's original, never over it.** The revision number is the
 *store's* to assign — an Editor choosing its own could overwrite an earlier one, and only the store
@@ -211,6 +214,14 @@ concrete adapter is running, and `cli.py` remains the only module that names one
 
 The reason for keeping multiple vendors available on each unattended role lives in
 [`docs/design.md`](design.md).
+
+### Command descriptor adapter
+
+The descriptor adapter ([commands.py](../ralph/adapters/commands.py)) reads `.ralph.toml` from the
+target repo and returns `RepoCommands` through the `CommandSource` port. `cli.py` is the only place
+that chooses that concrete adapter. Downstream code receives `RepoCommands`: `install_once()` gets
+the optional `install` command, `SubprocessTestRunner` gets the required `test` command, and the
+Editor allowlist receives that same `test` command.
 
 ### The wall-clock bound and token usage telemetry
 
@@ -255,10 +266,10 @@ Three things are load-bearing, each a hole in the obvious implementation:
 - **Every command in a pipeline is checked, not just the head.** `cat x | tee copy.py` begins harmless
   and ends as an Implementer.
 
-The one thing the Editor may run that *executes* is the repo's own suite — the same command the
-harness runs, passed in rather than guessed. `must_be_terminal` is surfaced **in the prompt** and
-enforced **in the scheduler**; an Editor that returns no verdict classifies `infra-failed` and the
-adapter returns `None` rather than inventing an `inconclusive` the parser fumbled into existence.
+The one thing the Editor may run that *executes* is the repo's own suite — the discovered
+`RepoCommands.test`, passed in rather than guessed. `must_be_terminal` is surfaced **in the prompt**
+and enforced **in the scheduler**; an Editor that returns no verdict classifies `infra-failed` and
+the adapter returns `None` rather than inventing an `inconclusive` the parser fumbled into existence.
 
 **`CopilotEditor`'s read-only guarantee is weaker than `ClaudeCodeEditor`'s** — not because the list
 is shorter, but because `read_only()` is a pure function the harness owns and the suite attacks fifty
@@ -274,11 +285,12 @@ Depends on ports only, never on a concrete adapter.
 ### `MergeQueue` — [mergequeue.py](../ralph/mergequeue.py)
 
 Sub-issues run in parallel but **land one at a time**. `land(wt)` holds the merge lock (an
-`asyncio.Lock`) for exactly: check the integration head has not moved → rebase → **re-run the suite in
+`asyncio.Lock`) for exactly: check the integration head has not moved → rebase → **run the suite in
 the worktree** → fast-forward. It returns a `Land(result, suite)`.
 
 - The suite runs on the *prospective* merge result, so `merge --ff-only` is only ever a fast-forward
   of an already-verified tree: **the integration branch is correct by construction.**
+- This is the single harness suite run. The scheduler does not run a post-session suite.
 - The lock is never held while the Editor reasons, so one sub-issue's integration failure never
   stalls the queue for its siblings.
 - **The queue writes nothing, anywhere.** Deciding a tree may become the integration branch is its
@@ -291,8 +303,8 @@ the worktree** → fast-forward. It returns a `Land(result, suite)`.
 
 ### `Scheduler` — [scheduler.py](../ralph/scheduler.py)
 
-One dispatch loop: refuse a red base, read the graph once, then repeatedly dispatch every `eligible`
-sub-issue and `await asyncio.wait(..., FIRST_COMPLETED)`.
+One dispatch loop: read the graph once, then repeatedly dispatch every `eligible` sub-issue and
+`await asyncio.wait(..., FIRST_COMPLETED)`.
 
 - **`FIRST_COMPLETED`, never `gather`:** eligibility is re-derived on every completion, so a sub-issue
   starts the moment its blockers land. **There is no wave barrier.**
@@ -345,7 +357,7 @@ cycle's worth reads as a story with two characters:
 
 ### The pre-flight — [preflight.py](../ralph/harness/rules/preflight.py), gathered in `cli.py`
 
-**It refuses; it does not warn.** Five checks, each describing a repo the harness would otherwise
+**It refuses; it does not warn.** Six checks, each describing a repo the harness would otherwise
 damage or misjudge:
 
 | Check | What it would otherwise do |
@@ -353,8 +365,9 @@ damage or misjudge:
 | `protected-branch` | Fast-forward `main`. Ralph lands onto the branch it is run from. |
 | `uncommitted-changes` | Fight the merge queue's fast-forwards over uncommitted work, and lose. |
 | `uninstalled-pre-commit-hooks` | Land commits that skipped the checks the repo believes it enforces. |
+| `missing-test-command` | Start without a suite command the merge queue can run. |
 | `invalid-issue-source` | Start against an issue source it cannot reach or was misconfigured to find. |
-| `graph` | Read a source that read fine but holds a graph it cannot use. |
+| `invalid-issue-graph` | Read a source that read fine but holds a graph it cannot use. |
 
 The **rule is pure** (`RepoFacts` in, `Refusal`s out), so each refusal's sentence is tested without a
 repo to be wrong about; only the gathering is `cli.py`'s. It does not stop at the first refusal, and
@@ -371,7 +384,8 @@ asks, never by a second topological sort that is free to disagree.
 | Component | Module |
 |---|---|
 | Merge queue | [mergequeue.py](../ralph/mergequeue.py) |
-| Failure taxonomy + base-green | [classify.py](../ralph/harness/rules/classify.py), [routing.py](../ralph/harness/rules/routing.py), [runlog/](../ralph/runlog/), `Scheduler._refuse_a_red_base` |
+| Failure taxonomy + merge-queue gate | [classify.py](../ralph/harness/rules/classify.py), [routing.py](../ralph/harness/rules/routing.py), [runlog/](../ralph/runlog/), [mergequeue.py](../ralph/mergequeue.py) |
+| Command discovery | `CommandSource`, `RepoCommands`, [commands.py](../ralph/adapters/commands.py), `cli.command_source_for()` |
 | Wall-clock bound and usage telemetry | `Budget`, [bounding.py](../ralph/adapters/runtime/bounding.py), per-CLI usage parsing ([cli-metering.md](cli-metering.md)) |
 | Impasse report format | [impasse.py](../ralph/harness/model/impasse.py), [failure.py](../ralph/harness/model/failure.py) |
 | The Editor | [claude/actors.py](../ralph/adapters/claude/actors.py), [codex/actors.py](../ralph/adapters/codex/actors.py), [copilot/actors.py](../ralph/adapters/copilot/actors.py), `CycleLedger` |

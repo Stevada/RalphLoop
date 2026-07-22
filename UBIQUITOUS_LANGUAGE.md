@@ -32,7 +32,7 @@ This file points at nothing: it is where the vocabulary bottoms out.
 | ---- | ---------- | ---------------- |
 | **Session** | One wall-clock-bounded invocation of one actor. | round, run, invocation |
 | **Cycle** | One Implementer session and the Editor session that follows it. At most three per sub-issue. | round, iteration, attempt |
-| **Run** | One pass over the issue graph — read once at start, never re-read — from base-green check to the single closing notification. | job, execution |
+| **Run** | One pass over the issue graph — read once at start, never re-read — from pre-flight to the single closing notification. | job, execution |
 
 Two bounds and one guide, kept distinct. The terms name them:
 
@@ -70,10 +70,19 @@ those roles are fully encoded in its `blocked by` edges — no runtime actor rea
 A **Run** reads the graph once, at start, and never re-reads it during its life. Human
 intervention *ends* a run; resumption is a new run against a freshly read graph.
 
+## Commands
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Command descriptor** | The tracked `.ralph.toml` file at the target repo root. Its `[commands]` table declares the repo's runnable commands for Ralph. | command flags, CLI command config, `--test-cmd`, `--install-cmd` |
+| **RepoCommands** | The value Ralph passes after command discovery: a required already-split `test` command and an optional already-split `install` command. | command config, command map, raw command strings |
+| **Command discovery** | The pre-flight step that asks a **CommandSource** for **RepoCommands** from the target repo. | command guessing, command inference, LLM discovery |
+| **CommandSource** | The port that discovers **RepoCommands** for a target repo. | command resolver, command provider, test command flag |
+
 ## Pre-flight
 
 The **pre-flight** is the gate a **Run** passes before it opens any session: it **refuses**, it does
-not warn, and it returns every **refusal**, not the first. Each refusal names one of five checks — the
+not warn, and it returns every **refusal**, not the first. Each refusal names one of six checks — the
 condition it found, never merely that the run cannot start.
 
 | Check | What it names |
@@ -81,6 +90,7 @@ condition it found, never merely that the run cannot start.
 | `protected-branch` | HEAD is on a branch the run would fast-forward, e.g. `main`. |
 | `uncommitted-changes` | Tracked changes in the working tree the merge queue would fight. |
 | `uninstalled-pre-commit-hooks` | The repo configures pre-commit, but no hook is installed. |
+| `missing-test-command` | Command discovery found no runnable `test` command. |
 | `invalid-issue-source` | The issue source could not be read — unreachable or misconfigured. |
 | `invalid-issue-graph` | The source read, but its graph is malformed — a cycle, or a spec with no acceptance criteria. |
 
@@ -91,15 +101,15 @@ state; the harness's word for everything the model cannot observe about itself.
 
 | Outcome | Detection | Routes to |
 | ------- | --------- | --------- |
-| `success` | Implementer: green commit, suite verified by the harness. Editor: a verdict returned. | Merge queue / act on verdict |
-| `impasse` | The Implementer did not deliver: the `<impasse>` sentinel, no commits, or a red suite (Implementer only) | Editor |
+| `success` | Implementer: committed delivery ready for the merge queue. Editor: a verdict returned. | Merge queue / act on verdict |
+| `impasse` | The Implementer did not deliver: the `<impasse>` sentinel or no commits. | Editor |
 | `integration-failed` | Prospective merge conflicts or goes red after rebase onto the integration head (merge queue, not a session) | Editor |
 | `infra-failed` | Setup failure, wall-clock timeout, rate limit, OOM (either actor) | Human — from either actor. Never the Editor. |
 
 `impasse` can only come from an Implementer session — an Editor cannot fail to deliver a spec
 it was never given. `infra-failed` can come from either actor. `integration-failed` is not a
-session outcome at all: the Implementer session succeeded green in isolation, and the merge queue
-raises it when that tree will not integrate with a sibling that landed first. It routes to the
+session outcome at all: the Implementer committed work that reached the merge queue, and the merge
+queue raises it when that tree will not integrate with a sibling that landed first. It routes to the
 Editor on the first failure and counts as a **cycle** like any other.
 
 `infra-failed` routes to the human — **no retry, no cycle, never the Editor**.
@@ -109,7 +119,7 @@ Editor on the first failure and counts as a **cycle** like any other.
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
 | **Sentinel** | A fixed marker string the model prints for the harness to grep, e.g. `<impasse>`. The channel for a model's word about its own state. | flag, marker, token |
-| **Impasse** | The outcome of an Implementer session that could not satisfy its spec — whether the model **declared** it via the `<impasse>` sentinel, or the suite **caught** it undeclared (no commits, or a red suite). | blocked, stuck, giving up, silent-red |
+| **Impasse** | The outcome of an Implementer session that could not satisfy its spec — whether the model **declared** it via the `<impasse>` sentinel, or the harness **caught** it undeclared by observing no commits. | blocked, stuck, giving up, silent-red |
 | **Impasse report** | The Implementer's structured exit artifact, corroborated by harness-supplied facts. | blocker report, failure report |
 | **Revision** | The Editor's rewrite of a spec (and its findings), recorded alongside the Planner's original rather than over it. | edit, fix, update |
 | **Verdict** | The Editor's decision when its session succeeds: `revise`, `planning-defect`, or `inconclusive`. | outcome, ruling, judgment |

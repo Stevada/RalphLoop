@@ -60,9 +60,9 @@ load-bearing facts:
   `ports.py` Protocol has a fake in `tests/fakes.py`, and the fakes are what the suite runs against.
 - **Concrete adapters are named only in `cli.py`.** Nothing downstream knows whether the Implementer
   is Codex or Copilot, or the Editor is Claude Code or Copilot. Either CLI can back either actor.
-- **The suite result, not the exit code, is the outcome.** The harness runs the tests; a model's exit
-  code is only its opinion. A suite the harness runs is inside the **blast radius** — only CI on a
-  clean checkout is **honest**.
+- **The merge queue is the harness suite gate.** The harness runs the discovered test command on the
+  prospective merge; a model's exit code is only its opinion. A suite the harness runs is inside the
+  **blast radius** — only CI on a clean checkout is **honest**.
 - **No retry anywhere.** A failed sub-issue is quarantined (`needs-human`, worktree preserved, its
   dependents never become eligible); everything unaffected still lands. The run never stops early; the
   human is paged **once**, at the end.

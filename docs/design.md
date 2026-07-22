@@ -128,20 +128,21 @@ the defect is upstream. This is what `planning-defect` exists for.
 
 ### 4.1 Read the graph once
 
-The run reads the Linear issue graph once, at start, and works from that read for its whole
-life. Everything the Implementer and Editor read derives from it. Nothing reads Linear again.
+The run reads the issue graph once, at start, and works from that read for its whole life.
+Everything the Implementer and Editor read derives from it. Nothing reads the issue source again.
 
-### 4.2 Base green check
+### 4.2 Command discovery and readiness
 
-Before any actor starts, run the repo's test command on the integration branch.
+Before any actor starts, Ralph discovers the target repo's commands from the command descriptor.
+The `test` command is required; `install` is optional. A repo with no discoverable `test` command is
+refused by pre-flight rather than treated as a repo whose quality bar can be supplied at invocation
+time.
 
-**If it is red, no actor starts.** This single check catches the stale lockfile, the
-broken environment, the half-merged previous run, and the case where trunk was already
-broken. It also gives every subsequent failure a meaningful baseline: *these tests passed
-twenty minutes ago on this exact tree.*
-
-Without it, every `<impasse>` is ambiguous, and the Editor — the most expensive actor in
-the system — reasons from a baseline it cannot verify.
+That is the source-vs-verdict split. The command source belongs to the target repo because where a
+repo is installed and tested is a property of that repo: it should be versioned, reviewed, and
+changed with the code it validates. The verdict still belongs to the harness because Ralph must run
+the discovered command itself at the point of integration and classify the result; moving command
+ownership into the repo does not turn a model's self-report into evidence.
 
 ### 4.3 Dispatch
 
@@ -152,8 +153,8 @@ integration head.
 There is **no wave barrier.** Waves are an artifact of dependencies, not of merging. A
 fast sub-issue lands in three minutes rather than waiting for its slowest sibling.
 
-Dependencies are installed **once, in the base checkout**, before any worktree exists.
-Installation failure is loud and fatal — never `|| true`.
+If the command descriptor declares `install`, dependencies are installed **once, in the base
+checkout**, before any worktree exists. Installation failure is loud and fatal — never `|| true`.
 
 ### 4.4 The Implementer's session
 
@@ -181,8 +182,8 @@ The Implementer supplies: the failing test and its assertion output verbatim; th
 approaches tried and why each was abandoned; the specific acceptance criterion it believes
 unsatisfiable; what would make it satisfiable.
 
-The harness appends, independently of the model's narration: final test output, diffstat,
-files touched, wall-clock, and tokens consumed.
+The harness appends, independently of the model's narration: session output, diffstat, files
+touched, wall-clock, and tokens consumed.
 
 **The model's story, checked against the harness's facts.** Those two disagreeing is
 itself a signal worth surfacing.
@@ -198,14 +199,13 @@ it.
 
 ### 4.5 The merge queue
 
-This is the piece that makes parallelism honest, and the piece Ralph most conspicuously
-lacks today.
+This is the piece that makes parallelism honest.
 
 When an Implementer reaches green in its own worktree:
 
 1. **Acquire the merge lock.**
 2. **Rebase** onto the current integration head.
-3. **Re-run the suite in its own worktree.**
+3. **Run the suite in its own worktree.**
 4. On green: **fast-forward merge**, then write `landed` to Linear.
 5. **Release the lock.**
 
@@ -222,12 +222,20 @@ Because the suite runs on the *prospective* merge result, `git merge` in the har
 only ever a fast-forward of an already-verified tree. The integration branch is correct by
 construction.
 
+The merge queue is the only harness suite gate. The Implementer still runs whatever checks it needs
+inside its own session; that is its feedback loop and its completion signal. A second harness run
+immediately after the session would only repeat the Implementer's isolated view. The merge-queue run
+is different: it runs after rebase on the prospective merged tree, so it catches two sub-issues that
+were each green alone but break when combined, which the Implementer cannot observe from its
+isolated worktree. It also catches a false green before landing, because the Editor fires only on
+failures and cannot adjudicate success the harness never challenged.
+
 #### Why the actor, not bash
 
 `git merge` does not fire the `pre-commit` hook. A clean merge creates its commit without
-invoking it. So per-branch hooks guarantee **each branch is green in isolation** — a
-strictly weaker claim than "the merged tree is green," and the gap between those two
-claims is exactly where semantic conflicts live:
+invoking it. So per-branch hooks are at best **branch-local checks** — a strictly weaker
+claim than "the merged tree is green," and the gap between those two claims is exactly
+where semantic conflicts live:
 
 > Sub-issue 104 renames an export. Sub-issue 105 imports the old name. Different files.
 > No textual conflict. Both branches green. Merged tree: red.
@@ -361,15 +369,14 @@ of harness logic.
 
 | Outcome | Detection | Routes to |
 |---|---|---|
-| `impasse` | Session did not deliver: the `<impasse>` sentinel, or no commits, or a red suite | **Editor** |
+| `impasse` | Session did not deliver: the `<impasse>` sentinel, or no commits | **Editor** |
 | `integration-failed` | Prospective merge conflicts, or the suite is red after rebase onto the integration head | **Editor** |
 | `infra-failed` | Setup failure, wall-clock timeout (exit 124), rate limit, OOM | **Human — from either actor. Never the Editor.** |
 
 `integration-failed` is the one outcome that does not classify a *session*: the Implementer
-session already succeeded green in isolation. The merge queue raises it when that green tree
-will not integrate with a sibling that landed first — precisely the kind of failure the
-Implementer cannot observe about itself, so it goes to the Editor rather than back to the
-actor that produced it.
+committed work that reached the merge queue. The merge queue raises it when that tree will not
+integrate with a sibling that landed first — precisely the kind of failure the Implementer cannot
+observe about itself, so it goes to the Editor rather than back to the actor that produced it.
 
 **There is no retry anywhere in this system.**
 
@@ -416,8 +423,8 @@ protects the budget.** They are orthogonal.
 - **Zero commits is never a benign skip.** A session that produced nothing is an `impasse` (the
   model gave up, whether or not it said so) or `infra-failed`. Today's `no commits - skipping`
   silently treats it as success.
-- **The suite result, not the exit code, is the outcome.** The harness runs the tests. The
-  prompt *asks* the model not to commit on red; nothing verifies that.
+- **A committed, impasse-free Implementer session reaches the merge queue.** The merge queue runs the
+  suite on the prospective merge; that is where a false green becomes `integration-failed`.
 - Apply the wall-clock bound to the actor session; treat a killed session as `infra-failed`.
 - A non-zero exit **without** the sentinel means the process died — do not assume the model
   gave up.

@@ -46,9 +46,27 @@ uv run ralph run --dry-run <repo>            # the build order, without opening 
 uv run ralph run <repo> [issue-source]       # run the graph to completion
 ```
 
-`validate` refuses; it does not warn. A protected branch, a dirty tree, a suite it cannot find, a
+`validate` refuses; it does not warn. A protected branch, a dirty tree, a missing test command, a
 pre-commit hook the repo asks for and has not installed, a graph that will not parse — each gets its
 own sentence, and `ralph run` runs the same checks before it dispatches anything.
+
+## Target repo commands
+
+Each target repo declares Ralph's commands in a tracked `.ralph.toml` file at its root:
+
+```toml
+[commands]
+test = "uv run pytest -q"  # required
+install = "uv sync"        # optional
+```
+
+`test` is the command the merge queue runs on the prospective merge. `install`, when present, runs
+once in the base checkout before any worktree is opened. Both command strings are split with shell
+quoting rules.
+
+A repo with no discoverable `test` command is not ready to run. `ralph validate` prints the
+discovered commands when readiness passes, and refuses when the descriptor is missing, malformed, or
+does not declare a runnable `test`.
 
 ## Reading order
 
@@ -142,12 +160,12 @@ attached to the sub-issue.
 
 ## Failure taxonomy
 
-Four outcomes, and each one routes somewhere specific:
+Three failure outcomes, and each one routes somewhere specific:
 
 | Outcome | Meaning | Goes to |
 |---|---|---|
-| `impasse` | The Implementer did not deliver — it said why, committed nothing, or left the suite red | Editor |
-| `integration-failed` | Green alone, red or conflicting on the merge | Editor |
+| `impasse` | The Implementer did not deliver — it said why, or committed nothing | Editor |
+| `integration-failed` | Committed work is red or conflicting on the prospective merge | Editor |
 | `infra-failed` | The environment is broken, not the code | Human |
 
 **There is no retry anywhere in this system.** A failed sub-issue is quarantined — marked
@@ -168,12 +186,10 @@ The CLI defaults match Ralph's current common path:
 --editor claude
 --protected main
 --protected master
---test-cmd 'uv run pytest -q'
---install-cmd 'uv sync'
 ```
 
-Command flags are strings split with shell quoting rules. How `codex`/`copilot` is driven, and the
-four Linear state names, are hardcoded in the adapter that owns them.
+How `codex`/`copilot` is driven, and the four Linear state names, are hardcoded in the adapter that
+owns them.
 
 ### `.env` — the one secret
 
@@ -187,13 +203,13 @@ Neither is a secret, so neither lives here.
 ## Design principles
 
 1. **Target repos stay agnostic** — Ralph never modifies target repo structure. It reads
-   `.scratch/` for issues, a repo-level agent context file (`CLAUDE.md` for Copilot,
-   `AGENTS.md` or `CLAUDE.md` for Codex), and `.env` at the repo root.
+   `.scratch/` for issues, `.ralph.toml` for commands, a repo-level agent context file
+   (`CLAUDE.md` for Copilot, `AGENTS.md` or `CLAUDE.md` for Codex), and `.env` at the repo root.
 2. **Single-repo scope** — intra-repo dependencies only. Cross-repo sequencing is the user's.
 3. **Skills as references** — the prompt invokes `/tdd` by name. Skills are installed at user
    level, never bundled here.
 4. **Worktree isolation** — every session runs in its own worktree. Parallel sessions land one at
    a time, through the merge queue.
-5. **The suite result, not the exit code, is the outcome.** A model's exit code is its opinion;
-   the suite is a fact. And a suite the harness runs is inside the **blast radius** — only CI on a
-   clean checkout is **honest**.
+5. **The merge queue is the harness suite gate.** A model's exit code is its opinion; the suite is a
+   fact only when Ralph runs it on the prospective merge. A suite the harness runs is still inside
+   the **blast radius** — only CI on a clean checkout is **honest**.
