@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from ralph.harness import Actor
+from ralph.issues.consumption import SessionConsumption
 from ralph.issues.content import Findings, Spec
 from ralph.issues.linear.model import LinearComment, LinearIssue, LinearIssueStoreError
 
@@ -11,6 +13,14 @@ SPEC_HEADING = "## Spec"
 FINDINGS_HEADING = "## Findings"
 ACCEPTANCE_HEADING = "## Acceptance criteria"
 REVISION = re.compile(r"<!--\s*ralph:revision:(\d+)\s*-->")
+
+CONSUMPTION_MARKER = "<!-- ralph:consumption -->"
+CONSUMPTION_LINE = re.compile(
+    r"^\s*-\s+(implementer|editor):\s+(\d+)"
+    r"(?:\s+tokens,\s+(\d+)\s+auto-compactions)?\s*$",
+    re.MULTILINE,
+)
+"""The sub-issue is named by the comment's own issue, so it is absent from the line itself."""
 
 
 def parse_content(issue: LinearIssue) -> tuple[str, str]:
@@ -38,6 +48,24 @@ def render_revision(revision: int, spec: Spec, findings: Findings) -> str:
         f"{spec.body.strip()}\n\n"
         "### Findings\n\n"
         f"{findings.body.strip()}\n"
+    )
+
+
+def parse_consumption_records(body: str) -> tuple[SessionConsumption, ...]:
+    return tuple(
+        SessionConsumption(
+            actor=Actor(actor),
+            consumed_tokens=int(raw_tokens),
+            auto_compactions=int(raw_auto_compactions or 0),
+        )
+        for actor, raw_tokens, raw_auto_compactions in CONSUMPTION_LINE.findall(body)
+    )
+
+
+def render_consumption_line(record: SessionConsumption) -> str:
+    return (
+        f"- {record.actor.value}: {record.consumed_tokens} tokens, "
+        f"{record.auto_compactions} auto-compactions\n"
     )
 
 

@@ -169,6 +169,58 @@ async def test_consumption_records_round_trip_for_a_sub_issue(tmp_path: Path) ->
     )
 
 
+async def test_one_consumption_file_keeps_the_sub_issues_apart(tmp_path: Path) -> None:
+    """Every sub-issue appends to the same file, so the line — not the filename — names one.
+
+    A sub-issue that read a sibling's records would inflate its own total in the notification, and
+    the graph is where that total gets attributed."""
+    issue(tmp_path, "01-first.md")
+    issue(tmp_path, "02-second.md")
+    store = FilesystemIssueStore(issues_dir=tmp_path)
+
+    await store.record_consumption(
+        SubIssueId("01"), SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=100)
+    )
+    await store.record_consumption(
+        SubIssueId("02"), SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=200)
+    )
+    await store.record_consumption(
+        SubIssueId("01"), SessionConsumption(actor=Actor.EDITOR, consumed_tokens=300)
+    )
+
+    assert (tmp_path / "consumption.jsonl").read_text().count("\n") == 3
+    assert store.consumption(SubIssueId("01")) == (
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=100),
+        SessionConsumption(actor=Actor.EDITOR, consumed_tokens=300),
+    )
+    assert store.consumption(SubIssueId("02")) == (
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=200),
+    )
+
+
+async def test_the_consumption_file_is_not_mistaken_for_a_sub_issue(tmp_path: Path) -> None:
+    """`.jsonl`, not `.md`: `read_graph`'s glob is what defines the graph, and a consumption file
+    it could see would be a fatal parse error on every run after the first session."""
+    issue(tmp_path, "01-first.md")
+    store = FilesystemIssueStore(issues_dir=tmp_path)
+    await store.record_consumption(
+        SubIssueId("01"), SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=100)
+    )
+
+    graph, _ = store.read_graph()
+
+    assert set(graph.sub_issues) == {SubIssueId("01")}
+
+
+async def test_an_unparseable_consumption_line_is_fatal(tmp_path: Path) -> None:
+    issue(tmp_path, "01-first.md")
+    store = FilesystemIssueStore(issues_dir=tmp_path)
+    (tmp_path / "consumption.jsonl").write_text('{"sub_issue": "01", "actor": "implementer"}\n')
+
+    with pytest.raises(IssueParseError, match="not a consumption record"):
+        store.consumption(SubIssueId("01"))
+
+
 # --- revisions ------------------------------------------------------------------------------------
 
 

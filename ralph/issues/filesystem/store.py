@@ -7,16 +7,14 @@ sub-issue the Planner never authorised, or skip one it did.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from ralph.harness import Actor
 from ralph.issues.content import Findings, Spec
-from ralph.issues.consumption import (
-    SessionConsumption,
-    parse_consumption_records,
-    render_consumption_line,
-)
+from ralph.issues.consumption import SessionConsumption
 from ralph.issues.graph import IssueGraph, SubIssue, SubIssueId
 from ralph.issues.state import SubIssueState
 from ralph.runlog import Event, EventKind
@@ -35,9 +33,13 @@ A directory, not a suffix on the `.md`, so that `_files()`'s `*.md` glob — whi
 the graph — never sees a revision and mistakes it for a sub-issue.
 """
 
-CONSUMPTION = "consumption"
-"""One markdown file per sub-issue, outside the live spec so telemetry is durable but not prompt
-material for the next Implementer session."""
+CONSUMPTION = "consumption.jsonl"
+"""One append-only file for every sub-issue, outside the live spec so telemetry is durable but not
+prompt material for the next Implementer session.
+
+Not `.md`, and not negotiable: a markdown file here would be swept up by `_files()`'s glob and
+parsed as a sub-issue. The sub-issue rides on each line, since the file no longer names one.
+"""
 
 
 class IssueParseError(ValueError):
@@ -174,8 +176,8 @@ class FilesystemIssueStore:
         body = self._path_of(id).read_text()
         return Spec(body=body), Findings(body=_section(body, _FINDINGS).strip())
 
-    def _consumption_path(self, id: SubIssueId) -> Path:
-        return self.issues_dir / CONSUMPTION / f"{id}.md"
+    def _consumption_path(self) -> Path:
+        return self.issues_dir / CONSUMPTION
 
     def content(self, id: SubIssueId) -> tuple[Spec, Findings]:
         """What the next Implementer session works from: the newest revision, or the Planner's
@@ -197,10 +199,30 @@ class FilesystemIssueStore:
 
     def consumption(self, id: SubIssueId) -> tuple[SessionConsumption, ...]:
         self._path_of(id)
-        path = self._consumption_path(id)
+        path = self._consumption_path()
         if not path.exists():
             return ()
-        return parse_consumption_records(path.read_text())
+        records = []
+        for n, line in enumerate(path.read_text().splitlines(), start=1):
+            if not line.strip():
+                continue
+            sub_issue, record = self._parse_consumption(line, n)
+            if sub_issue == id:
+                records.append(record)
+        return tuple(records)
+
+    def _parse_consumption(self, line: str, n: int) -> tuple[SubIssueId, SessionConsumption]:
+        try:
+            raw = json.loads(line)
+            return SubIssueId(raw["sub_issue"]), SessionConsumption(
+                actor=Actor(raw["actor"]),
+                consumed_tokens=int(raw["consumed_tokens"]),
+                auto_compactions=int(raw["auto_compactions"]),
+            )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise IssueParseError(
+                f"{self._consumption_path()}:{n} is not a consumption record: {line!r}"
+            ) from exc
 
     async def record_revision(self, id: SubIssueId, spec: Spec, findings: Findings) -> None:
         """Written **alongside** the Planner's original, never over it.
@@ -234,12 +256,18 @@ class FilesystemIssueStore:
 
     async def record_consumption(self, id: SubIssueId, record: SessionConsumption) -> None:
         self._path_of(id)
-        path = self._consumption_path(id)
+        line = json.dumps(
+            {
+                "sub_issue": str(id),
+                "actor": record.actor.value,
+                "consumed_tokens": record.consumed_tokens,
+                "auto_compactions": record.auto_compactions,
+            }
+        )
+        path = self._consumption_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.exists():
-            path.write_text(f"# Consumption telemetry for {id}\n\n")
-        with path.open("a") as handle:
-            handle.write(render_consumption_line(record))
+        with path.open("a") as handle:  # "a", never "w". The file only ever grows.
+            handle.write(line + "\n")
 
     async def write_event(self, e: Event) -> None:
         """Mirror a terminal state into the `Status:` line. Other events are the run log's job."""

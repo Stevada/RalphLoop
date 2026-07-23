@@ -6,16 +6,14 @@ import logging
 from dataclasses import dataclass, replace
 
 from ralph.issues.content import Findings, Spec
-from ralph.issues.consumption import (
-    CONSUMPTION_MARKER,
-    SessionConsumption,
-    parse_consumption_records,
-    render_consumption_line,
-)
+from ralph.issues.consumption import SessionConsumption
 from ralph.issues.graph import IssueGraph, SubIssue, SubIssueId
 from ralph.issues.linear.markdown import (
+    CONSUMPTION_MARKER,
     latest_revision,
+    parse_consumption_records,
     parse_content,
+    render_consumption_line,
     render_description,
     render_revision,
     revision_comments,
