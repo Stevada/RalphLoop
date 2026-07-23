@@ -45,6 +45,7 @@ from tests.fakes import (
 )
 from tests.testbed import (
     LEDGER_ENV,
+    PARENT_ISSUE_NAME,
     Behaviour,
     StandInAgent,
     TargetRepo,
@@ -596,7 +597,7 @@ async def test_a_real_run_dispatches_no_fourth_implementer_session(
     assert "Status: needs-human" in (repo.issues_dir / "01-sub.md").read_text()
 
     # The evidence from the *final* cycle is what a human is pointed at.
-    assert (repo.path / ".worktrees" / "failed" / "01").is_dir()
+    assert (repo.path / ".worktrees" / "failed" / PARENT_ISSUE_NAME / "01").is_dir()
 
     # And the notification says the loop was exhausted, rather than reading like a first failure.
     assert "(cycle 3 of 3)" in render(report.notification)

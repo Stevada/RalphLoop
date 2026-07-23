@@ -23,6 +23,7 @@ from tests.builders import telemetry, verdict as editor_verdict
 from tests.fakes import FakeEditor
 from tests.testbed import (
     LEDGER_ENV,
+    PARENT_ISSUE_NAME,
     Behaviour,
     StandInAgent,
     TargetRepo,
@@ -138,7 +139,7 @@ async def test_a_rebase_conflict_does_not_stall_the_queue_for_its_siblings(
 
     # No retry: the loser opened exactly one session.
     opened = [
-        line for line in (repo.path / ".scratch" / "run.jsonl").read_text().splitlines()
+        line for line in (repo.path / ".scratch" / PARENT_ISSUE_NAME / "run.jsonl").read_text().splitlines()
         if f'"{losers[0]}"' in line
         and '"actor": "implementer"' in line
         and "session-started" in line

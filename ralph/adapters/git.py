@@ -94,8 +94,8 @@ class GitCli:
     def dirty_files(self) -> tuple[str, ...]:
         """Uncommitted changes in the base checkout — tracked files only.
 
-        Untracked files are not dirt: the harness itself writes `.scratch/run.jsonl` into the repo
-        while it runs, and a pre-flight that refused its own run log would be unusable. Untracked
+        Untracked files are not dirt: the harness itself writes `.scratch/<name>/run.jsonl` into the
+        repo while it runs, and a pre-flight that refused its own run log would be unusable. Untracked
         files also do not stand in the way of a fast-forward, which is what this check is for.
 
         Not on the `Git` port. The scheduler and the merge queue never ask this — only the

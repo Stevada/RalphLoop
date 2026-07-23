@@ -22,6 +22,7 @@ from tests.builders import telemetry, verdict as editor_verdict
 from tests.fakes import FakeEditor
 from tests.testbed import (
     Behaviour,
+    PARENT_ISSUE_NAME,
     StandInAgent,
     TargetRepo,
     behaviour_spec,
@@ -37,7 +38,7 @@ def terminal_editor() -> FakeEditor:
 
 
 def story(repo: TargetRepo) -> list[tuple[str, str, str]]:
-    lines = (repo.path / ".scratch" / "run.jsonl").read_text().splitlines()
+    lines = (repo.path / ".scratch" / PARENT_ISSUE_NAME / "run.jsonl").read_text().splitlines()
     return [(e["sub_issue"], e["kind"], e["details"]) for e in (json.loads(x) for x in lines)]
 
 
@@ -65,7 +66,7 @@ async def test_a_failure_quarantines_and_the_run_drains_around_it(
     assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
 
     # 03 never ran. No branch, no worktree, no session — and nothing was written to say so.
-    assert not repo.branch_exists("ralph/03")
+    assert not repo.branch_exists(f"ralph/{PARENT_ISSUE_NAME}_03")
     assert "03" not in {id for id, _, _ in story(repo)}
 
     # It carries no failure state. It is `ready`, with its `blocked by` edge intact, exactly as the
@@ -92,10 +93,10 @@ async def test_the_quarantined_worktree_is_preserved_as_evidence(
         options=make_options(),
     )
 
-    failed = repo.path / ".worktrees" / "failed" / "01"
+    failed = repo.path / ".worktrees" / "failed" / PARENT_ISSUE_NAME / "01"
     assert failed.is_dir()
     assert (failed / "test_broken_01.py").exists()  # the wreckage, exactly as the agent left it
-    assert not (repo.path / ".worktrees" / "active" / "01").exists()
+    assert not (repo.path / ".worktrees" / "active" / PARENT_ISSUE_NAME / "01").exists()
 
 
 async def test_a_killed_session_yields_a_report_built_from_harness_facts_only(
@@ -237,8 +238,8 @@ async def test_one_notification_says_which_to_open_first(
     assert n.escalations[0].stranded == ("03", "04")  # transitive: 04 is behind 03 is behind 01
     assert n.escalations[1].stranded == ()
 
-    text = render(n)
+    text = render(n, PARENT_ISSUE_NAME)
     assert "the second acceptance criterion of 01" in text  # the criterion it says it cannot meet
     assert "an API that exists" in text  # and what would satisfy it
     assert "holding up: 03, 04" in text
-    assert ".worktrees/failed/01" in text  # where the evidence is
+    assert f".worktrees/failed/{PARENT_ISSUE_NAME}/01" in text  # where the evidence is

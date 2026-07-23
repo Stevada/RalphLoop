@@ -118,6 +118,7 @@ class Scheduler:
         integration: str,
         budget: Budget,
         editor: Editor,
+        parent_issue_name: str | None = None,
     ) -> None:
         self._repo = repo
         self._git = git
@@ -129,6 +130,19 @@ class Scheduler:
         self._integration = integration
         self._budget = budget
         self._ledger = CycleLedger()
+        self._parent_issue_name = parent_issue_name
+
+    def _worktree_dir(self, base: Path, id: SubIssueId) -> Path:
+        """Nested under the parent issue's name when known, so two phases sharing a repo never
+        collide on a bare sub-issue number."""
+        if self._parent_issue_name is None:
+            return self._repo / base / str(id)
+        return self._repo / base / self._parent_issue_name / str(id)
+
+    def _branch(self, id: SubIssueId) -> str:
+        if self._parent_issue_name is None:
+            return f"ralph/{id}"
+        return f"ralph/{self._parent_issue_name}_{id}"
 
     async def run(self) -> RunReport:
         graph, states = self._store.read_graph()
@@ -206,7 +220,7 @@ class Scheduler:
         )
 
         wt = self._git.add_worktree(
-            f"ralph/{sub.id}", self._repo / ACTIVE / str(sub.id), self._integration
+            self._branch(sub.id), self._worktree_dir(ACTIVE, sub.id), self._integration
         )
         # The newest revision, or the Planner's original if the Editor has never touched this. On
         # cycle two this is the **rewritten** spec — which is what makes this a cycle, not a retry.
@@ -351,7 +365,7 @@ class Scheduler:
         sub-issue is still sitting there un-triaged, and the sub-issue was authorised `ready` again
         anyway. That is worth stopping for; quietly clobbering it is not.
         """
-        self._git.move_worktree(wt, self._repo / QUARANTINE / str(id))
+        self._git.move_worktree(wt, self._worktree_dir(QUARANTINE, id))
         await self._record(id, actor, EventKind.SUB_ISSUE_CLOSED, SubIssueState.NEEDS_HUMAN)
         return _Closed(id, report)
 

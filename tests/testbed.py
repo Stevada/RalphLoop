@@ -30,6 +30,7 @@ from ralph.ports import Implementer, Worktree
 TEST_CMD: tuple[str, ...] = (sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider")
 
 BRANCH_PREFIX = "ralph/"
+PARENT_ISSUE_NAME = "demo"
 
 IMPASSE_OPEN, IMPASSE_CLOSE = "<impasse>", "</impasse>"
 """The sentinel the Implementer emits when it cannot proceed. The body between the tags is JSON
@@ -124,7 +125,7 @@ class TargetRepo:
 
     @property
     def issues_dir(self) -> Path:
-        return self.path / ".scratch" / "demo" / "issues"
+        return self.path / ".scratch" / PARENT_ISSUE_NAME / "issues"
 
     def git(self, *args: str) -> str:
         return _git(self.path, *args)
@@ -139,7 +140,8 @@ class TargetRepo:
         return name in self.git("branch", "--format=%(refname:short)").splitlines()
 
     def add_worktree(self, sub_issue: str, base: str | None = None) -> Path:
-        """A real `git worktree add`, at the path the harness uses."""
+        """A real `git worktree add`, set up independently of the Scheduler — for tests that drive
+        the stand-in agent or git plumbing directly rather than through a real `run()`."""
         wt = self.path / ".worktrees" / "active" / sub_issue
         self.git(
             "worktree",
@@ -197,7 +199,7 @@ def stand_in_implementer(agent: StandInAgent, behaviour: Behaviour | str) -> Imp
     the worktree's branch — the harness put it there — so that is the only channel the agent needs."""
 
     def build_argv(spec: Spec, findings: Findings, worktree: Worktree) -> Sequence[str]:
-        tag = worktree.branch.removeprefix(BRANCH_PREFIX)
+        tag = worktree.branch.removeprefix(BRANCH_PREFIX).removeprefix(f"{PARENT_ISSUE_NAME}_")
         return agent.argv(behaviour, tag)
 
     return SubprocessImplementer(build_argv=build_argv)

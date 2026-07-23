@@ -24,6 +24,7 @@ from tests.builders import telemetry, verdict as editor_verdict
 from tests.fakes import FakeCommandSource, FakeEditor
 from tests.testbed import (
     Behaviour,
+    PARENT_ISSUE_NAME,
     StandInAgent,
     TEST_CMD,
     TargetRepo,
@@ -77,7 +78,7 @@ async def test_the_run_log_tells_the_true_story_in_order(
         options=make_options(),
     )
 
-    lines = [json.loads(x) for x in (repo.path / ".scratch" / "run.jsonl").read_text().splitlines()]
+    lines = [json.loads(x) for x in (repo.path / ".scratch" / PARENT_ISSUE_NAME / "run.jsonl").read_text().splitlines()]
     story = [(e["sub_issue"], e["actor"], e["kind"], e["details"]) for e in lines]
 
     # Every successful session says whose it was. The Editor's own lines are added only when an
@@ -111,7 +112,7 @@ async def test_a_red_base_is_caught_by_the_merge_queue_gate(
     )
 
     assert report.failed == {SubIssueId("01"): Outcome.INTEGRATION_FAILED}
-    assert repo.branch_exists("ralph/01")
+    assert repo.branch_exists(f"ralph/{PARENT_ISSUE_NAME}_01")
     assert repo.commit_count("integration") == 2
 
 
@@ -129,7 +130,7 @@ async def test_a_failed_install_aborts_the_run_before_a_single_agent_starts(
         )
 
     assert commands.calls == [repo.path.resolve()]
-    assert not repo.branch_exists("ralph/01")
+    assert not repo.branch_exists(f"ralph/{PARENT_ISSUE_NAME}_01")
 
 
 async def test_the_install_runs_once_in_the_base_checkout_never_per_worktree(
@@ -216,7 +217,7 @@ async def test_an_undeclared_impasse_session_does_not_land(
 
     # 02 is blocked by 01, which never landed, so it never became eligible and never got a turn.
     # Nothing was written to say so — quarantine-and-drain needs no `skipped` state.
-    assert not repo.branch_exists("ralph/02")
+    assert not repo.branch_exists(f"ralph/{PARENT_ISSUE_NAME}_02")
     assert "Status: ready" in (repo.issues_dir / "02-second.md").read_text()
 
 
@@ -269,7 +270,7 @@ async def test_an_impasse_does_not_land_and_is_recorded(
         (e["sub_issue"], e["kind"], e["details"])
         for e in (
             json.loads(x)
-            for x in (repo.path / ".scratch" / "run.jsonl").read_text().splitlines()
+            for x in (repo.path / ".scratch" / PARENT_ISSUE_NAME / "run.jsonl").read_text().splitlines()
         )
     ]
 
@@ -294,7 +295,7 @@ async def test_a_read_only_issue_store_does_not_crash_the_run(
     assert (repo.path / "feature_01.py").exists()  # the work landed anyway
 
     events = json.loads(
-        "[" + ",".join((repo.path / ".scratch" / "run.jsonl").read_text().splitlines()) + "]"
+        "[" + ",".join((repo.path / ".scratch" / PARENT_ISSUE_NAME / "run.jsonl").read_text().splitlines()) + "]"
     )
     assert sum(e["details"] == SubIssueState.LANDED.value for e in events) == 2
 
@@ -318,8 +319,8 @@ async def test_a_landed_sub_issue_leaves_no_worktree_and_no_branch(
 
     assert len(report.landed) == 2
     for id in ("01", "02"):
-        assert not (repo.path / ".worktrees" / "active" / id).exists()
-        assert not repo.branch_exists(f"ralph/{id}")
+        assert not (repo.path / ".worktrees" / "active" / PARENT_ISSUE_NAME / id).exists()
+        assert not repo.branch_exists(f"ralph/{PARENT_ISSUE_NAME}_{id}")
 
     # The commits survived their branch: they are on integration, which is where they landed.
     assert GitCli(repo=repo.path).commits_between("main", "integration") >= 2

@@ -26,6 +26,7 @@ from tests.builders import telemetry, verdict as editor_verdict
 from tests.fakes import FakeEditor
 from tests.testbed import (
     Behaviour,
+    PARENT_ISSUE_NAME,
     StandInAgent,
     TargetRepo,
     behaviour_spec,
@@ -45,7 +46,7 @@ def terminal_editor() -> FakeEditor:
 
 
 def events(repo: TargetRepo) -> list[dict[str, str]]:
-    lines = (repo.path / ".scratch" / "run.jsonl").read_text().splitlines()
+    lines = (repo.path / ".scratch" / PARENT_ISSUE_NAME / "run.jsonl").read_text().splitlines()
     return [json.loads(x) for x in lines]
 
 
@@ -143,7 +144,7 @@ async def test_the_run_log_carries_no_spend_no_diffstat_and_no_test_output(
         options=make_options(),
     )
 
-    raw = (repo.path / ".scratch" / "run.jsonl").read_text()
+    raw = (repo.path / ".scratch" / PARENT_ISSUE_NAME / "run.jsonl").read_text()
     assert all(set(e) == {"ts", "sub_issue", "actor", "kind", "details"} for e in events(repo))
     for leak in ("token", "diffstat", "assert", "passed", "failed,"):
         assert leak not in raw
@@ -170,13 +171,13 @@ async def test_one_failure_strands_its_dependents_and_nothing_else(
     assert "Status: needs-human" in (repo.issues_dir / "02-sub.md").read_text()
 
     # The evidence is where the human was told it would be, and the branch is untouched.
-    assert (repo.path / ".worktrees" / "failed" / "02").is_dir()
+    assert (repo.path / ".worktrees" / "failed" / PARENT_ISSUE_NAME / "02").is_dir()
     assert not (repo.path / "feature_02.py").exists()
     assert repo.run_suite() is True
 
     # 04 was never started: no branch, no worktree, no line in the log, and no state written to say
     # so. Its `ready` is the Planner's, exactly as they left it.
-    assert not repo.branch_exists("ralph/04")
+    assert not repo.branch_exists(f"ralph/{PARENT_ISSUE_NAME}_04")
     assert "04" not in {id for id, _, _ in story(repo)}
     assert "Status: ready" in (repo.issues_dir / "04-sub.md").read_text()
 
@@ -221,5 +222,5 @@ async def test_a_semantic_conflict_surfaces_on_the_second_to_land(
     assert repo.git("log", "--merges", "--oneline", "integration") == ""
 
     loser = next(iter(report.failed))
-    assert (repo.path / ".worktrees" / "failed" / str(loser)).is_dir()
+    assert (repo.path / ".worktrees" / "failed" / PARENT_ISSUE_NAME / str(loser)).is_dir()
     assert "the merge queue: suite-red" in render(report.notification)

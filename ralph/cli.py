@@ -220,6 +220,18 @@ def find_issues_dir(repo: Path, given: Path | None) -> Path:
     return candidates[0]
 
 
+def parent_issue_name(repo: Path, issue_source: str | None, options: RunOptions) -> str | None:
+    """The parent issue's name, when the harness can derive one.
+
+    Only filesystem mode has one: the `.scratch/<name>/issues/` directory Ralph discovered.
+    Linear mode names itself through `issue_source` and has no directory to derive a name from.
+    """
+    if options.issue_mode != FILESYSTEM:
+        return None
+    given = Path(issue_source) if issue_source is not None else None
+    return find_issues_dir(repo, given).parent.name
+
+
 def issue_store(repo: Path, issue_source: str | None, options: RunOptions) -> IssueStore:
     """The store `options.issue_mode` names. `LinearStateMap()` is unconfigured on purpose: the four
     Linear state names are Ralph's canonical sub-issue states, hardcoded, not a per-run argument."""
@@ -432,19 +444,22 @@ async def run(
     store = issue_store(repo, issue_source, options)
     selected_implementer = implementer if implementer is not None else implementer_of(options)
     selected_editor = editor if editor is not None else editor_of(options, commands.test)
+    parent = parent_issue_name(repo, issue_source, options)
+    scratch = repo / ".scratch" / parent if parent is not None else repo / ".scratch"
     scheduler = Scheduler(
         repo=repo,
         git=git,
         store=store,
-        run_log=JsonlRunLog(path=repo / ".scratch" / "run.jsonl"),
+        run_log=JsonlRunLog(path=scratch / "run.jsonl"),
         implementer=selected_implementer,
         editor=selected_editor,
         merge_queue=MergeQueue(git=git, runner=runner, integration=integration),
         integration=integration,
         budget=budget or Budget(),
+        parent_issue_name=parent,
     )
     report = await scheduler.run()
-    notification = render(report.notification)
+    notification = render(report.notification, parent)
     try:
         await store.publish_notification(notification)
     except Exception:  # noqa: BLE001 — stdout still carries the notification
@@ -452,7 +467,7 @@ async def run(
     return report
 
 
-def render(n: Notification) -> str:
+def render(n: Notification, parent_issue_name: str | None = None) -> str:
     """**One** notification, at the end.
 
     The bar: *if you cannot tell from this alone whether to spend your first ten minutes reading a
@@ -494,10 +509,15 @@ def render(n: Notification) -> str:
         if e.report.integration_detail is not None:
             lines.append(f"    the merge queue: {e.report.integration_detail}")
         commits = e.report.telemetry.commits
+        worktree_dir = (
+            f".worktrees/failed/{parent_issue_name}/{e.sub_issue}"
+            if parent_issue_name is not None
+            else f".worktrees/failed/{e.sub_issue}"
+        )
         lines.append(
             f"    harness: {commits} commit{'' if commits == 1 else 's'}, "
             f"suite {_suite_summary(e.report)}, "
-            f"worktree preserved at .worktrees/failed/{e.sub_issue}"
+            f"worktree preserved at {worktree_dir}"
         )
     return "\n".join(lines)
 
@@ -594,7 +614,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             options=options,
         )
     )
-    print(render(report.notification))
+    print(render(report.notification, parent_issue_name(args.repo, args.issue_source, options)))
     return 0 if report.clean else 1
 
 
