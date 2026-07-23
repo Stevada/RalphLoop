@@ -337,7 +337,7 @@ def test_the_build_order_is_derived_from_the_rule_the_scheduler_asks() -> None:
     graph = IssueGraph(
         sub_issues={
             SubIssueId(id): SubIssue(
-                id=SubIssueId(id), title=id, blocked_by=frozenset(map(SubIssueId, blockers))
+                id=SubIssueId(id), blocked_by=frozenset(map(SubIssueId, blockers))
             )
             for id, blockers in {"01": (), "02": ("01",), "03": ("01",)}.items()
         }

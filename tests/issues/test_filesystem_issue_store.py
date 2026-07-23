@@ -31,7 +31,6 @@ def test_an_issue_directory_parses_into_a_graph(tmp_path: Path) -> None:
     graph, states = FilesystemIssueStore(issues_dir=tmp_path).read_graph()
 
     assert set(graph.sub_issues) == {SubIssueId("01"), SubIssueId("02")}
-    assert graph.sub_issues[SubIssueId("01")].title == "01 — the contract"
     assert graph.blockers_of(SubIssueId("02")) == frozenset({SubIssueId("01")})
     assert states == {SubIssueId("01"): SubIssueState.READY, SubIssueId("02"): SubIssueState.READY}
 

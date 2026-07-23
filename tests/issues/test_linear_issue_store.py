@@ -118,7 +118,6 @@ def test_a_linear_parent_issue_loads_as_the_issue_graph() -> None:
     graph, states = LinearIssueStore(parent_identifier="RAL-1", client=client).read_graph()
 
     assert set(graph.sub_issues) == {SubIssueId("RAL-2"), SubIssueId("RAL-3")}
-    assert graph.sub_issues[SubIssueId("RAL-2")].title == "RAL-2 \u2014 Contract"
     assert graph.blockers_of(SubIssueId("RAL-3")) == frozenset({SubIssueId("RAL-2")})
     assert states == {
         SubIssueId("RAL-2"): SubIssueState.READY,

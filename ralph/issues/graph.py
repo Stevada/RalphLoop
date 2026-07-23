@@ -21,7 +21,6 @@ class GraphError(ValueError):
 @dataclass(frozen=True, slots=True)
 class SubIssue:
     id: SubIssueId
-    title: str
     blocked_by: frozenset[SubIssueId]
 
 

@@ -99,7 +99,6 @@ def graph_of(edges: Mapping[str, Iterable[str]]) -> IssueGraph:
         sub_issues={
             SubIssueId(id): SubIssue(
                 id=SubIssueId(id),
-                title=f"sub-issue {id}",
                 blocked_by=frozenset(SubIssueId(b) for b in blockers),
             )
             for id, blockers in edges.items()

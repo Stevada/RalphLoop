@@ -24,7 +24,6 @@ from ralph.runlog import Event, EventKind
 ISSUE_GLOB = "*.md"
 _ID = re.compile(r"^(\d+)")
 _STATUS = re.compile(r"^Status:\s*(\S+)\s*$", re.MULTILINE)
-_HEADING = re.compile(r"^#\s+(.*)$", re.MULTILINE)
 _BULLET = re.compile(r"^\s*[-*]\s+(.*)$", re.MULTILINE)
 _NUMBER = re.compile(r"\d+")
 _FINDINGS = "## Findings"
@@ -48,7 +47,6 @@ class IssueParseError(ValueError):
 @dataclass(frozen=True, slots=True)
 class _ParsedIssue:
     id: SubIssueId
-    title: str
     state: SubIssueState
     blocked_by: frozenset[SubIssueId]
     path: Path
@@ -131,9 +129,6 @@ class FilesystemIssueStore:
         parsed: list[_ParsedIssue] = []
         for path in files:
             body = path.read_text()
-            heading = _HEADING.search(body)
-            if heading is None:
-                raise IssueParseError(f"{path.name} has no `# ` title")
             if "## Acceptance criteria" not in body:
                 raise IssueParseError(
                     f"{path.name} has no `## Acceptance criteria` — an unattended agent has "
@@ -142,7 +137,6 @@ class FilesystemIssueStore:
             parsed.append(
                 _ParsedIssue(
                     id=_parse_id(path),
-                    title=heading.group(1).strip(),
                     state=_parse_state(body, path),
                     blocked_by=_parse_blockers(body, path, siblings),
                     path=path,
@@ -153,9 +147,7 @@ class FilesystemIssueStore:
     def read_graph(self) -> tuple[IssueGraph, dict[SubIssueId, SubIssueState]]:
         parsed = self._parse_all()
         graph = IssueGraph(
-            sub_issues={
-                p.id: SubIssue(id=p.id, title=p.title, blocked_by=p.blocked_by) for p in parsed
-            }
+            sub_issues={p.id: SubIssue(id=p.id, blocked_by=p.blocked_by) for p in parsed}
         )
         return graph, {p.id: p.state for p in parsed}
 

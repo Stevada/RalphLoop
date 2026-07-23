@@ -63,9 +63,7 @@ class LinearIssueStore:
                     f"of parent {self.parent_identifier}"
                 )
             parse_content(issue)
-            graph[id] = SubIssue(
-                id=id, title=f"{issue.identifier} \u2014 {issue.title}", blocked_by=blockers
-            )
+            graph[id] = SubIssue(id=id, blocked_by=blockers)
             states[id] = self.states.from_linear(issue.state)
 
         return IssueGraph(graph), states

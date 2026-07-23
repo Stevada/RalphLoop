@@ -27,7 +27,7 @@ def test_rejects_a_dangling_edge() -> None:
 
 
 def test_rejects_a_mislabelled_key() -> None:
-    sub = SubIssue(id=SubIssueId("01"), title="t", blocked_by=frozenset())
+    sub = SubIssue(id=SubIssueId("01"), blocked_by=frozenset())
     with pytest.raises(GraphError, match="but its id is"):
         IssueGraph(sub_issues={SubIssueId("02"): sub})
 
@@ -48,9 +48,9 @@ def test_transitively_blocked_by_closes_over_the_graph() -> None:
 
 
 def test_a_sub_issue_is_frozen() -> None:
-    sub = SubIssue(id=SubIssueId("01"), title="t", blocked_by=frozenset())
+    sub = SubIssue(id=SubIssueId("01"), blocked_by=frozenset())
     with pytest.raises(dataclasses.FrozenInstanceError):
-        sub.title = "renamed"  # type: ignore[misc]
+        sub.blocked_by = frozenset()  # type: ignore[misc]
 
 
 def test_a_graph_is_frozen_and_its_mapping_cannot_be_written_through() -> None:
@@ -64,7 +64,7 @@ def test_a_graph_is_frozen_and_its_mapping_cannot_be_written_through() -> None:
 def test_the_graph_copies_the_mapping_it_was_given() -> None:
     """Mutating the caller's dict after construction must not reach into the graph."""
     source = {
-        SubIssueId("01"): SubIssue(id=SubIssueId("01"), title="t", blocked_by=frozenset()),
+        SubIssueId("01"): SubIssue(id=SubIssueId("01"), blocked_by=frozenset()),
     }
     g = IssueGraph(sub_issues=source)
     source.clear()
