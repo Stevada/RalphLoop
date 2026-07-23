@@ -102,9 +102,11 @@ class Git(Protocol):
     def move_worktree(self, wt: Worktree, to: Path) -> Worktree: ...
 
     def discard_worktree(self, wt: Worktree) -> None:
-        """Destroy the checkout **and its branch**. What "the Implementer's work is discarded"
-        means in git: the next cycle re-cuts the same branch name from the integration branch, and
-        it must be cut from the integration branch — not from the wreckage of the last attempt."""
+        """Destroy the checkout **and its branch** — both, always. Whether that loses work is the
+        caller's to know: after a landing the commits are already on the integration branch, and
+        after a `revise` verdict losing them is the point. Deleting the branch is not tidiness in
+        either case — `git worktree add -b` refuses a name that still exists, so a sub-issue whose
+        branch outlived its checkout could not be cut again."""
 
     def rebase(self, wt: Worktree, onto: str) -> bool: ...
 

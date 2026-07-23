@@ -177,7 +177,7 @@ needs a real model, network, or `codex` binary is in the wrong layer.
 | `RunLog` | the harness's **authoritative** record | A Protocol, not the JSONL adapter, because the merge queue and scheduler both take one and orchestration may not name an adapter. |
 | `CommandSource` | target repo → `RepoCommands` | Used during pre-flight readiness. `cli.py` names the concrete descriptor adapter and passes only the discovered value downstream. |
 | `TestRunner` | a suite run → `SuiteResult` | The merge queue owns the single harness suite run, using `RepoCommands.test`. |
-| `Git` | worktree / rebase / ff plumbing | `discard_worktree` destroys the checkout **and the branch** — the next cycle re-cuts `ralph/<id>` from integration, and `git worktree add -b` refuses an existing branch. |
+| `Git` | worktree / rebase / ff plumbing | `discard_worktree` destroys the checkout **and the branch** — `git worktree add -b` refuses an existing name, so a branch that outlived its checkout could never be cut again. The scheduler calls it on both non-quarantine exits: after a landing (the commits are on integration already) and on a `revise` verdict (losing them is the point). |
 
 `Budget` ([ports.py](../ralph/ports.py)) carries the wall-clock backstop for an actor session.
 `RepoCommands` is the command discovery value: the required `test` command and optional `install`

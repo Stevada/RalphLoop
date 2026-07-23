@@ -175,8 +175,9 @@ async def test_a_revise_discards_the_work_and_restarts_clean_against_the_revised
 
     assert report.landed == (ONE,)  # it landed on the second cycle
 
-    # The first worktree was destroyed — branch and all — not carried forward and not quarantined.
-    assert git.discarded == ["ralph/01"]
+    # Both worktrees were destroyed — branch and all — not carried forward and not quarantined:
+    # the first because the Editor said `revise`, the second because it landed.
+    assert git.discarded == ["ralph/01", "ralph/01"]
     assert git.moved == []
 
     # And the second was cut fresh from the integration branch, not from the wreckage.

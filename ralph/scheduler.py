@@ -237,6 +237,8 @@ class Scheduler:
                 await self._record(
                     sub.id, Actor.IMPLEMENTER, EventKind.SUB_ISSUE_CLOSED, SubIssueState.LANDED
                 )
+                # Nothing is thrown away here: the fast-forward put these commits on the integration branch.
+                self._git.discard_worktree(wt)
                 return _Closed(sub.id, None)
 
             # The merge queue is the first harness suite gate. A red prospective merge goes to the

@@ -299,15 +299,27 @@ async def test_a_read_only_issue_store_does_not_crash_the_run(
     assert sum(e["details"] == SubIssueState.LANDED.value for e in events) == 2
 
 
-async def test_the_worktree_branch_carries_the_sub_issue_id(
+async def test_a_landed_sub_issue_leaves_no_worktree_and_no_branch(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    await run(
+    """A landed sub-issue is finished, and finished work has nowhere left to live but the
+    integration branch. `.worktrees/` is where a human looks for wreckage — an active checkout per
+    landed sub-issue is a run that reads as if it half-failed, and the branch it sat on would
+    refuse to be cut again.
+
+    The last assertion is the one that matters: the cleanup must remove the checkout, not the work.
+    """
+    report = await run(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
         options=make_options(),
     )
 
-    assert GitCli(repo=repo.path).commits_between("main", "ralph/01") >= 1
-    assert (repo.path / ".worktrees" / "active" / "01").is_dir()
+    assert len(report.landed) == 2
+    for id in ("01", "02"):
+        assert not (repo.path / ".worktrees" / "active" / id).exists()
+        assert not repo.branch_exists(f"ralph/{id}")
+
+    # The commits survived their branch: they are on integration, which is where they landed.
+    assert GitCli(repo=repo.path).commits_between("main", "integration") >= 2

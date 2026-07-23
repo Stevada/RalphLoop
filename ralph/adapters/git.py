@@ -59,14 +59,10 @@ class GitCli:
         return Worktree(path=to, branch=wt.branch, base=wt.base)
 
     def discard_worktree(self, wt: Worktree) -> None:
-        """The checkout **and** the branch. Both, or the next cycle cannot happen.
-
-        `--force` because the tree is dirty by construction: the Implementer that just failed may
-        have left uncommitted edits, and this is precisely the moment we have decided we do not want
-        them. Deleting the branch is not tidiness — the next cycle re-cuts `ralph/<id>` from the
-        integration branch, and `git worktree add -b` refuses a branch that already exists. Leaving
-        it would either abort the retry or, worse, silently resume from the abandoned work, which is
-        the one thing "restarts clean" exists to prevent.
+        """`--force` because the tree is dirty by construction — uncommitted edits from a session
+        that failed, artefacts from the suite run that preceded a landing — and plain `remove`
+        refuses a dirty checkout. Removal comes first: git will not delete a branch that is still
+        checked out somewhere.
         """
         run_git(self.repo, "worktree", "remove", "--force", str(wt.path))
         run_git(self.repo, "branch", "-D", wt.branch)
