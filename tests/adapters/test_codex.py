@@ -6,6 +6,7 @@ import os
 import asyncio
 import json
 import shutil
+import subprocess
 import sys
 import textwrap
 from collections.abc import Sequence
@@ -26,6 +27,7 @@ from ralph.adapters.codex import (
 )
 from ralph.adapters.runtime.bounding import Bound
 from ralph.adapters.git import GitCli
+from ralph.adapters.runtime.prompt import conflict_resolution_prompt
 from ralph.adapters.runtime.session import Session
 from ralph.adapters.runtime.turn_stream import AutoCompaction, TokenUsage, Turn, TurnStreamAsk
 from ralph.harness import (
@@ -75,7 +77,7 @@ def test_how_codex_is_driven_is_fixed_not_configured() -> None:
     assert "--sandbox" in argv and IMPLEMENTER_SANDBOX in argv
     assert "--ask-for-approval" in argv and "never" in argv
     assert "--dangerously-bypass-approvals-and-sandbox" not in argv
-    assert "gpt-5.3-codex" in argv
+    assert "gpt-5.4" in argv
 
 
 # ── completed-turn usage ─────────────────────────────────────────────────────────────────────
@@ -115,6 +117,7 @@ import json, signal, sys, time
 final = int(sys.argv[1])
 mode = sys.argv[2]
 if final:
+    print(json.dumps({"type": "thread.started", "thread_id": "codex-thread-123"}), flush=True)
     print(json.dumps({"type": "turn.completed", "usage": {"total_tokens": final}}), flush=True)
 print(json.dumps({"type": "agent_message", "message": "done"}), flush=True)
 if mode == "compact":
@@ -185,6 +188,7 @@ async def test_a_session_records_completed_turn_consumption(repo: TargetRepo) ->
     assert t.exit_code == 0
     assert not hasattr(t, "peak_context_tokens")
     assert t.consumed_tokens == 1_234_567
+    assert t.resumable_identifier == "codex-thread-123"
 
 
 async def test_a_session_runs_to_completion_without_completed_turn_usage(repo: TargetRepo) -> None:
@@ -243,6 +247,61 @@ def codex_implementer_with_blocking_stub() -> CodexImplementer:
         )
 
     return CodexImplementer(open_session=open_session)
+
+
+async def test_the_codex_implementer_resumes_the_specific_thread_for_conflict_resolution(
+    repo: TargetRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git = GitCli(repo=repo.path)
+    wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
+    argv_log = tmp_path / "codex-argv.json"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    codex = bin_dir / "codex"
+    codex.write_text(
+        textwrap.dedent(f"""\
+            #!{sys.executable}
+            import json
+            import os
+            import subprocess
+            import sys
+            from pathlib import Path
+
+            Path(os.environ["RALPH_CODEX_ARGV_LOG"]).write_text(json.dumps(sys.argv[1:]))
+            Path("conflict.txt").write_text("resolved\\n")
+            subprocess.run(["git", "add", "-A"], check=True)
+            subprocess.run([
+                "git",
+                "-c", "user.email=codex@ralph.invalid",
+                "-c", "user.name=Codex Stub",
+                "commit",
+                "-m", "resolve conflict",
+            ], check=True)
+            print(json.dumps({{"type": "turn.completed", "usage": {{"total_tokens": 770}}}}), flush=True)
+            print(json.dumps({{"type": "agent_message", "message": "resolved"}}), flush=True)
+            """)
+    )
+    codex.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("RALPH_CODEX_ARGV_LOG", str(argv_log))
+
+    t = await codex_implementer().resolve_conflict(session_context(wt), "codex-thread-789")
+
+    argv = json.loads(argv_log.read_text())
+    resume = argv.index("resume")
+    assert argv[:3] == ["--ask-for-approval", "never", "exec"]
+    assert "--json" in argv
+    assert "--sandbox" in argv and IMPLEMENTER_SANDBOX in argv
+    assert "--cd" in argv and str(wt.path) in argv
+    assert "--last" not in argv
+    assert argv[resume + 1] == "codex-thread-789"
+    assert argv[resume + 2] == conflict_resolution_prompt()
+    assert "Acceptance criteria" not in argv[resume + 2]
+    assert t.killed is None
+    assert t.consumed_tokens == 770
+    assert t.resumable_identifier == "codex-thread-789"
+    assert t.commits == 1
+    assert "resolved" in t.session_output
 
 
 # ── Codex as Editor ─────────────────────────────────────────────────────────────────────────
@@ -334,4 +393,51 @@ async def test_a_real_codex_session_lands_a_real_sub_issue(repo: TargetRepo) -> 
     assert t.commits >= 1
     assert not hasattr(t, "peak_context_tokens")
     assert t.consumed_tokens > 0
+    assert repo.run_suite(wt.path)
+
+
+@REAL
+async def test_a_real_codex_resumed_session_resolves_a_real_rebase_conflict(
+    repo: TargetRepo,
+) -> None:
+    """Spends two real Codex turns: one to create work, one to resume it after a moved base."""
+    git = GitCli(repo=repo.path)
+    wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
+    spec = Spec(
+        body=textwrap.dedent("""\
+            # 01 — change shared marker
+
+            ## Acceptance criteria
+
+            - [ ] `shared.py` sets `MARKER = "codex-side"`
+            - [ ] the change is committed
+            """)
+    )
+    context = session_context(
+        wt, spec=spec, findings=Findings(body=""), budget=Budget(wall_clock_s=900.0)
+    )
+
+    first = await codex_implementer().run(context)
+    assert first.resumable_identifier is not None
+    assert first.commits >= 1
+
+    (repo.path / "shared.py").write_text('MARKER = "integration-side"\n')
+    repo.git("add", "shared.py")
+    repo.git("commit", "-m", "move integration marker")
+    rebase = subprocess.run(
+        ["git", "rebase", "integration"],
+        cwd=wt.path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rebase.returncode != 0
+    assert "<<<<<<<" in (wt.path / "shared.py").read_text()
+
+    resumed = await codex_implementer().resolve_conflict(context, first.resumable_identifier)
+
+    assert resumed.killed is None
+    assert resumed.resumable_identifier == first.resumable_identifier
+    assert resumed.consumed_tokens > 0
+    assert resumed.commits >= 1
     assert repo.run_suite(wt.path)

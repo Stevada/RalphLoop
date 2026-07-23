@@ -14,8 +14,12 @@ from dataclasses import dataclass
 
 from ralph.adapters.copilot.session import copilot_sdk_session
 from ralph.adapters.runtime.editor import read_only, run_editor
-from ralph.adapters.runtime.prompt import editor_prompt, implementer_prompt
 from ralph.adapters.runtime.implementer import run_turn_stream_implementer
+from ralph.adapters.runtime.prompt import (
+    conflict_resolution_prompt,
+    editor_prompt,
+    implementer_prompt,
+)
 from ralph.adapters.runtime.turn_stream import (
     OpenSession,
     Permission,
@@ -45,6 +49,19 @@ class CopilotImplementer:
                 prompt=implementer_prompt(context.spec, context.findings),
                 cwd=context.worktree.path,
                 permit=allow_all,
+            )
+        )
+        return await run_turn_stream_implementer(session, context)
+
+    async def resolve_conflict(
+        self, context: SessionContext, resumable_identifier: str
+    ) -> SessionTelemetry:
+        session = self.open_session(
+            TurnStreamAsk(
+                prompt=conflict_resolution_prompt(),
+                cwd=context.worktree.path,
+                permit=allow_all,
+                resumable_identifier=resumable_identifier,
             )
         )
         return await run_turn_stream_implementer(session, context)

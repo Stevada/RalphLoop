@@ -17,7 +17,7 @@ class Destination(StrEnum):
     ACT_ON_VERDICT = "act-on-verdict"
     EDITOR = "editor"
     HUMAN = "human"
-    # There is no retry destination. There is no retry anywhere in this system.
+    # There is no retry destination. Mechanical conflict recovery is scheduler-local.
 
 
 def route(actor: Actor, outcome: Outcome) -> Destination:

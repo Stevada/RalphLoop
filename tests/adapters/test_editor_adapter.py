@@ -251,6 +251,10 @@ class StubSession:
     def auto_compactions(self) -> tuple[AutoCompaction, ...]:
         return ()
 
+    @property
+    def resumable_identifier(self) -> str | None:
+        return None
+
     async def turns(self) -> AsyncGenerator[Turn, None]:
         for turn in self._scripted:
             if self.killed:

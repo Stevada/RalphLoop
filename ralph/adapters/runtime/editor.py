@@ -201,6 +201,7 @@ def editor_telemetry(
         killed=bound.killed,
         consumed_tokens=bound.consumed_tokens,
         auto_compactions=auto_compactions,
+        resumable_identifier=None,
         wall_clock_s=wall_clock_s,
         commits=0,
         diffstat="",

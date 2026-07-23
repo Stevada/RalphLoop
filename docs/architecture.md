@@ -37,7 +37,7 @@ ralph/
       verdict.py   Verdict, EditorVerdict
     rules/         the VERBS — pure functions. what the system DECIDES.
       classify.py     session → Outcome            (the failure taxonomy)
-      routing.py      (actor, outcome) → Destination   (and never a retry)
+      routing.py      (actor, outcome) → Destination   (and never a retry destination)
       eligibility.py  graph + states → what may run    (quarantine-and-drain)
       cycles.py       CycleLedger                      (the cap of three)
       report.py       → FailureReport      (and the impasse it will NOT invent)
@@ -149,8 +149,9 @@ only the merge queue raises it.
 
 `route(actor, outcome) → Destination` ([routing.py](../ralph/harness/rules/routing.py)) is the
 taxonomy table with one test per row. Four destinations — `MERGE_QUEUE`, `ACT_ON_VERDICT`, `EDITOR`,
-`HUMAN` — and **no retry destination, because there is no retry anywhere in this system** (a test
-asserts no row returns anything else).
+`HUMAN` — and **no retry destination** (a test asserts no row returns anything else). Mechanical
+rebase-conflict recovery is the single narrow exception: the scheduler may resume the same
+Implementer session once in the conflicted worktree before it creates an Editor cycle.
 
 Only `SUCCESS` needs to know who is asking (Implementer → merge queue, Editor → act on verdict).
 `INFRA_FAILED` routes to the **human** from either actor, never to the Editor, and spends no cycle.

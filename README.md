@@ -168,9 +168,11 @@ Three failure outcomes, and each one routes somewhere specific:
 | `integration-failed` | Committed work is red or conflicting on the prospective merge | Editor |
 | `infra-failed` | The environment is broken, not the code | Human |
 
-**There is no retry anywhere in this system.** A failed sub-issue is quarantined — marked
+**There is no retry destination in this system.** A failed sub-issue is quarantined — marked
 `needs-human`, worktree preserved, its dependents never become eligible — and everything
-unaffected still lands. The human is paged **once**, at the end. The run never stops early.
+unaffected still lands. The one narrow exception is mechanical rebase-conflict recovery: Ralph may
+resume the same Implementer session once, in the conflicted worktree, before it engages the Editor.
+The human is paged **once**, at the end. The run never stops early.
 
 ## Run Options
 

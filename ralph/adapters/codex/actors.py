@@ -7,7 +7,11 @@ from dataclasses import dataclass
 
 from ralph.adapters.codex.session import codex_read_only_session, codex_sdk_session
 from ralph.adapters.runtime.editor import run_editor
-from ralph.adapters.runtime.prompt import editor_prompt, implementer_prompt
+from ralph.adapters.runtime.prompt import (
+    conflict_resolution_prompt,
+    editor_prompt,
+    implementer_prompt,
+)
 from ralph.adapters.runtime.implementer import run_turn_stream_implementer
 from ralph.adapters.runtime.turn_stream import OpenSession, TurnStreamAsk
 from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry
@@ -25,6 +29,18 @@ class CodexImplementer:
             TurnStreamAsk(
                 prompt=implementer_prompt(context.spec, context.findings),
                 cwd=context.worktree.path,
+            )
+        )
+        return await run_turn_stream_implementer(session, context)
+
+    async def resolve_conflict(
+        self, context: SessionContext, resumable_identifier: str
+    ) -> SessionTelemetry:
+        session = self.open_session(
+            TurnStreamAsk(
+                prompt=conflict_resolution_prompt(),
+                cwd=context.worktree.path,
+                resumable_identifier=resumable_identifier,
             )
         )
         return await run_turn_stream_implementer(session, context)

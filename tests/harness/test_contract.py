@@ -37,7 +37,7 @@ from ralph.ports import (
     TestRunner,
     Worktree,
 )
-from tests.builders import graph_of
+from tests.builders import graph_of, telemetry
 from tests.fakes import (
     FakeCommandSource,
     FakeEditor,
@@ -84,7 +84,7 @@ def test_the_outcome_taxonomy_is_exactly_four_failures_and_one_success() -> None
 
 
 def test_there_is_no_retry_destination() -> None:
-    """There is no retry anywhere in this system."""
+    """There is no retry destination in this system."""
     assert {d.value for d in Destination} == {"merge-queue", "act-on-verdict", "editor", "human"}
     assert not any("retry" in d.value for d in Destination)
 
@@ -119,7 +119,12 @@ def test_session_telemetry_carries_consumption_but_no_context_peak() -> None:
     names = {f.name for f in dataclasses.fields(SessionTelemetry)}
     assert "consumed_tokens" in names
     assert "auto_compactions" in names
+    assert "resumable_identifier" in names
     assert "peak_context_tokens" not in names
+
+
+def test_session_telemetry_carries_an_optional_resumable_identifier() -> None:
+    assert telemetry(resumable_identifier="opaque-session").resumable_identifier == "opaque-session"
 
 
 def test_revise_is_the_only_non_terminal_verdict() -> None:
@@ -182,6 +187,22 @@ def test_session_context_groups_the_shared_actor_inputs() -> None:
     ]
     assert context.worktree is wt
     assert context.budget.wall_clock_s == 1.0
+
+
+async def test_an_implementer_can_be_asked_to_resolve_a_conflict() -> None:
+    wt = Worktree(path=Path("/tmp/wt"), branch="ralph/01", base="integration")
+    context = SessionContext(
+        spec=Spec(body="build it"),
+        findings=Findings(body="facts"),
+        worktree=wt,
+        budget=Budget(wall_clock_s=1.0),
+    )
+    implementer = FakeImplementer()
+
+    result = await implementer.resolve_conflict(context, "opaque-session")
+
+    assert isinstance(result, SessionTelemetry)
+    assert implementer.resolve_conflict_calls == [(context, "opaque-session")]
 
 
 def test_an_impasse_report_is_the_models_story_not_the_harnesss_facts() -> None:

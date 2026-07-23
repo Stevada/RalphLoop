@@ -75,6 +75,10 @@ class GitCli:
         _try_git(wt.path, "rebase", "--abort")
         return False
 
+    def rebase_for_conflict_resolution(self, wt: Worktree, onto: str) -> bool:
+        """False on conflict, leaving git's conflict state intact for the resolver to read."""
+        return _try_git(wt.path, "rebase", onto)
+
     def merge_ff_only(self, branch: str) -> bool:
         """False when git **refuses**, which is the point. `git merge` does not fire the pre-commit
         hook, so a merge commit would put an unverified tree on the integration branch. The merge

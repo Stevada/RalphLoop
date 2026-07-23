@@ -7,6 +7,7 @@ auto-compaction events, and a `kill()` that aborts the active SDK turn and ends 
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
@@ -80,7 +81,7 @@ class RunningCopilotSession(Protocol):
 
 SdkPermissionHandler = Callable[[SdkPermissionRequest, dict[str, str]], SdkPermissionResult]
 CreateSession = Callable[
-    [TurnStreamAsk, Callable[[SdkEvent], None], SdkPermissionHandler | None],
+    [TurnStreamAsk, str, Callable[[SdkEvent], None], SdkPermissionHandler | None],
     Awaitable[RunningCopilotSession],
 ]
 
@@ -88,6 +89,7 @@ CreateSession = Callable[
 class CopilotSdkSession(TurnStreamSession):
     def __init__(self, ask: TurnStreamAsk, *, create_session: CreateSession) -> None:
         self._ask = ask
+        self._resumable_identifier = ask.resumable_identifier or _new_session_identifier()
         self._create_session = create_session
         self._turns: asyncio.Queue[Turn | None] = asyncio.Queue()
         self._idle = asyncio.Event()
@@ -109,6 +111,10 @@ class CopilotSdkSession(TurnStreamSession):
     @property
     def auto_compactions(self) -> tuple[AutoCompaction, ...]:
         return tuple(self._auto_compactions)
+
+    @property
+    def resumable_identifier(self) -> str | None:
+        return self._resumable_identifier
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         while (turn := await self._turns.get()) is not None:
@@ -132,7 +138,10 @@ class CopilotSdkSession(TurnStreamSession):
     async def _converse(self) -> None:
         try:
             self._running_session = await self._create_session(
-                self._ask, self._observe, _permission_handler(self._ask.permit)
+                self._ask,
+                self._resumable_identifier,
+                self._observe,
+                _permission_handler(self._ask.permit),
             )
             await self._running_session.send(self._ask.prompt)
             await self._idle.wait()
@@ -226,6 +235,7 @@ class _RuntimeSession:
 
 async def _open_real_session(
     ask: TurnStreamAsk,
+    session_identifier: str,
     observe: Callable[[SdkEvent], None],
     on_permission_request: SdkPermissionHandler | None,
 ) -> RunningCopilotSession:
@@ -234,14 +244,26 @@ async def _open_real_session(
     client = CopilotClient(working_directory=str(ask.cwd))
     await client.start()
     try:
-        session = cast(
-            RunningCopilotSession,
-            await client.create_session(
-                model=MODEL,
-                streaming=True,
-                on_permission_request=on_permission_request,
-            ),
-        )
+        if ask.resumable_identifier is None:
+            session = cast(
+                RunningCopilotSession,
+                await client.create_session(
+                    model=MODEL,
+                    streaming=True,
+                    session_id=session_identifier,
+                    on_permission_request=on_permission_request,
+                ),
+            )
+        else:
+            session = cast(
+                RunningCopilotSession,
+                await client.resume_session(
+                    session_identifier,
+                    model=MODEL,
+                    streaming=True,
+                    on_permission_request=on_permission_request,
+                ),
+            )
     except Exception:
         await client.stop()
         raise
@@ -252,6 +274,10 @@ async def _open_real_session(
 
 def copilot_sdk_session(ask: TurnStreamAsk) -> CopilotSdkSession:
     return CopilotSdkSession(ask, create_session=_open_real_session)
+
+
+def _new_session_identifier() -> str:
+    return str(uuid.uuid4())
 
 
 def _permission_handler(permit: Permit | None) -> SdkPermissionHandler | None:

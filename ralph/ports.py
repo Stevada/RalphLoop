@@ -55,6 +55,10 @@ class SessionContext:
 class Implementer(Protocol):
     async def run(self, context: SessionContext) -> SessionTelemetry: ...
 
+    async def resolve_conflict(
+        self, context: SessionContext, resumable_identifier: str
+    ) -> SessionTelemetry: ...
+
 
 @runtime_checkable
 class Editor(Protocol):
@@ -109,6 +113,15 @@ class Git(Protocol):
         branch outlived its checkout could not be cut again."""
 
     def rebase(self, wt: Worktree, onto: str) -> bool: ...
+
+    def rebase_for_conflict_resolution(self, wt: Worktree, onto: str) -> bool:
+        """Rebase immediately before a conflict-resolution session.
+
+        Unlike ordinary landing rebases, a conflict here is left exactly as git produced it:
+        rebase still in progress, conflict markers still present. The ordinary landing path must
+        keep using `rebase`, which aborts on conflict.
+        """
+        ...
 
     def merge_ff_only(self, branch: str) -> bool: ...
 

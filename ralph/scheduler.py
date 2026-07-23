@@ -25,6 +25,8 @@ from ralph.harness import (
     Destination,
     FailureReport,
     Outcome,
+    SessionTelemetry,
+    SuiteResult,
     Verdict,
     classify_editor,
     classify_implementer,
@@ -35,7 +37,7 @@ from ralph.harness import (
 from ralph.issues import SubIssue, SubIssueId, SubIssueState
 from ralph.issues.consumption import SessionConsumption
 from ralph.issues.store import IssueStore
-from ralph.mergequeue import LandResult, MergeQueue
+from ralph.mergequeue import Land, LandResult, MergeQueue
 from ralph.notification import Notification, notify
 from ralph.ports import (
     Budget,
@@ -96,6 +98,16 @@ class _Closed:
 
     sub_issue: SubIssueId
     report: FailureReport | None
+
+
+@dataclass(frozen=True, slots=True)
+class _FailedLanding:
+    """A merge-queue failure, normalized into the Editor's input shape."""
+
+    outcome: Outcome
+    telemetry: SessionTelemetry
+    suite: SuiteResult | None
+    detail: str | None
 
 
 class Scheduler:
@@ -243,25 +255,24 @@ class Scheduler:
         if route(Actor.IMPLEMENTER, outcome) is Destination.MERGE_QUEUE:
             land = await self._merge_queue.land(wt)
             if land.result is LandResult.LANDED:
-                await self._record(
-                    sub.id, Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, Outcome.SUCCESS
-                )
-                # After the fast-forward, never before. Fail toward redundant work, never toward
-                # missing code.
-                await self._record(
-                    sub.id, Actor.IMPLEMENTER, EventKind.SUB_ISSUE_CLOSED, SubIssueState.LANDED
-                )
-                # Nothing is thrown away here: the fast-forward put these commits on the integration branch.
-                self._git.discard_worktree(wt)
-                return _Closed(sub.id, None)
+                return await self._landed(sub.id, wt)
 
-            # The merge queue is the first harness suite gate. A red prospective merge goes to the
-            # Editor with that gate's evidence, and spends a cycle exactly like an impasse does.
-            outcome, detail = Outcome.INTEGRATION_FAILED, land.result.value
-            if land.suite is not None:
-                # The suite on the *prospective merge*. This is the only suite evidence the
-                # scheduler is allowed to hand the Editor for an Implementer failure.
-                suite = land.suite
+            if land.result is LandResult.REBASE_CONFLICT:
+                recovered = await self._resolve_rebase_conflict(sub.id, context, telemetry)
+                if isinstance(recovered, _Closed):
+                    return recovered
+                outcome = recovered.outcome
+                telemetry = recovered.telemetry
+                suite = recovered.suite
+                detail = recovered.detail
+            else:
+                # The merge queue is the first harness suite gate. A red prospective merge goes to the
+                # Editor with that gate's evidence, and spends a cycle exactly like an impasse does.
+                outcome, detail = Outcome.INTEGRATION_FAILED, land.result.value
+                if land.suite is not None:
+                    # The suite on the *prospective merge*. This is the only suite evidence the
+                    # scheduler is allowed to hand the Editor for an Implementer failure.
+                    suite = land.suite
 
         await self._record(sub.id, Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, outcome)
         report = failure_report(outcome, telemetry, suite, detail, attempt)
@@ -273,6 +284,71 @@ class Scheduler:
             return await self._quarantine(sub.id, Actor.IMPLEMENTER, wt, report)
 
         return await self._adjudicate(sub, context, report)
+
+    async def _landed(self, id: SubIssueId, wt: Worktree) -> _Closed:
+        await self._record(id, Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, Outcome.SUCCESS)
+        # After the fast-forward, never before. Fail toward redundant work, never toward
+        # missing code.
+        await self._record(id, Actor.IMPLEMENTER, EventKind.SUB_ISSUE_CLOSED, SubIssueState.LANDED)
+        # Nothing is thrown away here: the fast-forward put these commits on the integration branch.
+        self._git.discard_worktree(wt)
+        return _Closed(id, None)
+
+    async def _resolve_rebase_conflict(
+        self,
+        id: SubIssueId,
+        context: SessionContext,
+        telemetry: SessionTelemetry,
+    ) -> _Closed | _FailedLanding:
+        if telemetry.resumable_identifier is None:
+            return _FailedLanding(
+                outcome=Outcome.INTEGRATION_FAILED,
+                telemetry=telemetry,
+                suite=None,
+                detail=LandResult.REBASE_CONFLICT.value,
+            )
+
+        self._git.rebase_for_conflict_resolution(context.worktree, self._integration)
+        await self._record(
+            id, Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, Outcome.INTEGRATION_FAILED
+        )
+        await self._record(id, Actor.IMPLEMENTER, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS)
+        resolved = await self._implementer.resolve_conflict(
+            context, telemetry.resumable_identifier
+        )
+        await self._store.record_consumption(
+            id,
+            SessionConsumption(
+                actor=Actor.IMPLEMENTER,
+                consumed_tokens=resolved.consumed_tokens,
+                auto_compactions=resolved.auto_compactions,
+            ),
+        )
+        outcome = classify_implementer(resolved)
+        if route(Actor.IMPLEMENTER, outcome) is not Destination.MERGE_QUEUE:
+            return _FailedLanding(outcome=outcome, telemetry=resolved, suite=None, detail=None)
+
+        land = await self._merge_queue.land(context.worktree)
+        return await self._landed_or_failed(id, context.worktree, resolved, land)
+
+    async def _landed_or_failed(
+        self,
+        id: SubIssueId,
+        wt: Worktree,
+        telemetry: SessionTelemetry,
+        land: Land,
+    ) -> _Closed | _FailedLanding:
+        result = land.result
+        suite = land.suite
+        if result is LandResult.LANDED:
+            return await self._landed(id, wt)
+
+        return _FailedLanding(
+            outcome=Outcome.INTEGRATION_FAILED,
+            telemetry=telemetry,
+            suite=suite,
+            detail=result.value,
+        )
 
     async def _adjudicate(
         self,

@@ -37,13 +37,24 @@ class FakeImplementer:
     """Returns scripted telemetry, one per call, and records what it was asked to build."""
 
     scripted: Sequence[SessionTelemetry] = field(default_factory=list)
+    conflict_scripted: Sequence[SessionTelemetry] = field(default_factory=list)
     calls: list[SessionContext] = field(default_factory=list)
+    resolve_conflict_calls: list[tuple[SessionContext, str]] = field(default_factory=list)
 
     async def run(self, context: SessionContext) -> SessionTelemetry:
         self.calls.append(context)
         if not self.scripted:
             return telemetry()
         return self.scripted[min(len(self.calls) - 1, len(self.scripted) - 1)]
+
+    async def resolve_conflict(
+        self, context: SessionContext, resumable_identifier: str
+    ) -> SessionTelemetry:
+        self.resolve_conflict_calls.append((context, resumable_identifier))
+        if not self.conflict_scripted:
+            return telemetry()
+        index = min(len(self.resolve_conflict_calls) - 1, len(self.conflict_scripted) - 1)
+        return self.conflict_scripted[index]
 
 
 @dataclass(slots=True)
@@ -156,9 +167,13 @@ class FakeGit:
 
     head: str = "integration"
     rebase_conflicts: set[str] = field(default_factory=set)  # branches whose rebase fails
+    rebase_results: dict[str, list[bool]] = field(default_factory=dict)
+    conflict_resolution_rebase_results: dict[str, list[bool]] = field(default_factory=dict)
     ff_refuses: set[str] = field(default_factory=set)  # branches whose fast-forward is refused
     commit_counts: dict[str, int] = field(default_factory=dict)
     worktrees: list[Worktree] = field(default_factory=list)
+    rebased: list[tuple[str, str]] = field(default_factory=list)
+    conflict_resolution_rebased: list[tuple[str, str]] = field(default_factory=list)
     merged: list[str] = field(default_factory=list)
     moved: list[tuple[str, Path]] = field(default_factory=list)
     discarded: list[str] = field(default_factory=list)
@@ -176,6 +191,15 @@ class FakeGit:
         self.discarded.append(wt.branch)
 
     def rebase(self, wt: Worktree, onto: str) -> bool:
+        self.rebased.append((wt.branch, onto))
+        if scripted := self.rebase_results.get(wt.branch):
+            return scripted.pop(0)
+        return wt.branch not in self.rebase_conflicts
+
+    def rebase_for_conflict_resolution(self, wt: Worktree, onto: str) -> bool:
+        self.conflict_resolution_rebased.append((wt.branch, onto))
+        if scripted := self.conflict_resolution_rebase_results.get(wt.branch):
+            return scripted.pop(0)
         return wt.branch not in self.rebase_conflicts
 
     def merge_ff_only(self, branch: str) -> bool:

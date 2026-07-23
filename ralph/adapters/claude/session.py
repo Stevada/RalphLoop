@@ -83,6 +83,10 @@ class _SdkSession:
     def auto_compactions(self) -> tuple[AutoCompaction, ...]:
         return ()
 
+    @property
+    def resumable_identifier(self) -> str | None:
+        return None
+
     async def turns(self) -> AsyncGenerator[Turn, None]:
         while (turn := await self._turns.get()) is not None:
             yield turn

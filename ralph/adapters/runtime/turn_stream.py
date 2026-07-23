@@ -41,6 +41,7 @@ class TurnStreamAsk:
     prompt: str
     cwd: Path
     permit: Permit | None = None
+    resumable_identifier: str | None = None
 
 
 OpenSession = Callable[[TurnStreamAsk], "TurnStreamSession"]
@@ -84,6 +85,9 @@ class TurnStreamSession(Protocol):
     @property
     def auto_compactions(self) -> tuple[AutoCompaction, ...]: ...
 
+    @property
+    def resumable_identifier(self) -> str | None: ...
+
     def turns(self) -> AsyncGenerator[Turn, None]: ...
 
     def kill(self) -> None: ...
@@ -100,6 +104,7 @@ class TurnStreamRun:
     output: str
     wall_clock_s: float
     auto_compactions: int
+    resumable_identifier: str | None
 
 
 async def run_turn_stream(session: TurnStreamSession, budget: Budget) -> TurnStreamRun:
@@ -126,6 +131,7 @@ async def run_turn_stream(session: TurnStreamSession, budget: Budget) -> TurnStr
         output="".join(said),
         wall_clock_s=time.monotonic() - started,
         auto_compactions=_completed_auto_compactions(session.auto_compactions),
+        resumable_identifier=session.resumable_identifier,
     )
 
 

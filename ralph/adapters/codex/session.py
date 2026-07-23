@@ -65,6 +65,24 @@ def _codex_exec_argv(*, prompt: str, cwd: Path, sandbox: str) -> list[str]:
     ]
 
 
+def _codex_resume_argv(
+    *, prompt: str, cwd: Path, sandbox: str, resumable_identifier: str
+) -> list[str]:
+    """`resume` is an `exec` subcommand, so `exec` options come before it."""
+    return [
+        "codex",
+        "--ask-for-approval", APPROVAL,
+        "exec",
+        "--json",
+        "--model", MODEL,
+        "--sandbox", sandbox,
+        "--cd", str(cwd),
+        "resume",
+        resumable_identifier,
+        prompt,
+    ]
+
+
 def _obj(value: object) -> dict[str, object]:
     """A JSON object, or an empty one. Every navigation below goes through this, so a missing
     branch reads as absent rather than as a `TypeError` three lines later."""
@@ -188,6 +206,7 @@ class CodexJsonSession(TurnStreamSession):
         self._build_argv = build_argv or _session_argv
         self._turns: asyncio.Queue[Turn | None] = asyncio.Queue()
         self._auto_compactions: list[AutoCompaction] = []
+        self._resumable_identifier = ask.resumable_identifier
         self._proc: asyncio.subprocess.Process | None = None
         self._code: int | None = None
         self._stream_closed = False
@@ -202,6 +221,10 @@ class CodexJsonSession(TurnStreamSession):
     @property
     def auto_compactions(self) -> tuple[AutoCompaction, ...]:
         return tuple(self._auto_compactions)
+
+    @property
+    def resumable_identifier(self) -> str | None:
+        return self._resumable_identifier
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         while (turn := await self._turns.get()) is not None:
@@ -254,6 +277,11 @@ class CodexJsonSession(TurnStreamSession):
             return
 
         kind = _event_type(event)
+        if kind == THREAD_STARTED:
+            id = event.get("thread_id")
+            if isinstance(id, str):
+                self._resumable_identifier = id
+
         if kind == TURN_COMPLETED:
             total = _usage_total(event)
             if total is None:
@@ -274,6 +302,13 @@ class CodexJsonSession(TurnStreamSession):
 
 
 def _session_argv(ask: TurnStreamAsk, sandbox: str) -> Sequence[str]:
+    if ask.resumable_identifier is not None:
+        return _codex_resume_argv(
+            prompt=ask.prompt,
+            cwd=ask.cwd,
+            sandbox=sandbox,
+            resumable_identifier=ask.resumable_identifier,
+        )
     return _codex_exec_argv(prompt=ask.prompt, cwd=ask.cwd, sandbox=sandbox)
 
 

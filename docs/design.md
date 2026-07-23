@@ -162,9 +162,11 @@ One continuous Implementer session. It writes tests first, then implementation, 
 iterates as it sees fit — running the suite, fixing, trying again — using its own judgment about
 when it has reached an impasse.
 
-That inner loop is the *model's*, inside one session, and is the only thing in this system that
-resembles a retry. **The harness never retries anything**: it never re-dispatches a session, and
-it has no backoff. Do not read the sentence above as licence to add one.
+That inner loop is the *model's*, inside one session. Ralph still has no retry destination and no
+backoff. The only scheduler-owned exception is mechanical rebase-conflict recovery: if landing
+order leaves conflict markers in otherwise completed work, Ralph may resume the same Implementer
+session once in that conflicted worktree before involving the Editor. Do not read the sentence above
+as licence to add another one.
 
 It exits exactly one of two ways:
 
@@ -248,13 +250,15 @@ whether 105's spec should adapt to 104's rename or whether the two were badly cu
 decision bash could never make, and one the already-exited Implementer is no longer around
 to make either.
 
-#### A failed merge is an Editor trigger, not a retry loop
+#### A failed merge is an Editor trigger, except for mechanical conflict recovery
 
-A conflict or red suite on the prospective merge routes the sub-issue to the Editor as
-`integration-failed` — immediately, on the first failure, with no Implementer requeue. The
-Editor reads the preserved worktree and the sibling that landed first. If 105 can adapt to
-104, it says `revise` and the Implementer restarts clean; if *"105 cannot land alongside
-104"* because the two were badly cut, it has exactly the evidence for `planning-defect`.
+A red suite on the prospective merge routes the sub-issue to the Editor as `integration-failed` —
+immediately, on the first failure, with no Implementer requeue. A textual rebase conflict gets one
+cheaper mechanical path first: Ralph leaves the conflict markers in place, resumes the same
+Implementer session once, and retries the landing once. If that still does not land, the Editor
+reads the preserved worktree and the sibling that landed first. If 105 can adapt to 104, it says
+`revise` and the Implementer restarts clean; if *"105 cannot land alongside 104"* because the two
+were badly cut, it has exactly the evidence for `planning-defect`.
 
 That trip through the Editor spends one of the sub-issue's three **cycles** — an
 `integration-failed` is counted exactly like an impasse, so a sub-issue that keeps failing
@@ -378,7 +382,9 @@ committed work that reached the merge queue. The merge queue raises it when that
 integrate with a sibling that landed first — precisely the kind of failure the Implementer cannot
 observe about itself, so it goes to the Editor rather than back to the actor that produced it.
 
-**There is no retry anywhere in this system.**
+**There is no retry destination in this system.** Mechanical rebase-conflict recovery is a named
+exception, not a routing destination: the same Implementer session may be resumed once in the
+conflicted worktree before the failure becomes an Editor cycle.
 
 `infra-failed` pages the human immediately, from either actor, and never reaches the Editor. A
 stale lockfile, a 429, an OOM, a wall-clock kill: none of these are fixed by running the same

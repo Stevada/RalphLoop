@@ -63,9 +63,11 @@ load-bearing facts:
 - **The merge queue is the harness suite gate.** The harness runs the discovered test command on the
   prospective merge; a model's exit code is only its opinion. A suite the harness runs is inside the
   **blast radius** — only CI on a clean checkout is **honest**.
-- **No retry anywhere.** A failed sub-issue is quarantined (`needs-human`, worktree preserved, its
-  dependents never become eligible); everything unaffected still lands. The run never stops early; the
-  human is paged **once**, at the end.
+- **No retry destination.** A failed sub-issue is quarantined (`needs-human`, worktree preserved, its
+  dependents never become eligible); everything unaffected still lands. The one narrow exception is
+  mechanical rebase-conflict recovery: the same Implementer session may be resumed once, in the
+  conflicted worktree, before the Editor is engaged. The run never stops early; the human is paged
+  **once**, at the end.
 - **The Editor writes nothing but spec and findings,** enforced by a tool allowlist (not the
   prompt): `adapters/runtime/editor.py` for the model-agnostic half. At most **three cycles**, enforced by the
   scheduler alone.

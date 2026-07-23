@@ -101,6 +101,14 @@ Implement the work described by the user in the spec or tickets.
 
 Use /tdd where possible, at pre-agreed seams."""
 
+CONFLICT_RESOLUTION_ROLE = """\
+You are the **Implementer**, resuming your own prior session.
+
+The worktree now contains a git rebase conflict in your previous work. Do not re-derive the
+feature from the spec. Inspect the conflict markers, preserve the intended behavior from both
+sides where they are compatible, resolve the conflict, run the relevant checks, and commit the
+resolution."""
+
 FINAL_CYCLE = """\
 ## This is the final cycle
 
@@ -220,3 +228,8 @@ def implementer_prompt(spec: Spec, findings: Findings) -> str:
     parts.append(COMMIT)
     parts.append(IMPASSE)
     return "\n\n".join(parts)
+
+
+def conflict_resolution_prompt() -> str:
+    """Ask a resumed Implementer session to resolve the conflict in front of it."""
+    return "\n\n".join([CONFLICT_RESOLUTION_ROLE, COMMIT, IMPASSE])

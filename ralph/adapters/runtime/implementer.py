@@ -29,6 +29,9 @@ IMPASSE_OPEN, IMPASSE_CLOSE = "<impasse>", "</impasse>"
 BuildArgv = Callable[[Spec, Findings, Worktree], Sequence[str]]
 """What separates one Implementer from another: how you spell the command."""
 
+BuildResolveArgv = Callable[[SessionContext, str], Sequence[str] | None]
+"""How a subprocess-backed Implementer resumes, if that transport has a way to do it."""
+
 
 class ImpasseParseError(ValueError):
     """The session emitted a sentinel the harness cannot read.
@@ -78,6 +81,7 @@ def implementer_telemetry(
     wall_clock_s: float,
     worktree: Worktree,
     auto_compactions: int = 0,
+    resumable_identifier: str | None = None,
 ) -> SessionTelemetry:
     """The harness facts every Implementer session reports, regardless of transport."""
     return SessionTelemetry(
@@ -85,6 +89,7 @@ def implementer_telemetry(
         killed=bound.killed,
         consumed_tokens=bound.consumed_tokens,
         auto_compactions=auto_compactions,
+        resumable_identifier=resumable_identifier,
         wall_clock_s=wall_clock_s,
         commits=int(run_git(worktree.path, "rev-list", "--count", f"{worktree.base}..HEAD")),
         diffstat=run_git(worktree.path, "diff", "--stat", f"{worktree.base}..HEAD"),
@@ -128,6 +133,7 @@ async def run_turn_stream_implementer(
         wall_clock_s=completed.wall_clock_s,
         worktree=context.worktree,
         auto_compactions=completed.auto_compactions,
+        resumable_identifier=completed.resumable_identifier,
     )
 
 
@@ -142,6 +148,7 @@ class SubprocessImplementer:
 
     build_argv: BuildArgv
     final_consumed_tokens: FinalConsumedTokens | None = None
+    build_resolve_argv: BuildResolveArgv | None = None
 
     async def run(self, context: SessionContext) -> SessionTelemetry:
         worktree = context.worktree
@@ -151,3 +158,29 @@ class SubprocessImplementer:
             context.budget,
             self.final_consumed_tokens,
         )
+
+    async def resolve_conflict(
+        self, context: SessionContext, resumable_identifier: str
+    ) -> SessionTelemetry:
+        if self.build_resolve_argv is None:
+            return _resume_unavailable(context.worktree, resumable_identifier)
+        argv = self.build_resolve_argv(context, resumable_identifier)
+        if argv is None:
+            return _resume_unavailable(context.worktree, resumable_identifier)
+        return await run_agent(
+            argv,
+            context.worktree,
+            context.budget,
+            self.final_consumed_tokens,
+        )
+
+
+def _resume_unavailable(wt: Worktree, resumable_identifier: str) -> SessionTelemetry:
+    return implementer_telemetry(
+        bound=Bound(killed=None, consumed_tokens=0),
+        exit_code=124,
+        output=f"cannot resume subprocess Implementer session {resumable_identifier}",
+        wall_clock_s=0.0,
+        worktree=wt,
+        resumable_identifier=resumable_identifier,
+    )

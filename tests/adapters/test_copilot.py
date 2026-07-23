@@ -1,18 +1,24 @@
 """The Copilot adapter: SDK-backed Implementer and Editor.
 
-**No test here runs the real `copilot` binary or starts a live SDK session.** Both actors are driven
-through the SDK seam with stub sessions, so no test here depends on a model answering.
+Real SDK tests are gated by `RALPH_REAL_COPILOT_SDK`; ordinary test runs use stub sessions, so no
+default test depends on a model answering.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
+import textwrap
 from collections.abc import AsyncGenerator, Callable, Sequence
 from pathlib import Path
 
+import pytest
+
 from ralph.cli import render
-from ralph.adapters.copilot import CopilotEditor, CopilotImplementer
+from ralph.adapters.copilot import CopilotEditor, CopilotImplementer, copilot_implementer
+from ralph.adapters.runtime.prompt import conflict_resolution_prompt
 from ralph.adapters.runtime.turn_stream import AutoCompaction, Permission, TokenUsage, Turn, TurnStreamAsk
 from ralph.adapters.git import GitCli, run_git
 from ralph.harness import (
@@ -72,11 +78,13 @@ class StubTurnStreamSession:
         turns: Sequence[Turn],
         *,
         auto_compactions: Sequence[AutoCompaction] = (),
+        resumable_identifier: str | None = None,
         on_start: Callable[[], None] | None = None,
         block_after_turns: bool = False,
     ) -> None:
         self._turns = turns
         self._auto_compactions = tuple(auto_compactions)
+        self._resumable_identifier = resumable_identifier
         self._on_start = on_start
         self._block_after_turns = block_after_turns
         self._released = asyncio.Event()
@@ -86,6 +94,10 @@ class StubTurnStreamSession:
     @property
     def auto_compactions(self) -> tuple[AutoCompaction, ...]:
         return self._auto_compactions
+
+    @property
+    def resumable_identifier(self) -> str | None:
+        return self._resumable_identifier
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         if self._on_start is not None:
@@ -121,6 +133,7 @@ async def test_the_implementer_reports_sdk_usage_and_git_facts(repo: TargetRepo)
         seen.append(ask)
         return StubTurnStreamSession(
             ["implemented\n", TokenUsage(consumed_tokens=999_999)],
+            resumable_identifier="copilot-session-123",
             on_start=commit_work,
         )
 
@@ -137,9 +150,45 @@ async def test_the_implementer_reports_sdk_usage_and_git_facts(repo: TargetRepo)
     assert t.exit_code == 0
     assert t.consumed_tokens == 999_999
     assert t.auto_compactions == 0
+    assert t.resumable_identifier == "copilot-session-123"
     assert t.commits == 1
     assert "copilot.txt" in t.diffstat
     assert t.session_output == "implemented\n"
+
+
+async def test_the_implementer_resumes_the_specific_session_for_conflict_resolution(
+    repo: TargetRepo,
+) -> None:
+    git = GitCli(repo=repo.path)
+    wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
+    seen: list[TurnStreamAsk] = []
+
+    def commit_work() -> None:
+        _commit_stub_work(wt)
+
+    def open_session(ask: TurnStreamAsk) -> StubTurnStreamSession:
+        seen.append(ask)
+        return StubTurnStreamSession(
+            ["resolved\n", TokenUsage(consumed_tokens=333_333)],
+            resumable_identifier=ask.resumable_identifier,
+            on_start=commit_work,
+        )
+
+    t = await CopilotImplementer(open_session=open_session).resolve_conflict(
+        _context(wt), "copilot-session-789"
+    )
+
+    assert seen[0].cwd == wt.path
+    assert seen[0].prompt == conflict_resolution_prompt()
+    assert "Acceptance criteria" not in seen[0].prompt
+    assert seen[0].resumable_identifier == "copilot-session-789"
+    assert seen[0].permit is not None
+    assert seen[0].permit("Write", {"file_path": "copilot.txt"}).allowed
+    assert t.killed is None
+    assert t.consumed_tokens == 333_333
+    assert t.resumable_identifier == "copilot-session-789"
+    assert t.commits == 1
+    assert "resolved" in t.session_output
 
 
 async def test_the_implementer_reports_sdk_auto_compactions(repo: TargetRepo) -> None:
@@ -253,6 +302,61 @@ async def test_the_implementer_is_killed_through_the_sdk_session(repo: TargetRep
 
 def _context(wt: Worktree, budget: Budget = Budget(wall_clock_s=20.0)) -> SessionContext:
     return SessionContext(spec=SPEC, findings=FINDINGS, worktree=wt, budget=budget)
+
+
+REAL = pytest.mark.skipif(
+    os.environ.get("RALPH_REAL_COPILOT_SDK") != "1",
+    reason="set RALPH_REAL_COPILOT_SDK=1 to spend real Copilot SDK tokens",
+)
+
+
+@REAL
+async def test_a_real_copilot_resumed_session_resolves_a_real_rebase_conflict(
+    repo: TargetRepo,
+) -> None:
+    git = GitCli(repo=repo.path)
+    wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
+    spec = Spec(
+        body=textwrap.dedent("""\
+            # 01 - change shared marker
+
+            ## Acceptance criteria
+
+            - [ ] `shared.py` sets `MARKER = "copilot-side"`
+            - [ ] the change is committed
+            """)
+    )
+    context = SessionContext(
+        spec=spec,
+        findings=Findings(body=""),
+        worktree=wt,
+        budget=Budget(wall_clock_s=900.0),
+    )
+
+    first = await copilot_implementer().run(context)
+    assert first.resumable_identifier is not None
+    assert first.commits >= 1
+
+    (repo.path / "shared.py").write_text('MARKER = "integration-side"\n')
+    repo.git("add", "shared.py")
+    repo.git("commit", "-m", "move integration marker")
+    rebase = subprocess.run(
+        ["git", "rebase", "integration"],
+        cwd=wt.path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rebase.returncode != 0
+    assert "<<<<<<<" in (wt.path / "shared.py").read_text()
+
+    resumed = await copilot_implementer().resolve_conflict(context, first.resumable_identifier)
+
+    assert resumed.killed is None
+    assert resumed.resumable_identifier == first.resumable_identifier
+    assert resumed.consumed_tokens > 0
+    assert resumed.commits >= 1
+    assert repo.run_suite(wt.path)
 
 
 # ── the whole Editor, against a stub SDK session ─────────────────────────────────────────────
