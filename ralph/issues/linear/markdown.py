@@ -8,10 +8,11 @@ from ralph.harness import Actor
 from ralph.issues.consumption import SessionConsumption
 from ralph.issues.content import Findings, Spec
 from ralph.issues.linear.model import LinearComment, LinearIssue, LinearIssueStoreError
+from ralph.issues.markdown import ACCEPTANCE_HEADING, FINDINGS_HEADING, section
 
 SPEC_HEADING = "## Spec"
-FINDINGS_HEADING = "## Findings"
-ACCEPTANCE_HEADING = "## Acceptance criteria"
+"""Linear-only: one description field holds both halves, so the spec needs a heading to end at."""
+
 REVISION = re.compile(r"<!--\s*ralph:revision:(\d+)\s*-->")
 
 CONSUMPTION_MARKER = "<!-- ralph:consumption -->"
@@ -26,7 +27,7 @@ CONSUMPTION_LINE = re.compile(
 def parse_content(issue: LinearIssue) -> tuple[str, str]:
     body = issue.description
     spec = _spec_section(body)
-    findings = _section(body, FINDINGS_HEADING)
+    findings = section(body, FINDINGS_HEADING)
     if not spec:
         spec = _without_findings(body).strip()
     if ACCEPTANCE_HEADING not in spec:
@@ -87,15 +88,6 @@ def _spec_section(body: str) -> str:
     rest = body[start + len(SPEC_HEADING) :]
     end = rest.find(FINDINGS_HEADING)
     return rest if end == -1 else rest[:end]
-
-
-def _section(body: str, heading: str) -> str:
-    start = body.find(heading)
-    if start == -1:
-        return ""
-    rest = body[start + len(heading) :]
-    match = re.search(r"\n##\s+", rest)
-    return rest if match is None else rest[: match.start()]
 
 
 def _without_findings(body: str) -> str:

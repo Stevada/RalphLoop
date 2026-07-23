@@ -16,6 +16,7 @@ from ralph.harness import Actor
 from ralph.issues.content import Findings, Spec
 from ralph.issues.consumption import SessionConsumption
 from ralph.issues.graph import IssueGraph, SubIssue, SubIssueId
+from ralph.issues.markdown import ACCEPTANCE_HEADING, FINDINGS_HEADING, section
 from ralph.issues.state import SubIssueState
 from ralph.runlog import Event, EventKind
 
@@ -24,7 +25,7 @@ _ID = re.compile(r"^(\d+)")
 _STATUS = re.compile(r"^Status:\s*(\S+)\s*$", re.MULTILINE)
 _BULLET = re.compile(r"^\s*[-*]\s+(.*)$", re.MULTILINE)
 _NUMBER = re.compile(r"\d+")
-_FINDINGS = "## Findings"
+_BLOCKED_BY_HEADING = "## Blocked by"  # filesystem-only: Linear has native blocking relations
 
 REVISIONS = "revisions"
 """Where the Editor's rewrites live, beside the sub-issue files rather than on top of them.
@@ -52,16 +53,6 @@ class _ParsedIssue:
     state: SubIssueState
     blocked_by: frozenset[SubIssueId]
     path: Path
-
-
-def _section(body: str, heading: str) -> str:
-    """The text under `heading`, up to the next `##`."""
-    start = body.find(heading)
-    if start == -1:
-        return ""
-    rest = body[start + len(heading) :]
-    end = rest.find("\n## ")
-    return rest if end == -1 else rest[:end]
 
 
 def _parse_state(body: str, path: Path) -> SubIssueState:
@@ -92,9 +83,9 @@ def _parse_blockers(body: str, path: Path, siblings: dict[int, SubIssueId]) -> f
     Matched by *number*, not by string, so `#2` and `02` are the same sub-issue — which is what a
     human writing the file means, and the harness should not be the one to disagree.
     """
-    section = _section(body, "## Blocked by")
+    blocked_by = section(body, _BLOCKED_BY_HEADING)
     blockers: set[SubIssueId] = set()
-    for bullet in _BULLET.findall(section):
+    for bullet in _BULLET.findall(blocked_by):
         text = bullet.strip()
         if text.lower().startswith("none"):
             continue
@@ -131,9 +122,9 @@ class FilesystemIssueStore:
         parsed: list[_ParsedIssue] = []
         for path in files:
             body = path.read_text()
-            if "## Acceptance criteria" not in body:
+            if ACCEPTANCE_HEADING not in body:
                 raise IssueParseError(
-                    f"{path.name} has no `## Acceptance criteria` — an unattended agent has "
+                    f"{path.name} has no `{ACCEPTANCE_HEADING}` — an unattended agent has "
                     "nothing else to aim at"
                 )
             parsed.append(
@@ -174,7 +165,7 @@ class FilesystemIssueStore:
         """Revision 0: the sub-issue file exactly as the Planner wrote it. The spec is the file;
         the findings are the one section the Editor owns."""
         body = self._path_of(id).read_text()
-        return Spec(body=body), Findings(body=_section(body, _FINDINGS).strip())
+        return Spec(body=body), Findings(body=section(body, FINDINGS_HEADING).strip())
 
     def _consumption_path(self) -> Path:
         return self.issues_dir / CONSUMPTION
