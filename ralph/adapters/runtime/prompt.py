@@ -45,7 +45,7 @@ and do not declare victory.** Say so, on stdout, exactly like this:
  "what_would_satisfy": "what would have to be true for it to be met"}}
 {IMPASSE_CLOSE}
 
-An honest impasse is a good outcome. It goes to a reviewer who can change the spec. A criterion
+An honest impasse is a good outcome. It goes to an Editor who can change the spec. A criterion
 quietly lowered until it passes goes to nobody, and is the failure this whole system was built to
 catch."""
 

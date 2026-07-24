@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ralph.cli import ENV_FILE, main, _load_env, _options_for, validate_agents
+from ralph.cli import ENV_FILE, main, _load_env, _options_for, validate_actors
 
 
 def test_cli_options_have_the_current_defaults() -> None:
@@ -29,7 +29,7 @@ def test_retired_command_options_are_rejected(tmp_path: Path) -> None:
 
 
 def test_codex_is_a_known_editor() -> None:
-    validate_agents(_options_for({}, editor="codex"))
+    validate_actors(_options_for({}, editor="codex"))
 
 
 def test_a_dotenv_is_loaded_wholesale_without_policing_keys(

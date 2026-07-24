@@ -264,7 +264,7 @@ async def _open_real_session(
                     on_permission_request=on_permission_request,
                 ),
             )
-    except Exception:
+    except Exception:  # noqa: BLE001 — clean up the client before propagating any failure
         await client.stop()
         raise
     return _RuntimeSession(

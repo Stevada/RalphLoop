@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from ralph.issues.filesystem import FilesystemIssueStore
-from ralph.cli import NoAgent, Refused, main, render_plan, render_refusals, run, validate
+from ralph.cli import NoActor, Refused, main, render_plan, render_refusals, run, validate
 from ralph.harness import (
     Check,
     RepoFacts,
@@ -240,7 +240,7 @@ def test_validate_prints_the_discovered_commands(
 
 
 def test_validate_rejects_editor_none(repo: TargetRepo) -> None:
-    with pytest.raises(NoAgent, match="Known: claude, codex, copilot"):
+    with pytest.raises(NoActor, match="Known: claude, codex, copilot"):
         validate(repo.path, options=make_options(editor="none"))
 
 

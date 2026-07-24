@@ -1,7 +1,9 @@
-"""The Implementer role core: everything about running an Implementer that is not agent-specific.
+"""The Implementer role core: everything about running an Implementer that is not specific to one
+concrete adapter.
 
-Two transports feed it. A subprocess Implementer (Codex, the stand-in) runs through `run_agent` over
-the `Session` in `session.py`; an SDK Implementer (Copilot, Codex-over-SDK) runs through
+Two transports feed it. A subprocess Implementer (Codex, the stand-in) runs through
+`run_subprocess_implementer` over the `Session` in `session.py`; an SDK Implementer (Copilot,
+Codex-over-SDK) runs through
 `run_turn_stream_implementer` over the `TurnStreamSession` in `turn_stream.py`. Either way the same
 facts are collected here, once — the `<impasse>` sentinel, the commit count, the diffstat.
 
@@ -98,7 +100,7 @@ def implementer_telemetry(
     )
 
 
-async def run_agent(
+async def run_subprocess_implementer(
     argv: Sequence[str],
     wt: Worktree,
     budget: Budget,
@@ -152,7 +154,7 @@ class SubprocessImplementer:
 
     async def run(self, context: SessionContext) -> SessionTelemetry:
         worktree = context.worktree
-        return await run_agent(
+        return await run_subprocess_implementer(
             self.build_argv(context.spec, context.findings, worktree),
             worktree,
             context.budget,
@@ -167,7 +169,7 @@ class SubprocessImplementer:
         argv = self.build_resolve_argv(context, resumable_identifier)
         if argv is None:
             return _resume_unavailable(context.worktree, resumable_identifier)
-        return await run_agent(
+        return await run_subprocess_implementer(
             argv,
             context.worktree,
             context.budget,

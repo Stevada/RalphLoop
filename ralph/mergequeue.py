@@ -2,13 +2,13 @@
 
 **This is the piece that makes parallelism honest**, and it is worth being precise about why.
 The suite is re-run *in the worktree*, *after* the rebase — on the **prospective merge result**.
-So the fast-forward that follows is only ever a fast-forward of an already-verified tree, and the
+So the fast-forward that follows is only ever a fast-forward of an already-green tree, and the
 integration branch is **correct by construction**.
 
-Run the suite before the rebase and you have verified a tree that is not the one you are landing.
-Run it in the base checkout and you have verified a tree that does not contain the work. Both
-mistakes produce a green integration branch that is broken, which is the exact failure the whole
-harness exists to make impossible.
+Run the suite before the rebase and you have run it against a tree that is not the one you are
+landing. Run it in the base checkout and you have run it against a tree that does not contain the
+work. Both mistakes produce a green integration branch that is broken, which is the exact failure
+the whole harness exists to make impossible.
 
 The merge lock is held for rebase → suite → fast-forward, and for nothing else. It is never held
 while an Editor reasons: one sub-issue's integration failure must not stall the queue for its

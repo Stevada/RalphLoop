@@ -73,7 +73,7 @@ PRE_COMMIT_CONFIGS = (".pre-commit-config.yaml", ".pre-commit-config.yml")
 DEFAULT_LOG_LEVEL = "WARNING"
 
 
-class NoAgent(RuntimeError):
+class NoActor(RuntimeError):
     """The CLI named an Implementer or Editor the harness does not know. The harness will not
     invent one."""
 
@@ -161,14 +161,14 @@ def _add_option_flags(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def validate_agents(options: RunOptions) -> None:
+def validate_actors(options: RunOptions) -> None:
     """The CLI must name actors this harness knows, without constructing their adapters."""
     if options.implementer not in {CODEX, COPILOT}:
-        raise NoAgent(
+        raise NoActor(
             f"implementer: {options.implementer!r} names no Implementer. Known: {CODEX}, {COPILOT}."
         )
     if options.editor not in {CLAUDE, CODEX, COPILOT}:
-        raise NoAgent(
+        raise NoActor(
             f"editor: {options.editor!r} names no Editor. Known: {CLAUDE}, {CODEX}, {COPILOT}."
         )
 
@@ -187,8 +187,8 @@ def editor_of(options: RunOptions, suite: tuple[str, ...]) -> Editor:
         return codex_editor(suite=suite)
     if named == COPILOT:
         return copilot_editor(suite=suite)
-    validate_agents(options)
-    raise AssertionError("validate_agents accepted an unknown Editor")
+    validate_actors(options)
+    raise AssertionError("validate_actors accepted an unknown Editor")
 
 
 def implementer_of(options: RunOptions) -> Implementer:
@@ -198,8 +198,8 @@ def implementer_of(options: RunOptions) -> Implementer:
         return codex_implementer()
     if named == COPILOT:
         return copilot_implementer()
-    validate_agents(options)
-    raise AssertionError("validate_agents accepted an unknown Implementer")
+    validate_actors(options)
+    raise AssertionError("validate_actors accepted an unknown Implementer")
 
 
 def command_source_for() -> CommandSource:
@@ -349,7 +349,7 @@ def readiness(
     command_source: CommandSource | None = None,
 ) -> Readiness:
     options = options or _options_for()
-    validate_agents(options)
+    validate_actors(options)
     facts, commands = _facts_and_commands(repo.resolve(), issue_source, options, command_source)
     return Readiness(
         refusals=refusals(facts),
@@ -389,7 +389,7 @@ def render_plan(
     graph is acyclic, and it costs nothing to run because no session is ever opened.
     """
     options = options or _options_for()
-    validate_agents(options)
+    validate_actors(options)
     graph, states = _read_graph(repo.resolve(), issue_source, options)
     edges = sum(len(sub.blocked_by) for sub in graph.sub_issues.values())
     lines = [f"{len(graph.sub_issues)} sub-issues, {edges} edges, no cycle."]
@@ -422,7 +422,7 @@ async def run(
     suite calls a model."""
     repo = repo.resolve()
     options = options or _options_for()
-    validate_agents(options)
+    validate_actors(options)
 
     # The same checks `ralph validate` runs, and they are not advisory. A run that starts on `main`
     # has already done the damage by the time anybody reads the warning it printed.
@@ -588,8 +588,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         protected=args.protected or DEFAULT_PROTECTED,
     )
     try:
-        validate_agents(options)
-    except NoAgent as exc:
+        validate_actors(options)
+    except NoActor as exc:
         print(exc)
         return 1
 

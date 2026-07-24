@@ -124,7 +124,7 @@ class FilesystemIssueStore:
             body = path.read_text()
             if ACCEPTANCE_HEADING not in body:
                 raise IssueParseError(
-                    f"{path.name} has no `{ACCEPTANCE_HEADING}` — an unattended agent has "
+                    f"{path.name} has no `{ACCEPTANCE_HEADING}` — an unattended Implementer has "
                     "nothing else to aim at"
                 )
             parsed.append(
