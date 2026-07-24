@@ -1,0 +1,65 @@
+[project]
+name = "ralph"
+version = "0.1.0"
+description = "Harnessed engineering for coding agents"
+requires-python = ">=3.12"
+dependencies = [
+    "python-dotenv>=1.2.2",
+]
+
+[project.optional-dependencies]
+# Extras, not dev dependencies: SDK-backed actors are runtime capabilities a user opts into, and a
+# run that never reaches one must not require those SDKs installed at all.
+editor = ["claude-agent-sdk>=0.1"]
+copilot = [
+    "github-copilot-sdk>=1.0.7",
+]
+
+[project.scripts]
+ralph = "ralph.cli:main"
+
+# The suite, the typechecker and the linter are not something a consumer of `ralph` can opt into —
+# they are what *we* need to work on it. PEP 735 group rather than an extra, so `uv sync` installs
+# them by default and `pip install ralph[dev]` is not a thing anyone can ask for by mistake.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "mypy>=1.13",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ralph*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# `TestRunner` is a port, not a test class. Nothing here uses class-based tests.
+python_classes = []
+
+[tool.mypy]
+strict = true
+# `tests` is in scope deliberately: the assertion that each fake structurally satisfies its
+# Protocol is an annotation in tests/harness/test_contract.py, and only mypy can check it. Runtime
+# isinstance on a Protocol compares method names, not signatures.
+files = ["ralph", "tests"]
+
+# The import-fallback boundaries in the package. SDKs are optional dependencies, so their types are
+# not available to check against unless the matching extra is installed. Everything they return is
+# converted into our own values at the boundary and never carried inward.
+[[tool.mypy.overrides]]
+module = "claude_agent_sdk.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "copilot.*"
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

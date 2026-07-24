@@ -2,76 +2,216 @@
 
 Harness engineering for autonomous issue execution via coding agents.
 
-Ralph Loop reads issue files from a target repo's `.scratch/` directory, resolves intra-repo dependencies, spins up isolated git worktrees, and dispatches one GitHub Copilot agent per issue in parallel waves. Each wave blocks until all issues in it are merged, then the next wave begins.
+Three actors. A **Planner** (human-invoked) cuts a parent issue into a graph of sub-issues. An
+**Implementer** (Codex or Copilot) writes the code and the tests, one sub-issue per session, in
+an isolated worktree. An **Editor** (Claude Code or Copilot, read-only) diagnoses the sessions
+that fail and returns a verdict.
 
-## Prerequisites
+The harness is the machinery between them: it dispatches sub-issues as their dependencies land,
+bounds every session, classifies every failure honestly, and lands work through a lock-guarded
+**merge queue** that rebases, re-runs the suite on the prospective merge, and fast-forwards — so
+the integration branch is correct by construction.
 
-- `copilot` CLI (GitHub Copilot agent)
-- Git 2.38+ (worktree support)
-- [mattpocock/skills](https://github.com/mattpocock/skills) installed at user level (provides the `/tdd` skill):
-  ```bash
-  npx skills@latest add mattpocock/skills
-  ```
+> **Status: it runs.** All eleven sub-issues in `.scratch/build_harness/` have landed. What has
+> **not** happened: no run has yet been driven end-to-end by a real model. Every test in the suite
+> uses a scripted stand-in agent — a real subprocess doing real git work, with no intelligence in it
+> — which is what makes the harness testable at all, and is also exactly the gap that remains.
+
+## Setup
+
+The project is managed with [uv](https://docs.astral.sh/uv/). One command, from a fresh clone:
+
+```bash
+uv sync                        # creates .venv on the right Python, from uv.lock
+uv sync --extra editor         # ...and the Claude Agent SDK, if you use --editor claude
+```
+
+uv fetches the interpreter itself — `.python-version` pins the project to 3.12, the floor of
+`requires-python`, so a 3.13-only feature fails here rather than in the checkout of someone we
+promised 3.12 to.
+
+There is nothing to activate: `uv run <cmd>` syncs and runs in one step.
+
+```bash
+uv run pytest -q               # the suite
+uv run mypy                    # strict, over ralph/ and tests/
+uv run ruff check
+```
 
 ## Usage
 
 ```bash
-# Validate a target repo before running
-./src/validate.sh /path/to/target-repo
-
-# Optionally specify a custom issues directory
-./src/validate.sh /path/to/target-repo /path/to/issues-dir
-
-# Run all issues from a .scratch directory in dependency-ordered waves
-./src/parallel.sh /path/to/target-repo/.scratch
-
-# Run a single issue (auto-detects git root from the file path)
-./src/once.sh /path/to/target-repo/.scratch/01-my-issue.md
+uv run ralph validate <repo> [issue-source]  # refuses a run this repo is not ready for
+uv run ralph run --dry-run <repo>            # the build order, without opening a session
+uv run ralph run <repo> [issue-source]       # run the graph to completion
 ```
+
+`validate` refuses; it does not warn. A protected branch, a dirty tree, a missing test command, a
+pre-commit hook the repo asks for and has not installed, a graph that will not parse — each gets its
+own sentence, and `ralph run` runs the same checks before it dispatches anything.
+
+## Target repo commands
+
+Each target repo declares Ralph's commands in a tracked `.ralph.toml` file at its root:
+
+```toml
+[commands]
+test = "uv run pytest -q"  # required
+install = "uv sync"        # optional
+```
+
+`test` is the command the merge queue runs on the prospective merge. `install`, when present, runs
+once in the base checkout before any worktree is opened. Both command strings are split with shell
+quoting rules.
+
+A repo with no discoverable `test` command is not ready to run. `ralph validate` prints the
+discovered commands when readiness passes, and refuses when the descriptor is missing, malformed, or
+does not declare a runnable `test`.
+
+## Reading order
+
+| Document | What it is |
+|---|---|
+| `docs/design.md` | Why the system is shaped this way, and the bets taken deliberately |
+| `docs/architecture.md` | The map — layers, where each concept lives, seams, invariants |
+| `docs/cli-metering.md` | How each backend CLI exposes token-consumption telemetry |
+| `docs/harness-flow.mmd` | The control flow of one run, as a diagram |
+| `UBIQUITOUS_LANGUAGE.md` | Canonical for every domain term, **including code identifiers** |
+| `CLAUDE.md` | How to work in this repo (status, commands); coding rules auto-load from `.claude/rules/` |
+
+Documents reference each other in one direction only — from orientation toward detail — so there is
+always a valid reading order and no reference cycles. `README.md` and `CLAUDE.md` are the two entry
+points (human and agent); `UBIQUITOUS_LANGUAGE.md` (terms) and `docs/design.md` (why) are the shared
+leaves everything else points down to.
+
+## Prerequisites
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) — it fetches Python 3.12 itself,
+  so that is the only thing you must install first
+- `codex` or `copilot` CLI for the Implementer; Claude Code or `copilot` for the Editor
+- Git 2.38+ (worktree support)
+- [mattpocock/skills](https://github.com/mattpocock/skills) at user level (provides `/tdd`):
+  ```bash
+  npx skills@latest add mattpocock/skills
+  ```
 
 ## Issue format
 
-Issues are Markdown files inside the target repo's `.scratch/` directory:
+Sub-issues are Markdown files in the target repo's `.scratch/<phase>/issues/` directory:
 
 ```markdown
 # 01 — Add user authentication
 
-Status: not-started
+Status: ready
 
-Brief description of the task.
+Short description of the work.
 
 ## Acceptance criteria
 - [ ] Users can sign in with email/password
 - [ ] Invalid credentials return a 401
 
 ## Blocked by
-- #00 (database schema)
+- #00 — database schema
 ```
 
-**Status values:** `not-started` → `ready-for-agent` → `in-progress` → `done`
+**Status values:** `ready` → `in-progress` → `landed`, or `needs-human`.
 
-`parallel.sh` sets `Status: done` automatically after a successful merge. Do not set it manually.
+Four, and no others. `ready` is the Planner's authorisation to run — a sub-issue it has not
+authorised does not belong in the graph yet, so there is no `not-started`.
 
-**Dependencies:** list blockers in a `## Blocked by` section using `#N` numeric references (matched to `N-*.md` files) or bare filenames. An issue runs only when all its blockers are `done`.
+`landed` is a sub-issue's terminal state; `done` belongs to the parent issue and is never written
+to a sub-issue. The merge queue sets `landed` automatically, after the fast-forward. Do not set it
+by hand.
 
-## PRD support
+**Dependencies:** list blockers under `## Blocked by` using `#N` references (matched to `N-*.md`)
+or bare filenames. A sub-issue becomes eligible only once every sub-issue it is blocked by has
+`landed`. `Blocked` refers to this edge and nothing else.
 
-If your issues live inside a subdirectory (e.g. `.scratch/phase-1/issues/`), place a `PRD.md` one level above the issues directory. Both `once.sh` and `parallel.sh` automatically inject it as design context into each agent invocation.
+**PRD:** place a `PRD.md` one level above the `issues/` directory. Ralph does not inject it into
+any prompt; it is discoverable directly, since Implementer and Editor sessions read the full repo
+checkout, PRD included.
 
-## Failure recovery
+## Linear issue source
 
-Failed worktrees are preserved at `<repo>/.worktrees/failed/<slug>` for inspection. Active worktrees live at `<repo>/.worktrees/active/`. Merge conflicts also move the worktree to `failed/` rather than corrupting the branch.
+Filesystem issues remain discoverable when `issue_source` is omitted. To run from Linear, pass
+`--issue-mode linear`, pass the parent issue identifier as `issue_source`, and set `LINEAR_API_KEY`:
 
-## Environment variables
+```bash
+LINEAR_API_KEY=lin_api_... uv run ralph run --dry-run --issue-mode linear <repo> ENG-123
+```
 
-| Variable | Default | Description |
+The Linear parent issue's sub-issues are Ralph's sub-issues. Linear's native issue relation
+`blocked by` supplies graph edges. Each sub-issue description stores the current Ralph content:
+
+```markdown
+## Spec
+
+The current spec, including acceptance criteria.
+
+## Findings
+
+The current findings, if any.
+```
+
+When the Editor records a revision, Ralph snapshots the original description as `Ralph revision 0`
+in a Linear comment, updates the sub-issue description to the latest spec/findings, then appends
+the new revision as another Ralph comment. The description stays readable; the revision trail stays
+attached to the sub-issue.
+
+## Failure taxonomy
+
+Three failure outcomes, and each one routes somewhere specific:
+
+| Outcome | Meaning | Goes to |
 |---|---|---|
-| `COPILOT_MODEL` | `gpt-5.3-codex` | Model passed to `copilot --model` |
-| `RALPH_PROTECTED_BRANCHES` | `main master` | Space-separated branches Ralph refuses to run on |
+| `impasse` | The Implementer did not deliver — it said why, or committed nothing | Editor |
+| `integration-failed` | Committed work is red or conflicting on the prospective merge | Editor |
+| `infra-failed` | The environment is broken, not the code | Human |
+
+**There is no retry destination in this system.** A failed sub-issue is quarantined — marked
+`needs-human`, worktree preserved, its dependents never become eligible — and everything
+unaffected still lands. The one narrow exception is mechanical rebase-conflict recovery: Ralph may
+resume the same Implementer session once, in the conflicted worktree, before it engages the Editor.
+The human is paged **once**, at the end. The run never stops early.
+
+## Run Options
+
+A run reads every non-secret argument from the CLI and the one secret from `.env`. Ralph loads the
+whole `.env` so its suite inherits the target repo's own variables (`DATABASE_URL`, …) too, and
+reads only `LINEAR_API_KEY` for itself.
+
+The CLI defaults match Ralph's current common path:
+
+```bash
+--issue-mode filesystem
+--implementer codex
+--editor claude
+--protected main
+--protected master
+```
+
+How `codex`/`copilot` is driven, and the four Linear state names, are hardcoded in the adapter that
+owns them.
+
+### `.env` — the one secret
+
+| Variable | Description |
+|---|---|
+| `LINEAR_API_KEY` | Linear API key. Required only when `issue_mode: linear`. |
+
+Operational verbosity is the `--log-level` flag; `issue_source` is the per-run positional argument.
+Neither is a secret, so neither lives here.
 
 ## Design principles
 
-1. **Target repos stay agnostic** — Ralph never modifies target repo structure. It reads `.scratch/` for issues and `CLAUDE.md` for project context.
-2. **Single-repo scope** — Ralph handles intra-repo dependencies only. Cross-repo sequencing is the user's responsibility.
-3. **Skills as references** — Ralph's prompt invokes `/tdd` by name. Skills must be installed at user level, not bundled into this repo.
-4. **Worktree isolation** — Each issue runs in its own git worktree. Parallel agents are merged sequentially to avoid conflicts.
+1. **Target repos stay agnostic** — Ralph never modifies target repo structure. It reads
+   `.scratch/` for issues, `.ralph.toml` for commands, a repo-level agent context file
+   (`CLAUDE.md` for Copilot, `AGENTS.md` or `CLAUDE.md` for Codex), and `.env` at the repo root.
+2. **Single-repo scope** — intra-repo dependencies only. Cross-repo sequencing is the user's.
+3. **Skills as references** — the prompt invokes `/tdd` by name. Skills are installed at user
+   level, never bundled here.
+4. **Worktree isolation** — every session runs in its own worktree. Parallel sessions land one at
+   a time, through the merge queue.
+5. **The merge queue is the harness suite gate.** A model's exit code is its opinion; the suite is a
+   fact only when Ralph runs it on the prospective merge. A suite the harness runs is still inside
+   the **blast radius** — only CI on a clean checkout is **honest**.

@@ -1,3 +1,23 @@
+# Run artifacts
 .worktrees/
 ralph-output.txt
 timings.txt
+.scratch/
+
+# Secrets and per-run values — .env.example is the tracked template
+.env
+
+# Python
+*.pyc
+__pycache__/
+.venv/
+*.egg-info/
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Local editor settings (shared .claude/ config stays tracked)
+.claude/settings.local.json
+.vscode/

@@ -1,0 +1,54 @@
+%% Ralph Loop — Harness Lifecycle
+%% The control flow of one run, from reading the issue graph to a `done` parent issue.
+%% Vocabulary: ../UBIQUITOUS_LANGUAGE.md   Design: ./design.md
+graph TD
+    start(["Run starts"]) --> readGraph["Read the issue graph once"]
+    readGraph --> readiness{"Pre-flight ready?<br/>commands discovered · graph usable ·<br/>branch and tree safe"}
+    readiness -->|no| abort(["No actor starts"])
+    readiness -->|yes| dispatch["Dispatch eligible sub-issues<br/>concurrently, each in<br/>its own worktree"]
+
+    dispatch --> impl["Implementer session<br/>TDD · wall-clock backstop"]
+    impl --> outcome{"Session outcome"}
+
+    outcome -->|success| mergeQ["Merge queue:<br/>acquire merge lock · rebase ·<br/>run suite"]
+    outcome -->|impasse| editor
+    outcome -->|"infra-failed<br/>never retried · no cycle spent<br/>the Editor never sees it"| quarantine
+
+    mergeQ --> mergeCheck{"Green on the<br/>prospective merge?"}
+    mergeCheck -->|yes| ff["Fast-forward merge ·<br/>write 'landed' · release lock"]
+    mergeCheck -->|"conflict or red · release lock<br/>(integration-failed)"| editor
+    ff --> landed(["Sub-issue landed"])
+
+    editor["Editor session<br/>read worktree · reproduce ·<br/>wall-clock backstop"] --> edOutcome{"Editor session<br/>completed?"}
+    edOutcome -->|"infra-failed"| quarantine
+    edOutcome -->|verdict| verdict{"Verdict"}
+
+    verdict -->|revise| cycle{"Third cycle<br/>already?"}
+    verdict -->|planning-defect| quarantine
+    verdict -->|inconclusive| quarantine
+    cycle -->|"no · restart clean"| impl
+    cycle -->|"yes · cap reached"| quarantine
+
+    quarantine["Quarantine · mark 'needs-human' ·<br/>preserve worktree · downstream<br/>never becomes eligible"] --> more
+    landed --> more{"More eligible<br/>sub-issues?"}
+    more -->|yes| dispatch
+    more -->|no| runEnd["Run ends"]
+
+    runEnd --> notify["One notification:<br/>landed · needs-human · verdict"]
+    notify --> anyEsc{"Any sub-issue<br/>needs a human?"}
+    anyEsc -->|yes| human(["Page the human · once, at the end<br/>the run never stops early"])
+    anyEsc -->|no| pr["Open PR from<br/>integration branch"]
+    pr --> ci{"CI on a clean<br/>checkout"}
+    ci -->|"green · human reads diff"| done(["Parent issue: done"])
+    ci -->|red| human
+
+    classDef terminal fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
+    classDef stop fill:#ffebee,stroke:#c62828,color:#b71c1c;
+    classDef decision fill:#fff8e1,stroke:#f9a825,color:#5d4037;
+    classDef implementer fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
+    classDef editor fill:#f3e5f5,stroke:#7b1fa2,color:#4a148c;
+    class start,landed,done terminal;
+    class abort,human stop;
+    class readiness,outcome,mergeCheck,edOutcome,verdict,cycle,more,anyEsc,ci decision;
+    class impl,mergeQ,ff implementer;
+    class editor editor;
