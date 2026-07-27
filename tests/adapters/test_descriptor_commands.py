@@ -11,20 +11,17 @@ from ralph.adapters.commands import (
     DescriptorMissingTestError,
     DescriptorTomlError,
 )
-from ralph.adapters.git import run_git
 from ralph.ports import CommandSource
 
 
-def write_tracked_descriptor(repo: Path, body: str) -> Path:
-    run_git(repo, "init")
+def write_descriptor(repo: Path, body: str) -> Path:
     descriptor = repo / ".ralph.toml"
     descriptor.write_text(body)
-    run_git(repo, "add", ".ralph.toml")
     return descriptor
 
 
 def test_descriptor_commands_reads_test_and_install_commands(tmp_path: Path) -> None:
-    write_tracked_descriptor(
+    write_descriptor(
         tmp_path,
         """
 [commands]
@@ -41,7 +38,7 @@ install = "uv sync --extra 'editor copilot'"
 
 
 def test_descriptor_commands_allows_no_install_command(tmp_path: Path) -> None:
-    write_tracked_descriptor(
+    write_descriptor(
         tmp_path,
         """
 [commands]
@@ -63,7 +60,7 @@ def test_descriptor_commands_rejects_a_missing_descriptor(tmp_path: Path) -> Non
 
 
 def test_descriptor_commands_rejects_malformed_toml(tmp_path: Path) -> None:
-    descriptor = write_tracked_descriptor(tmp_path, "[commands\n")
+    descriptor = write_descriptor(tmp_path, "[commands\n")
 
     with pytest.raises(DescriptorTomlError, match=rf"{descriptor}.*TOML"):
         DescriptorCommandSource().discover(tmp_path)
@@ -82,7 +79,7 @@ def test_descriptor_commands_rejects_malformed_toml(tmp_path: Path) -> None:
 def test_descriptor_commands_rejects_a_missing_or_empty_test(
     tmp_path: Path, body: str
 ) -> None:
-    descriptor = write_tracked_descriptor(tmp_path, body)
+    descriptor = write_descriptor(tmp_path, body)
 
     with pytest.raises(DescriptorMissingTestError, match=rf"{descriptor}.*commands\.test"):
         DescriptorCommandSource().discover(tmp_path)
@@ -98,7 +95,7 @@ def test_descriptor_commands_rejects_a_missing_or_empty_test(
 def test_descriptor_commands_rejects_non_string_command_values(
     tmp_path: Path, field: str, body: str
 ) -> None:
-    descriptor = write_tracked_descriptor(tmp_path, body)
+    descriptor = write_descriptor(tmp_path, body)
 
     with pytest.raises(DescriptorCommandTypeError, match=rf"{descriptor}.*{field}.*string"):
         DescriptorCommandSource().discover(tmp_path)
