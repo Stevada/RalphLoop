@@ -21,7 +21,7 @@ from ralph.adapters.runtime.turn_stream import (
 from ralph.issues import Findings, Spec
 from ralph.ports import Worktree
 
-MODEL = "gpt-5.4"
+MODEL = "gpt-5.5"
 IMPLEMENTER_SANDBOX = "workspace-write"
 EDITOR_SANDBOX = "read-only"
 APPROVAL = "never"
@@ -30,6 +30,10 @@ THREAD_STARTED = "thread.started"
 TURN_COMPLETED = "turn.completed"
 CONTEXT_COMPACTED = "context_compacted"
 CONTEXT_COMPACTION = "context_compaction"
+
+TOTAL_TOKENS = "total_tokens"
+INPUT_TOKENS = "input_tokens"
+OUTPUT_TOKENS = "output_tokens"
 
 
 class CodexUsageError(ValueError):
@@ -168,8 +172,28 @@ def _nested_usage(event: Mapping[str, object]) -> dict[str, object]:
 
 
 def _usage_total(event: Mapping[str, object]) -> int | None:
-    total = _nested_usage(event).get("total_tokens")
-    return total if isinstance(total, int) and not isinstance(total, bool) else None
+    """`total_tokens` where Codex sends it, else input plus output.
+
+    Releases since codex-cli 0.143.0 drop `total_tokens` from `turn.completed` and send the
+    components instead. `cached_input_tokens` and `reasoning_output_tokens` are breakdowns *of*
+    those two, not addends — summing all four double-counts.
+    """
+    usage = _nested_usage(event)
+    total = _optional_int(usage, TOTAL_TOKENS)
+    if total is not None:
+        return total
+    parts = (_optional_int(usage, INPUT_TOKENS), _optional_int(usage, OUTPUT_TOKENS))
+    if all(part is None for part in parts):
+        return None
+    return sum(part for part in parts if part is not None)
+
+
+def _completed_turn_tokens(event: Mapping[str, object], line: str) -> int:
+    """A `turn.completed` carrying no readable count is a schema break, not a zero."""
+    total = _usage_total(event)
+    if total is None:
+        raise CodexUsageError(f"a turn.completed event with no token counts in it: {line!r}")
+    return total
 
 
 async def end_of_turn_consumed_tokens(session: Session, _worktree: Worktree) -> int | None:
@@ -179,10 +203,7 @@ async def end_of_turn_consumed_tokens(session: Session, _worktree: Worktree) -> 
         event = _loads(line)
         if _event_type(event) != TURN_COMPLETED:
             continue
-        total = _usage_total(event)
-        if total is None:
-            raise CodexUsageError(f"a turn.completed event with no total_tokens in it: {line!r}")
-        found = total
+        found = _completed_turn_tokens(event, line)
     return found
 
 
@@ -283,10 +304,7 @@ class CodexJsonSession(TurnStreamSession):
                 self._resumable_identifier = id
 
         if kind == TURN_COMPLETED:
-            total = _usage_total(event)
-            if total is None:
-                raise CodexUsageError(f"a turn.completed event with no total_tokens in it: {line!r}")
-            self._turns.put_nowait(TokenUsage(consumed_tokens=total))
+            self._turns.put_nowait(TokenUsage(consumed_tokens=_completed_turn_tokens(event, line)))
 
         if _is_compaction(kind):
             self._auto_compactions.append(_compaction_of(kind, event))

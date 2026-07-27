@@ -77,7 +77,7 @@ def test_how_codex_is_driven_is_fixed_not_configured() -> None:
     assert "--sandbox" in argv and IMPLEMENTER_SANDBOX in argv
     assert "--ask-for-approval" in argv and "never" in argv
     assert "--dangerously-bypass-approvals-and-sandbox" not in argv
-    assert "gpt-5.4" in argv
+    assert "gpt-5.5" in argv
 
 
 # ── completed-turn usage ─────────────────────────────────────────────────────────────────────
@@ -95,6 +95,25 @@ async def test_consumption_comes_from_the_completed_turn_usage() -> None:
     )
 
     assert await end_of_turn_consumed_tokens(session, Worktree(Path("/w"), "b", "base")) == 456
+
+
+async def test_consumption_adds_up_a_usage_that_carries_no_total() -> None:
+    """Verbatim from codex-cli 0.143.0. `cached_input_tokens` and `reasoning_output_tokens` break
+    down the other two, so the total is input + output — 2_450_064, not the 4_729_086 that summing
+    all four would give."""
+    session = Session(
+        bound=Bound(killed=None, consumed_tokens=0),
+        exit_code=0,
+        output=(
+            '{"type":"turn.completed","usage":{"input_tokens":2421295,'
+            '"cached_input_tokens":2269184,"output_tokens":28769,'
+            '"reasoning_output_tokens":9838}}\n'
+        ),
+        wall_clock_s=1.0,
+    )
+
+    total = await end_of_turn_consumed_tokens(session, Worktree(Path("/w"), "b", "base"))
+    assert total == 2_450_064
 
 
 async def test_a_completed_turn_without_usage_is_loud() -> None:
@@ -118,7 +137,11 @@ final = int(sys.argv[1])
 mode = sys.argv[2]
 if final:
     print(json.dumps({"type": "thread.started", "thread_id": "codex-thread-123"}), flush=True)
-    print(json.dumps({"type": "turn.completed", "usage": {"total_tokens": final}}), flush=True)
+    # The live shape: components, no total, with cached/reasoning set so that a reader which
+    # summed all four would report 2x final rather than final.
+    usage = {"input_tokens": final - 34, "cached_input_tokens": final - 34,
+             "output_tokens": 34, "reasoning_output_tokens": 34}
+    print(json.dumps({"type": "turn.completed", "usage": usage}), flush=True)
 print(json.dumps({"type": "agent_message", "message": "done"}), flush=True)
 if mode == "compact":
     print(json.dumps({"type": "context_compacted", "pre_compaction_tokens": 170000, "post_compaction_tokens": 43000, "tokens_removed": 127000}), flush=True)
@@ -277,7 +300,7 @@ async def test_the_codex_implementer_resumes_the_specific_thread_for_conflict_re
                 "commit",
                 "-m", "resolve conflict",
             ], check=True)
-            print(json.dumps({{"type": "turn.completed", "usage": {{"total_tokens": 770}}}}), flush=True)
+            print(json.dumps({{"type": "turn.completed", "usage": {{"input_tokens": 736, "cached_input_tokens": 700, "output_tokens": 34, "reasoning_output_tokens": 12}}}}), flush=True)
             print(json.dumps({{"type": "agent_message", "message": "resolved"}}), flush=True)
             """)
     )
@@ -356,7 +379,8 @@ def _recording_editor_argv(
         "-c",
         "import json; "
         "print(json.dumps({'type':'agent_message','message':%r})); "
-        "print(json.dumps({'type':'turn.completed','usage':{'total_tokens':55000}}))"
+        "print(json.dumps({'type':'turn.completed','usage':{'input_tokens':54000,"
+        "'cached_input_tokens':50000,'output_tokens':1000,'reasoning_output_tokens':400}}))"
         % f"<verdict>{json.dumps(answer)}</verdict>",
     )
 

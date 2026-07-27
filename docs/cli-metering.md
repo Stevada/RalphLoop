@@ -6,9 +6,12 @@ human visibility and cost accounting; it is not a session bound, and no harness 
 ## Codex
 
 `codex exec --json` emits JSONL events during the session. Ralph's Codex turn-stream wrapper reads
-`usage.total_tokens` from completed-turn events and stores it as
-`SessionTelemetry.consumed_tokens`. The same wrapper captures context-compaction events as
-auto-compaction telemetry for the persistence path that consumes SDK session metadata.
+the token total from completed-turn events and stores it as `SessionTelemetry.consumed_tokens`. It
+takes `usage.total_tokens` where Codex sends it, and otherwise adds `usage.input_tokens` to
+`usage.output_tokens` — releases since codex-cli 0.143.0 drop the total and send components, where
+`cached_input_tokens` and `reasoning_output_tokens` break down those two rather than adding to them.
+The same wrapper captures context-compaction events as auto-compaction telemetry for the persistence
+path that consumes SDK session metadata.
 
 ## Copilot
 
