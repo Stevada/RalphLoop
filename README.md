@@ -52,7 +52,7 @@ own sentence, and `ralph run` runs the same checks before it dispatches anything
 
 ## Target repo commands
 
-Each target repo declares Ralph's commands in a tracked `.ralph.toml` file at its root:
+Each target repo declares Ralph's commands in a `.ralph.toml` file at its root:
 
 ```toml
 [commands]

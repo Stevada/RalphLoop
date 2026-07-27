@@ -74,7 +74,7 @@ intervention *ends* a run; resumption is a new run against a freshly read graph.
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Command descriptor** | The tracked `.ralph.toml` file at the target repo root. Its `[commands]` table declares the repo's runnable commands for Ralph. | command flags, CLI command config, `--test-cmd`, `--install-cmd` |
+| **Command descriptor** | The `.ralph.toml` file at the target repo root. Its `[commands]` table declares the repo's runnable commands for Ralph. | command flags, CLI command config, `--test-cmd`, `--install-cmd` |
 | **RepoCommands** | The value Ralph passes after command discovery: a required already-split `test` command and an optional already-split `install` command. | command config, command map, raw command strings |
 | **Command discovery** | The pre-flight step that asks a **CommandSource** for **RepoCommands** from the target repo. | command guessing, command inference, LLM discovery |
 | **CommandSource** | The port that discovers **RepoCommands** for a target repo. | command resolver, command provider, test command flag |

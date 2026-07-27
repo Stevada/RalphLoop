@@ -33,10 +33,6 @@ class DescriptorCommandTypeError(DescriptorCommandError):
     """A command field is present but is not a string."""
 
 
-class DescriptorUntrackedError(DescriptorCommandError):
-    """The command descriptor exists locally but is not tracked by git."""
-
-
 @dataclass(frozen=True, slots=True)
 class DescriptorCommandSource:
     def discover(self, repo: Path) -> RepoCommands:

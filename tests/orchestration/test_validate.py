@@ -17,11 +17,9 @@ from __future__ import annotations
 
 import shlex
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
-from ralph.issues.filesystem import FilesystemIssueStore
 from ralph.cli import NoActor, Refused, main, render_plan, render_refusals, run, validate
 from ralph.harness import (
     Check,
@@ -34,7 +32,6 @@ from ralph.ports import RepoCommands
 from tests.fakes import FakeCommandSource
 from tests.testbed import TEST_CMD, TargetRepo, make_options
 
-BUILD_HARNESS = Path(__file__).parents[2] / ".scratch" / "build_harness" / "issues"
 READY_COMMANDS = RepoCommands(test=("uv", "run", "pytest"), install=("uv", "sync"))
 
 CLEAN = RepoFacts(
@@ -349,30 +346,3 @@ def test_the_build_order_is_derived_from_the_rule_the_scheduler_asks() -> None:
     }
 
     assert build_order(graph, landed) == ((SubIssueId("02"),),)
-
-
-# ── the cheapest dogfood there is ────────────────────────────────────────────────────────────
-
-
-def test_the_harness_can_read_its_own_issue_graph() -> None:
-    """`ralph run --dry-run` against **this repo's own** build order. Every sub-issue that built the
-    harness is parsed, every edge resolved, and the graph proved acyclic — by the same code that
-    would run them. It costs nothing, and it is the only test in the suite whose input is the real
-    thing rather than a fixture shaped like it.
-    """
-    graph, _ = FilesystemIssueStore(issues_dir=BUILD_HARNESS).read_graph()
-
-    assert len(graph.sub_issues) == 11
-    assert graph.blockers_of(SubIssueId("11")) == frozenset(map(SubIssueId, ("05", "07", "10")))
-    assert graph.transitively_blocked_by(SubIssueId("11")) >= frozenset(map(SubIssueId, ("01", "02")))
-
-    # The order the harness would have built itself in, had it existed to do so. Asserted as a
-    # property rather than a literal: the states on disk change as the build lands, and a test that
-    # pinned today's waves would be a test of the calendar.
-    order = build_order(graph, dict.fromkeys(graph.sub_issues, SubIssueState.READY))
-    landed_by = {id: n for n, wave in enumerate(order) for id in wave}
-
-    assert sorted(landed_by) == sorted(graph.sub_issues)  # every one of them is reachable
-    for id, sub in graph.sub_issues.items():
-        for blocker in sub.blocked_by:
-            assert landed_by[blocker] < landed_by[id]

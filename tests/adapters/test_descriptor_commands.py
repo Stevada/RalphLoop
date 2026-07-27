@@ -10,7 +10,6 @@ from ralph.adapters.commands import (
     DescriptorMissingError,
     DescriptorMissingTestError,
     DescriptorTomlError,
-    DescriptorUntrackedError,
 )
 from ralph.adapters.git import run_git
 from ralph.ports import CommandSource
@@ -60,15 +59,6 @@ def test_descriptor_commands_rejects_a_missing_descriptor(tmp_path: Path) -> Non
     descriptor = tmp_path / ".ralph.toml"
 
     with pytest.raises(DescriptorMissingError, match=rf"{descriptor}.*\.ralph\.toml"):
-        DescriptorCommandSource().discover(tmp_path)
-
-
-def test_descriptor_commands_rejects_an_untracked_descriptor(tmp_path: Path) -> None:
-    run_git(tmp_path, "init")
-    descriptor = tmp_path / ".ralph.toml"
-    descriptor.write_text("[commands]\ntest = 'uv run pytest'\n")
-
-    with pytest.raises(DescriptorUntrackedError, match=rf"{descriptor}.*tracked"):
         DescriptorCommandSource().discover(tmp_path)
 
 
