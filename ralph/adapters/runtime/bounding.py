@@ -9,7 +9,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from ralph.harness import Killed
+from ralph.harness import NOTHING, Killed, TokenConsumption
 from ralph.ports import Budget
 
 
@@ -18,7 +18,7 @@ class Bound:
     """What bounding a session learned about it, whether or not it had to intervene."""
 
     killed: Killed | None
-    consumed_tokens: int
+    consumption: TokenConsumption
 
 
 @runtime_checkable
@@ -54,7 +54,7 @@ async def run_bounded(proc: Killable, budget: Budget) -> Bound:
         killed = "wall-clock"
 
     if killed is None:
-        return Bound(killed=None, consumed_tokens=0)
+        return Bound(killed=None, consumption=NOTHING)
 
     if proc.returncode is None:
         proc.kill()
@@ -68,4 +68,4 @@ async def run_bounded(proc: Killable, budget: Budget) -> Bound:
     except TimeoutError:
         pass
 
-    return Bound(killed=killed, consumed_tokens=0)
+    return Bound(killed=killed, consumption=NOTHING)

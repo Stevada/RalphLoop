@@ -23,15 +23,17 @@ from ralph.adapters.codex import (
     CodexJsonSession,
     codex_argv,
     codex_implementer,
-    end_of_turn_consumed_tokens,
+    end_of_turn_consumption,
 )
 from ralph.adapters.runtime.bounding import Bound
 from ralph.adapters.git import GitCli
 from ralph.adapters.runtime.prompt import conflict_resolution_prompt
 from ralph.adapters.runtime.session import Session
-from ralph.adapters.runtime.turn_stream import AutoCompaction, TokenUsage, Turn, TurnStreamAsk
+from ralph.adapters.runtime.turn_stream import AutoCompaction, Turn, TurnStreamAsk
 from ralph.harness import (
+    NOTHING,
     Outcome,
+    TokenConsumption,
     Verdict,
     classify_editor,
     classify_implementer,
@@ -45,6 +47,8 @@ from tests.testbed import TargetRepo
 SPEC = Spec(body="# 01 — make it add\n\n## Acceptance criteria\n\n- [ ] `add(1, 2) == 3`")
 FINDINGS = Findings(body="`add()` is already in calculator.py")
 GENEROUS = Budget(wall_clock_s=30.0)
+
+
 def session_context(
     wt: Worktree, spec: Spec = SPEC, findings: Findings = FINDINGS, budget: Budget = GENEROUS
 ) -> SessionContext:
@@ -85,7 +89,7 @@ def test_how_codex_is_driven_is_fixed_not_configured() -> None:
 
 async def test_consumption_comes_from_the_completed_turn_usage() -> None:
     session = Session(
-        bound=Bound(killed=None, consumed_tokens=0),
+        bound=Bound(killed=None, consumption=NOTHING),
         exit_code=0,
         output=(
             '{"type": "turn.completed", "usage": {"total_tokens": 123}}\n'
@@ -94,15 +98,26 @@ async def test_consumption_comes_from_the_completed_turn_usage() -> None:
         wall_clock_s=1.0,
     )
 
-    assert await end_of_turn_consumed_tokens(session, Worktree(Path("/w"), "b", "base")) == 456
+    # A total with no components is all this event says, and all the harness may claim.
+    assert await end_of_turn_consumption(session, Worktree(Path("/w"), "b", "base")) == (
+        TokenConsumption.total_only(456)
+    )
 
 
-async def test_consumption_adds_up_a_usage_that_carries_no_total() -> None:
-    """Verbatim from codex-cli 0.143.0. `cached_input_tokens` and `reasoning_output_tokens` break
-    down the other two, so the total is input + output — 2_450_064, not the 4_729_086 that summing
-    all four would give."""
+async def test_consumption_splits_a_usage_that_carries_no_total() -> None:
+    """Verbatim from codex-cli 0.143.0.
+
+    Two claims. The total is input + output — 2_450_064, not the 4_729_086 that summing all four
+    would give, because `cached_input_tokens` and `reasoning_output_tokens` break down the other
+    two rather than adding to them.
+
+    And the buckets are **disjoint**: Codex counts cached tokens inside `input_tokens`, so the
+    fresh half is the difference. 2_421_295 reported as input is really 152_111 fresh prompt on top
+    of a 2_269_184-token cache read — a 15x difference in what the same run costs, and the whole
+    reason the buckets are reported separately.
+    """
     session = Session(
-        bound=Bound(killed=None, consumed_tokens=0),
+        bound=Bound(killed=None, consumption=NOTHING),
         exit_code=0,
         output=(
             '{"type":"turn.completed","usage":{"input_tokens":2421295,'
@@ -112,20 +127,22 @@ async def test_consumption_adds_up_a_usage_that_carries_no_total() -> None:
         wall_clock_s=1.0,
     )
 
-    total = await end_of_turn_consumed_tokens(session, Worktree(Path("/w"), "b", "base"))
-    assert total == 2_450_064
+    consumption = await end_of_turn_consumption(session, Worktree(Path("/w"), "b", "base"))
+
+    assert consumption == TokenConsumption.split(input=152_111, cache_read=2_269_184, output=28_769)
+    assert consumption is not None and consumption.consumed_tokens == 2_450_064
 
 
 async def test_a_completed_turn_without_usage_is_loud() -> None:
     session = Session(
-        bound=Bound(killed=None, consumed_tokens=0),
+        bound=Bound(killed=None, consumption=NOTHING),
         exit_code=0,
         output='{"type": "turn.completed", "usage": {}}\n',
         wall_clock_s=1.0,
     )
 
     with pytest.raises(CodexUsageError):
-        await end_of_turn_consumed_tokens(session, Worktree(Path("/w"), "b", "base"))
+        await end_of_turn_consumption(session, Worktree(Path("/w"), "b", "base"))
 
 
 # ── the JSONL turn stream ────────────────────────────────────────────────────────────────────
@@ -175,7 +192,12 @@ async def test_the_codex_json_session_streams_text_usage_and_compaction() -> Non
 
     turns = await collect(session)
 
-    assert turns == [TokenUsage(consumed_tokens=1_234), "done", "done\n"]
+    # The stub's prompt is entirely cached, so `input` is nothing and the 1_200 is all cache read.
+    assert turns == [
+        TokenConsumption.split(input=0, cache_read=1_200, output=34),
+        "done",
+        "done\n",
+    ]
     assert session.auto_compactions == (
         AutoCompaction(
             event="compacted",
@@ -210,7 +232,7 @@ async def test_a_session_records_completed_turn_consumption(repo: TargetRepo) ->
     assert t.killed is None
     assert t.exit_code == 0
     assert not hasattr(t, "peak_context_tokens")
-    assert t.consumed_tokens == 1_234_567
+    assert t.consumption.consumed_tokens == 1_234_567
     assert t.resumable_identifier == "codex-thread-123"
 
 
@@ -221,7 +243,7 @@ async def test_a_session_runs_to_completion_without_completed_turn_usage(repo: T
     t = await codex_implementer_with_stub(final=0).run(session_context(wt))
 
     assert t.killed is None
-    assert t.consumed_tokens == 0
+    assert t.consumption.consumed_tokens == 0
     assert "done" in t.session_output
     assert classify_implementer(t) is Outcome.IMPASSE
 
@@ -321,7 +343,7 @@ async def test_the_codex_implementer_resumes_the_specific_thread_for_conflict_re
     assert argv[resume + 2] == conflict_resolution_prompt()
     assert "Acceptance criteria" not in argv[resume + 2]
     assert t.killed is None
-    assert t.consumed_tokens == 770
+    assert t.consumption.consumed_tokens == 770
     assert t.resumable_identifier == "codex-thread-789"
     assert t.commits == 1
     assert "resolved" in t.session_output
@@ -335,7 +357,9 @@ FAILURE = failure_report(
 )
 
 
-async def test_the_codex_editor_reuses_the_editor_core_under_read_only_sandbox(tmp_path: Path) -> None:
+async def test_the_codex_editor_reuses_the_editor_core_under_read_only_sandbox(
+    tmp_path: Path,
+) -> None:
     seen: list[tuple[TurnStreamAsk, str]] = []
 
     def open_session(ask: TurnStreamAsk) -> CodexJsonSession:
@@ -361,7 +385,7 @@ async def test_the_codex_editor_reuses_the_editor_core_under_read_only_sandbox(t
     assert seen[0][1] == EDITOR_SANDBOX
     assert verdict is not None
     assert verdict.verdict is Verdict.PLANNING_DEFECT
-    assert t.consumed_tokens == 55_000
+    assert t.consumption.consumed_tokens == 55_000
     assert t.commits == 0
     assert classify_editor(t, verdict) is Outcome.SUCCESS
 
@@ -410,13 +434,15 @@ async def test_a_real_codex_session_lands_a_real_sub_issue(repo: TargetRepo) -> 
     )
 
     t = await codex_implementer().run(
-        session_context(wt, spec=spec, findings=Findings(body=""), budget=Budget(wall_clock_s=600.0))
+        session_context(
+            wt, spec=spec, findings=Findings(body=""), budget=Budget(wall_clock_s=600.0)
+        )
     )
 
     assert t.killed is None
     assert t.commits >= 1
     assert not hasattr(t, "peak_context_tokens")
-    assert t.consumed_tokens > 0
+    assert t.consumption.consumed_tokens > 0
     assert repo.run_suite(wt.path)
 
 
@@ -462,6 +488,6 @@ async def test_a_real_codex_resumed_session_resolves_a_real_rebase_conflict(
 
     assert resumed.killed is None
     assert resumed.resumable_identifier == first.resumable_identifier
-    assert resumed.consumed_tokens > 0
+    assert resumed.consumption.consumed_tokens > 0
     assert resumed.commits >= 1
     assert repo.run_suite(wt.path)

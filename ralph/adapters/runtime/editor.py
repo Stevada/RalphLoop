@@ -199,7 +199,7 @@ def editor_telemetry(
     return SessionTelemetry(
         exit_code=exit_code,
         killed=bound.killed,
-        consumed_tokens=bound.consumed_tokens,
+        consumption=bound.consumption,
         auto_compactions=auto_compactions,
         resumable_identifier=None,
         wall_clock_s=wall_clock_s,

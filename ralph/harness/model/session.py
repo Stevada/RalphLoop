@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
+from ralph.harness.model.consumption import TokenConsumption
 from ralph.harness.model.impasse import ImpasseReport
 
 
@@ -35,7 +36,7 @@ class SessionTelemetry:
 
     exit_code: int
     killed: Killed | None
-    consumed_tokens: int  # telemetry only. nothing is gated on it.
+    consumption: TokenConsumption  # telemetry only. nothing is gated on it.
     auto_compactions: int  # telemetry only. nothing is gated on it.
     resumable_identifier: str | None  # telemetry only. nothing is gated on it.
     wall_clock_s: float

@@ -136,7 +136,8 @@ Pure functions over frozen dataclasses. Tested with no subprocess, no git, no mo
 
 | Type | Module | What it is |
 |---|---|---|
-| `Actor`, `Outcome`, `SessionTelemetry`, `SuiteResult` | [session.py](../ralph/harness/model/session.py) | The classification vocabulary. `SessionTelemetry` is *what the harness observed* — `consumed_tokens` is telemetry only, gated on nothing. `SuiteResult.green` is deliberately not `verified`: a suite the harness runs is inside the **blast radius**; only CI on a clean checkout is **honest** (`docs/design.md` §6). |
+| `Actor`, `Outcome`, `SessionTelemetry`, `SuiteResult` | [session.py](../ralph/harness/model/session.py) | The classification vocabulary. `SessionTelemetry` is *what the harness observed* — `consumption` is telemetry only, gated on nothing. `SuiteResult.green` is deliberately not `verified`: a suite the harness runs is inside the **blast radius**; only CI on a clean checkout is **honest** (`docs/design.md` §6). |
+| `TokenConsumption` | [consumption.py](../ralph/harness/model/consumption.py) | The three disjoint token buckets and the total they sum to, one shape all three adapters translate into. A bucket is `None` where the vendor reported only a total, and adding an unknown bucket to a known one yields unknown — a sum missing one session's share would look exactly like a real measurement. |
 | `Approach`, `ImpasseReport` | [impasse.py](../ralph/harness/model/impasse.py) | The model's narration — a leaf that knows nothing about how it was classified. |
 | `FailureReport` | [failure.py](../ralph/harness/model/failure.py) | The claim beside the harness's facts. It sits downstream of `session.py` (which imports `impasse.py`); splitting them is what breaks the import cycle. The Editor's job is to check one against the other — *their disagreeing is itself a signal*. |
 

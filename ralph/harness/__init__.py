@@ -14,6 +14,7 @@ Inside, two halves, and the dependency arrow between them points one way only:
 `rules/` may import `model/`. `model/` may **not** import `rules/` — a test enforces it.
 """
 
+from ralph.harness.model.consumption import NOTHING, TokenConsumption, total
 from ralph.harness.model.failure import FailureReport
 from ralph.harness.model.impasse import Approach, ImpasseReport
 from ralph.harness.model.preflight import Check, Refusal, RepoFacts
@@ -35,11 +36,13 @@ __all__ = [
     "FailureReport",
     "ImpasseReport",
     "Killed",
+    "NOTHING",
     "Outcome",
     "Refusal",
     "RepoFacts",
     "SessionTelemetry",
     "SuiteResult",
+    "TokenConsumption",
     "Verdict",
     # rules — the verbs
     "CycleLedger",
@@ -52,4 +55,5 @@ __all__ = [
     "never_eligible",
     "refusals",
     "route",
+    "total",
 ]

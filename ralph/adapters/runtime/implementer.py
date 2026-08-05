@@ -22,7 +22,13 @@ from ralph.adapters.runtime.bounding import Bound
 from ralph.adapters.git import run_git
 from ralph.adapters.runtime.session import Session, run_session
 from ralph.adapters.runtime.turn_stream import TurnStreamSession, run_turn_stream
-from ralph.harness import Approach, ImpasseReport, SessionTelemetry
+from ralph.harness import (
+    NOTHING,
+    Approach,
+    ImpasseReport,
+    SessionTelemetry,
+    TokenConsumption,
+)
 from ralph.issues import Findings, Spec
 from ralph.ports import Budget, SessionContext, Worktree
 
@@ -70,7 +76,7 @@ def parse_impasse(output: str) -> ImpasseReport | None:
         raise ImpasseParseError(f"unreadable impasse report: {body!r}") from exc
 
 
-FinalConsumedTokens = Callable[[Session, Worktree], Awaitable[int | None]]
+FinalConsumption = Callable[[Session, Worktree], Awaitable[TokenConsumption | None]]
 """Where a model-specific adapter reads the session's final consumption figure, if it publishes
 one. `None` means there was no final figure to read, and the live observations remain the fallback."""
 
@@ -89,7 +95,7 @@ def implementer_telemetry(
     return SessionTelemetry(
         exit_code=exit_code,
         killed=bound.killed,
-        consumed_tokens=bound.consumed_tokens,
+        consumption=bound.consumption,
         auto_compactions=auto_compactions,
         resumable_identifier=resumable_identifier,
         wall_clock_s=wall_clock_s,
@@ -104,18 +110,18 @@ async def run_subprocess_implementer(
     argv: Sequence[str],
     wt: Worktree,
     budget: Budget,
-    final_consumed_tokens: FinalConsumedTokens | None = None,
+    final_consumption: FinalConsumption | None = None,
 ) -> SessionTelemetry:
     """One Implementer session: a bounded subprocess, plus the two facts it cannot report about
     itself — how many commits it actually made, and what it actually changed."""
     session = await run_session(argv, wt.path, budget)
-    consumed_tokens = session.bound.consumed_tokens
-    if final_consumed_tokens is not None:
-        final = await final_consumed_tokens(session, wt)
+    consumption = session.bound.consumption
+    if final_consumption is not None:
+        final = await final_consumption(session, wt)
         if final is not None:
-            consumed_tokens = final
+            consumption = final
     return implementer_telemetry(
-        bound=Bound(killed=session.bound.killed, consumed_tokens=consumed_tokens),
+        bound=Bound(killed=session.bound.killed, consumption=consumption),
         exit_code=session.exit_code,
         output=session.output,
         wall_clock_s=session.wall_clock_s,
@@ -149,7 +155,7 @@ class SubprocessImplementer:
     """
 
     build_argv: BuildArgv
-    final_consumed_tokens: FinalConsumedTokens | None = None
+    final_consumption: FinalConsumption | None = None
     build_resolve_argv: BuildResolveArgv | None = None
 
     async def run(self, context: SessionContext) -> SessionTelemetry:
@@ -158,7 +164,7 @@ class SubprocessImplementer:
             self.build_argv(context.spec, context.findings, worktree),
             worktree,
             context.budget,
-            self.final_consumed_tokens,
+            self.final_consumption,
         )
 
     async def resolve_conflict(
@@ -173,13 +179,13 @@ class SubprocessImplementer:
             argv,
             context.worktree,
             context.budget,
-            self.final_consumed_tokens,
+            self.final_consumption,
         )
 
 
 def _resume_unavailable(wt: Worktree, resumable_identifier: str) -> SessionTelemetry:
     return implementer_telemetry(
-        bound=Bound(killed=None, consumed_tokens=0),
+        bound=Bound(killed=None, consumption=NOTHING),
         exit_code=124,
         output=f"cannot resume subprocess Implementer session {resumable_identifier}",
         wall_clock_s=0.0,

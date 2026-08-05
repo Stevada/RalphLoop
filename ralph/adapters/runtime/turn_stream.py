@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
 from ralph.adapters.runtime.bounding import Bound, run_bounded
+from ralph.harness import NOTHING, TokenConsumption
 from ralph.ports import Budget
 
 
@@ -48,13 +49,6 @@ OpenSession = Callable[[TurnStreamAsk], "TurnStreamSession"]
 
 
 @dataclass(frozen=True, slots=True)
-class TokenUsage:
-    """Token consumption reported by a model call."""
-
-    consumed_tokens: int
-
-
-@dataclass(frozen=True, slots=True)
 class AutoCompaction:
     """An SDK auto-compaction event, captured before persistence exists."""
 
@@ -66,8 +60,14 @@ class AutoCompaction:
     tokens_removed: int | None = None
 
 
-Turn = str | TokenUsage
-"""What a session emits as it goes: something it said, or usage from a model call."""
+Turn = str | TokenConsumption
+"""What a session emits as it goes: something it said, or what it has cost so far.
+
+**Cumulative, not incremental.** Every adapter emits a running total, because only the adapter knows
+whether its vendor reports one — Codex restates the turn's total, Copilot accumulates internally,
+Claude's SDK bills per message. Fixing that here instead would mean one accumulation rule for three
+different streams, and it would be wrong for two of them.
+"""
 
 
 @runtime_checkable
@@ -111,13 +111,13 @@ async def run_turn_stream(session: TurnStreamSession, budget: Budget) -> TurnStr
     """Run an SDK turn stream under the wall-clock bound and collect what it emitted."""
     started = time.monotonic()
     said: list[str] = []
-    consumed_tokens = 0
+    consumption = NOTHING
 
     async def pump() -> None:
-        nonlocal consumed_tokens
+        nonlocal consumption
         async for turn in session.turns():
-            if isinstance(turn, TokenUsage):
-                consumed_tokens = max(consumed_tokens, turn.consumed_tokens)
+            if isinstance(turn, TokenConsumption):
+                consumption = turn  # the last one, because each is the running total
             else:
                 said.append(turn)
 
@@ -133,7 +133,7 @@ async def run_turn_stream(session: TurnStreamSession, budget: Budget) -> TurnStr
         await asyncio.gather(reading, return_exceptions=True)
 
     return TurnStreamRun(
-        bound=Bound(killed=bound.killed, consumed_tokens=consumed_tokens),
+        bound=Bound(killed=bound.killed, consumption=consumption),
         exit_code=session.returncode if session.returncode is not None else -1,
         output="".join(said),
         wall_clock_s=time.monotonic() - started,

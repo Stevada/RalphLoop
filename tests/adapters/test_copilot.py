@@ -19,9 +19,10 @@ import pytest
 from ralph.cli import render
 from ralph.adapters.copilot import CopilotEditor, CopilotImplementer, copilot_implementer
 from ralph.adapters.runtime.prompt import conflict_resolution_prompt
-from ralph.adapters.runtime.turn_stream import AutoCompaction, Permission, TokenUsage, Turn, TurnStreamAsk
+from ralph.adapters.runtime.turn_stream import AutoCompaction, Permission, Turn, TurnStreamAsk
 from ralph.adapters.git import GitCli, run_git
 from ralph.harness import (
+    TokenConsumption,
     Actor,
     EditorVerdict,
     Outcome,
@@ -40,9 +41,7 @@ from tests.testbed import TargetRepo
 
 SUITE: Sequence[str] = ("python", "-m", "pytest")
 
-FAILURE = failure_report(
-    Outcome.IMPASSE, telemetry(commits=0, impasse_report=impasse())
-)
+FAILURE = failure_report(Outcome.IMPASSE, telemetry(commits=0, impasse_report=impasse()))
 
 SPEC = Spec(body="# 01 — build it\n\n## Acceptance criteria\n\n- [ ] Add a file.")
 FINDINGS = Findings(body="Start from the existing calculator module.")
@@ -132,7 +131,7 @@ async def test_the_implementer_reports_sdk_usage_and_git_facts(repo: TargetRepo)
     def open_session(ask: TurnStreamAsk) -> StubTurnStreamSession:
         seen.append(ask)
         return StubTurnStreamSession(
-            ["implemented\n", TokenUsage(consumed_tokens=999_999)],
+            ["implemented\n", TokenConsumption.total_only(999_999)],
             resumable_identifier="copilot-session-123",
             on_start=commit_work,
         )
@@ -148,7 +147,7 @@ async def test_the_implementer_reports_sdk_usage_and_git_facts(repo: TargetRepo)
     assert seen[0].permit("Write", {"file_path": "copilot.txt"}).allowed
     assert t.killed is None
     assert t.exit_code == 0
-    assert t.consumed_tokens == 999_999
+    assert t.consumption.consumed_tokens == 999_999
     assert t.auto_compactions == 0
     assert t.resumable_identifier == "copilot-session-123"
     assert t.commits == 1
@@ -169,7 +168,7 @@ async def test_the_implementer_resumes_the_specific_session_for_conflict_resolut
     def open_session(ask: TurnStreamAsk) -> StubTurnStreamSession:
         seen.append(ask)
         return StubTurnStreamSession(
-            ["resolved\n", TokenUsage(consumed_tokens=333_333)],
+            ["resolved\n", TokenConsumption.total_only(333_333)],
             resumable_identifier=ask.resumable_identifier,
             on_start=commit_work,
         )
@@ -185,7 +184,7 @@ async def test_the_implementer_resumes_the_specific_session_for_conflict_resolut
     assert seen[0].permit is not None
     assert seen[0].permit("Write", {"file_path": "copilot.txt"}).allowed
     assert t.killed is None
-    assert t.consumed_tokens == 333_333
+    assert t.consumption.consumed_tokens == 333_333
     assert t.resumable_identifier == "copilot-session-789"
     assert t.commits == 1
     assert "resolved" in t.session_output
@@ -200,7 +199,10 @@ async def test_the_implementer_reports_sdk_auto_compactions(repo: TargetRepo) ->
 
     def open_session(_ask: TurnStreamAsk) -> StubTurnStreamSession:
         return StubTurnStreamSession(
-            ["implemented\n", TokenUsage(consumed_tokens=999_999)],
+            [
+                "implemented\n",
+                TokenConsumption.split(input=600_000, cache_read=380_000, output=19_999),
+            ],
             auto_compactions=[
                 AutoCompaction(event="started"),
                 AutoCompaction(event="compacted", success=True),
@@ -225,7 +227,10 @@ async def test_sdk_auto_compactions_reach_both_stores_and_the_report(
 
     def open_session(_ask: TurnStreamAsk) -> StubTurnStreamSession:
         return StubTurnStreamSession(
-            ["implemented\n", TokenUsage(consumed_tokens=999_999)],
+            [
+                "implemented\n",
+                TokenConsumption.split(input=600_000, cache_read=380_000, output=19_999),
+            ],
             auto_compactions=[
                 AutoCompaction(event="started"),
                 AutoCompaction(event="compacted", success=True),
@@ -236,7 +241,7 @@ async def test_sdk_auto_compactions_reach_both_stores_and_the_report(
     t = await CopilotImplementer(open_session=open_session).run(_context(wt))
     record = SessionConsumption(
         actor=Actor.IMPLEMENTER,
-        consumed_tokens=t.consumed_tokens,
+        consumption=t.consumption,
         auto_compactions=t.auto_compactions,
     )
 
@@ -258,7 +263,11 @@ async def test_sdk_auto_compactions_reach_both_stores_and_the_report(
         {},
         {SubIssueId("01"): (record,)},
     )
-    assert "01: 999999 tokens, 1 auto-compactions" in render(notification)
+    # The buckets survive the whole path — SDK turn, telemetry, both stores, notification — which
+    # is the only place that is provable end to end.
+    assert "01: 999999 tokens (600000 in, 380000 cached, 19999 out), 1 auto-compactions" in render(
+        notification
+    )
 
 
 async def test_the_implementer_parses_an_impasse_from_the_sdk_output(repo: TargetRepo) -> None:
@@ -354,7 +363,7 @@ async def test_a_real_copilot_resumed_session_resolves_a_real_rebase_conflict(
 
     assert resumed.killed is None
     assert resumed.resumable_identifier == first.resumable_identifier
-    assert resumed.consumed_tokens > 0
+    assert resumed.consumption.consumed_tokens > 0
     assert resumed.commits >= 1
     assert repo.run_suite(wt.path)
 
@@ -363,7 +372,9 @@ async def test_a_real_copilot_resumed_session_resolves_a_real_rebase_conflict(
 
 
 async def test_the_editor_runs_to_completion(tmp_path: Path) -> None:
-    telemetry, verdict = await _adjudicate(tmp_path, consumed_tokens=130_000, verdict=None)
+    telemetry, verdict = await _adjudicate(
+        tmp_path, consumption=TokenConsumption.total_only(130_000), verdict=None
+    )
 
     assert telemetry.killed is None
     assert not hasattr(telemetry, "peak_context_tokens")
@@ -372,7 +383,9 @@ async def test_the_editor_runs_to_completion(tmp_path: Path) -> None:
 
 async def test_the_editor_reports_no_commits_by_construction(tmp_path: Path) -> None:
     """Not observed — *constructed*. It was denied every tool that could have made one."""
-    telemetry, verdict = await _adjudicate(tmp_path, consumed_tokens=9_000, verdict=Verdict.REVISE)
+    telemetry, verdict = await _adjudicate(
+        tmp_path, consumption=TokenConsumption.total_only(9_000), verdict=Verdict.REVISE
+    )
 
     assert telemetry.commits == 0
     assert telemetry.diffstat == ""
@@ -382,7 +395,7 @@ async def test_the_editor_reports_no_commits_by_construction(tmp_path: Path) -> 
 
 async def test_the_editor_reads_the_verdict_out_of_the_sdk_session(tmp_path: Path) -> None:
     _, verdict = await _adjudicate(
-        tmp_path, consumed_tokens=9_000, verdict=Verdict.PLANNING_DEFECT
+        tmp_path, consumption=TokenConsumption.total_only(9_000), verdict=Verdict.PLANNING_DEFECT
     )
 
     assert verdict is not None
@@ -392,7 +405,9 @@ async def test_the_editor_reads_the_verdict_out_of_the_sdk_session(tmp_path: Pat
 
 async def test_the_prompt_and_worktree_reach_the_sdk_session(tmp_path: Path) -> None:
     seen: list[TurnStreamAsk] = []
-    await _adjudicate(tmp_path, consumed_tokens=9_000, verdict=Verdict.REVISE, seen=seen)
+    await _adjudicate(
+        tmp_path, consumption=TokenConsumption.total_only(9_000), verdict=Verdict.REVISE, seen=seen
+    )
 
     assert "You are the **Editor**" in seen[0].prompt
     assert "build it" in seen[0].prompt  # the spec the Implementer was given
@@ -430,7 +445,7 @@ async def test_the_editor_denies_mutating_tools_through_the_shared_permit(tmp_pa
 async def _adjudicate(
     tmp_path: Path,
     *,
-    consumed_tokens: int,
+    consumption: TokenConsumption,
     verdict: Verdict | None,
     seen: list[TurnStreamAsk] | None = None,
 ) -> tuple[SessionTelemetry, EditorVerdict | None]:
@@ -453,7 +468,7 @@ async def _adjudicate(
         turns: list[Turn] = []
         if said:
             turns.append(said)
-        turns.append(TokenUsage(consumed_tokens=consumed_tokens))
+        turns.append(consumption)
         return StubTurnStreamSession(turns)
 
     return await CopilotEditor(open_session=open_session, suite=SUITE).adjudicate(

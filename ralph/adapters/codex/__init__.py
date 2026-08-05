@@ -18,7 +18,7 @@ from ralph.adapters.codex.session import (
     codex_argv,
     codex_read_only_session,
     codex_sdk_session,
-    end_of_turn_consumed_tokens,
+    end_of_turn_consumption,
     thread_id,
 )
 
@@ -34,6 +34,6 @@ __all__ = [
     "codex_implementer",
     "codex_read_only_session",
     "codex_sdk_session",
-    "end_of_turn_consumed_tokens",
+    "end_of_turn_consumption",
     "thread_id",
 ]

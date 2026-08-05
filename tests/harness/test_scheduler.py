@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ralph.harness import Actor, Outcome, Verdict
+from ralph.harness import Actor, Outcome, TokenConsumption, Verdict
 from ralph.issues import SubIssueId, SubIssueState
 from ralph.mergequeue import MergeQueue
 from ralph.ports import Budget
@@ -115,7 +115,7 @@ async def test_a_rebase_conflict_is_resolved_once_before_the_editor_is_involved(
     )
     implementer = FakeImplementer(
         scripted=[telemetry(resumable_identifier="resume-01")],
-        conflict_scripted=[telemetry(consumed_tokens=7_000)],
+        conflict_scripted=[telemetry(consumption=TokenConsumption.total_only(7_000))],
     )
     editor = terminal_editor()
     git = FakeGit(
@@ -133,9 +133,7 @@ async def test_a_rebase_conflict_is_resolved_once_before_the_editor_is_involved(
     assert git.conflict_resolution_rebased == [("ralph/01", "integration")]
     assert git.rebased == [("ralph/01", "integration"), ("ralph/01", "integration")]
     assert len(implementer.calls) == 1
-    assert implementer.resolve_conflict_calls == [
-        (implementer.calls[0], "resume-01")
-    ]
+    assert implementer.resolve_conflict_calls == [(implementer.calls[0], "resume-01")]
     assert editor.calls == []
     assert runner.runs == [REPO / ".worktrees" / "active" / "01"]
     assert [record.actor for _, record in store.consumption_records] == [

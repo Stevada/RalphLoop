@@ -34,6 +34,7 @@ from ralph.harness import (
     FailureReport,
     Refusal,
     RepoFacts,
+    TokenConsumption,
     build_order,
     refusals,
 )
@@ -58,6 +59,7 @@ log = logging.getLogger("ralph")
 CODEX = "codex"
 CLAUDE = "claude"
 COPILOT = "copilot"
+
 
 @dataclass(frozen=True, slots=True)
 class ActorRuntime:
@@ -531,6 +533,20 @@ async def run(
     return report
 
 
+def render_consumption(c: TokenConsumption) -> str:
+    """The total, and the breakdown where there is one.
+
+    A vendor that reported only a total gets to have said only that. Printing three zeros beside a
+    real total would read as a session that generated nothing, which is a different claim entirely.
+    """
+    if c.input_tokens is None or c.cache_read_tokens is None or c.output_tokens is None:
+        return f"{c.consumed_tokens} tokens (no breakdown)"
+    return (
+        f"{c.consumed_tokens} tokens "
+        f"({c.input_tokens} in, {c.cache_read_tokens} cached, {c.output_tokens} out)"
+    )
+
+
 def render(n: Notification, parent_issue_name: str | None = None) -> str:
     """**One** notification, at the end.
 
@@ -544,11 +560,11 @@ def render(n: Notification, parent_issue_name: str | None = None) -> str:
         lines.append("\nconsumption:")
         for c in n.consumption:
             lines.append(
-                f"  {c.sub_issue}: {c.consumed_tokens} tokens, "
+                f"  {c.sub_issue}: {render_consumption(c.consumption)}, "
                 f"{c.auto_compactions} auto-compactions"
             )
         lines.append(
-            f"  total: {n.total_consumed_tokens} tokens, "
+            f"  total: {render_consumption(n.total_consumption)}, "
             f"{n.total_auto_compactions} auto-compactions"
         )
     if not n.escalations:

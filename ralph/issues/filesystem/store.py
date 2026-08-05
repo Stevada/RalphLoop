@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from ralph.harness import Actor
+from ralph.harness import Actor, TokenConsumption
 from ralph.issues.content import Findings, Spec
 from ralph.issues.consumption import SessionConsumption
 from ralph.issues.graph import IssueGraph, SubIssue, SubIssueId
@@ -202,12 +203,25 @@ class FilesystemIssueStore:
                 records.append(record)
         return tuple(records)
 
+    @staticmethod
+    def _consumption_of(raw: Mapping[str, object]) -> TokenConsumption:
+        """A record written before the buckets existed carries a total and nothing else — which is
+        what `total_only` says. Reading absent buckets as zeros would invent a measurement."""
+        buckets = [raw.get(name) for name in ("input_tokens", "cache_read_tokens", "output_tokens")]
+        input, cache_read, output = buckets
+        if not (isinstance(input, int) and isinstance(cache_read, int) and isinstance(output, int)):
+            total = raw["consumed_tokens"]
+            if not isinstance(total, int):
+                raise IssueParseError(f"consumed_tokens is not a number: {total!r}")
+            return TokenConsumption.total_only(total)
+        return TokenConsumption.split(input=input, cache_read=cache_read, output=output)
+
     def _parse_consumption(self, line: str, n: int) -> tuple[SubIssueId, SessionConsumption]:
         try:
             raw = json.loads(line)
             return SubIssueId(raw["sub_issue"]), SessionConsumption(
                 actor=Actor(raw["actor"]),
-                consumed_tokens=int(raw["consumed_tokens"]),
+                consumption=self._consumption_of(raw),
                 auto_compactions=int(raw["auto_compactions"]),
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
@@ -251,7 +265,10 @@ class FilesystemIssueStore:
             {
                 "sub_issue": str(id),
                 "actor": record.actor.value,
-                "consumed_tokens": record.consumed_tokens,
+                "consumed_tokens": record.consumption.consumed_tokens,
+                "input_tokens": record.consumption.input_tokens,
+                "cache_read_tokens": record.consumption.cache_read_tokens,
+                "output_tokens": record.consumption.output_tokens,
                 "auto_compactions": record.auto_compactions,
             }
         )

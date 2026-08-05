@@ -117,7 +117,7 @@ def test_repo_commands_are_split_argvs_from_the_target_repo() -> None:
 
 def test_session_telemetry_carries_consumption_but_no_context_peak() -> None:
     names = {f.name for f in dataclasses.fields(SessionTelemetry)}
-    assert "consumed_tokens" in names
+    assert "consumption" in names
     assert "auto_compactions" in names
     assert "resumable_identifier" in names
     assert "peak_context_tokens" not in names

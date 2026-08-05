@@ -17,16 +17,20 @@ from ralph.harness import (
     Killed,
     SessionTelemetry,
     SuiteResult,
+    TokenConsumption,
     Verdict,
 )
 from ralph.issues import Findings, IssueGraph, Spec, SubIssue, SubIssueId
+
+DEFAULT_CONSUMPTION = TokenConsumption.split(input=30_000, cache_read=15_000, output=5_000)
+"""50,000 tokens, split the way a real session's are: mostly prompt, much of it cached."""
 
 
 def telemetry(
     *,
     exit_code: int = 0,
     killed: Killed | None = None,
-    consumed_tokens: int = 50_000,
+    consumption: TokenConsumption = DEFAULT_CONSUMPTION,
     auto_compactions: int = 0,
     resumable_identifier: str | None = None,
     wall_clock_s: float = 60.0,
@@ -39,7 +43,7 @@ def telemetry(
     return SessionTelemetry(
         exit_code=exit_code,
         killed=killed,
-        consumed_tokens=consumed_tokens,
+        consumption=consumption,
         auto_compactions=auto_compactions,
         resumable_identifier=resumable_identifier,
         wall_clock_s=wall_clock_s,

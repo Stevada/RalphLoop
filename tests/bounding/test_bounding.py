@@ -10,7 +10,7 @@ import pytest
 from ralph.adapters.runtime.bounding import Bound, run_bounded
 from ralph.adapters.git import GitCli
 from ralph.adapters.runtime.implementer import SubprocessImplementer
-from ralph.harness import Outcome, classify_implementer
+from ralph.harness import NOTHING, Outcome, classify_implementer
 from ralph.issues import Findings, Spec
 from ralph.ports import Budget, SessionContext
 from tests.testbed import TargetRepo
@@ -35,7 +35,7 @@ async def test_a_session_that_finishes_before_the_clock_runs_to_completion() -> 
 
     bound = await run_bounded(proc, GENEROUS_CLOCK)
 
-    assert bound == Bound(killed=None, consumed_tokens=0)
+    assert bound == Bound(killed=None, consumption=NOTHING)
     assert proc.returncode == 0
 
 
@@ -44,7 +44,7 @@ async def test_the_clock_catches_a_stuck_session() -> None:
 
     bound = await run_bounded(proc, SHORT_CLOCK)
 
-    assert bound == Bound(killed="wall-clock", consumed_tokens=0)
+    assert bound == Bound(killed="wall-clock", consumption=NOTHING)
     assert proc.returncode is not None
 
 
@@ -80,7 +80,7 @@ async def test_a_kill_that_does_not_take_still_returns_to_the_caller(
 
     bound = await asyncio.wait_for(run_bounded(session, SHORT_CLOCK), timeout=10)
 
-    assert bound == Bound(killed="wall-clock", consumed_tokens=0)
+    assert bound == Bound(killed="wall-clock", consumption=NOTHING)
     assert session.killed  # it was asked to stop, and the harness did not wait forever to be obeyed
 
 
@@ -102,6 +102,6 @@ async def test_real_session_telemetry_has_no_context_peak(repo: TargetRepo) -> N
 
     assert t.killed is None
     assert not hasattr(t, "peak_context_tokens")
-    assert t.consumed_tokens == 0
+    assert t.consumption.consumed_tokens == 0
     assert t.commits == 0
     assert classify_implementer(t) is Outcome.IMPASSE

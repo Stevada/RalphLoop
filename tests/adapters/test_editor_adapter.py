@@ -23,12 +23,12 @@ from ralph.adapters.runtime.editor import (
 )
 from ralph.adapters.runtime.turn_stream import (
     AutoCompaction,
-    TokenUsage,
     Turn,
     TurnStreamAsk,
     TurnStreamSession,
 )
 from ralph.harness import (
+    TokenConsumption,
     EditorVerdict,
     Outcome,
     SessionTelemetry,
@@ -317,7 +317,7 @@ async def test_the_editor_returns_its_verdict_and_the_harnesss_facts() -> None:
     session = StubSession(
         [
             "Looking at the worktree.",
-            TokenUsage(consumed_tokens=31_000),
+            TokenConsumption.total_only(31_000),
             verdict_json("revise", revised_spec="# 01 — use the API that exists"),
         ]
     )
@@ -326,7 +326,7 @@ async def test_the_editor_returns_its_verdict_and_the_harnesss_facts() -> None:
 
     assert v is not None
     assert not hasattr(t, "peak_context_tokens")
-    assert t.consumed_tokens == 31_000
+    assert t.consumption.consumed_tokens == 31_000
     assert t.commits == 0  # by construction: it was denied every tool that could make one
     assert t.diffstat == ""
     assert t.impasse_report is None  # an Editor cannot declare an impasse. It adjudicates them.
@@ -336,8 +336,8 @@ async def test_the_editor_returns_its_verdict_and_the_harnesss_facts() -> None:
 async def test_an_editor_runs_to_completion_with_usage_turns() -> None:
     never_answers = StubSession(
         [
-            TokenUsage(consumed_tokens=60_000),
-            TokenUsage(consumed_tokens=130_000),
+            TokenConsumption.total_only(60_000),
+            TokenConsumption.total_only(130_000),
             "still thinking...",
             verdict_json("revise", revised_spec="# 01 — try again"),
         ],
@@ -422,11 +422,11 @@ async def test_the_prompt_hands_over_the_claim_and_the_facts_to_check_it_against
 
 
 async def test_the_run_of_a_session_records_usage_even_when_it_answers() -> None:
-    session = StubSession([TokenUsage(consumed_tokens=55_000), verdict_json("planning-defect")])
+    session = StubSession([TokenConsumption.total_only(55_000), verdict_json("planning-defect")])
 
     t, v = await adjudicate(session)
 
     assert not hasattr(t, "peak_context_tokens")
-    assert t.consumed_tokens == 55_000
+    assert t.consumption.consumed_tokens == 55_000
     assert v is not None
     assert v.verdict is Verdict.PLANNING_DEFECT

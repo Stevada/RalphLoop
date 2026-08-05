@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ralph.harness import (
+    TokenConsumption,
     Actor,
     CycleLedger,
     Destination,
@@ -72,12 +73,12 @@ class RunReport:
         return {e.sub_issue: e.outcome for e in self.notification.escalations}
 
     @property
-    def consumption(self) -> Mapping[SubIssueId, int]:
-        return {c.sub_issue: c.consumed_tokens for c in self.notification.consumption}
+    def consumption(self) -> Mapping[SubIssueId, TokenConsumption]:
+        return {c.sub_issue: c.consumption for c in self.notification.consumption}
 
     @property
-    def total_consumed_tokens(self) -> int:
-        return self.notification.total_consumed_tokens
+    def total_consumption(self) -> TokenConsumption:
+        return self.notification.total_consumption
 
     @property
     def auto_compactions(self) -> Mapping[SubIssueId, int]:
@@ -244,7 +245,7 @@ class Scheduler:
             sub.id,
             SessionConsumption(
                 actor=Actor.IMPLEMENTER,
-                consumed_tokens=telemetry.consumed_tokens,
+                consumption=telemetry.consumption,
                 auto_compactions=telemetry.auto_compactions,
             ),
         )
@@ -320,7 +321,7 @@ class Scheduler:
             id,
             SessionConsumption(
                 actor=Actor.IMPLEMENTER,
-                consumed_tokens=resolved.consumed_tokens,
+                consumption=resolved.consumption,
                 auto_compactions=resolved.auto_compactions,
             ),
         )
@@ -379,7 +380,7 @@ class Scheduler:
             sub.id,
             SessionConsumption(
                 actor=Actor.EDITOR,
-                consumed_tokens=telemetry.consumed_tokens,
+                consumption=telemetry.consumption,
                 auto_compactions=telemetry.auto_compactions,
             ),
         )

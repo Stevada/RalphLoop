@@ -19,11 +19,11 @@ from collections.abc import AsyncGenerator
 from ralph.adapters.runtime.editor import READ_ONLY_TOOLS
 from ralph.adapters.runtime.turn_stream import (
     AutoCompaction,
-    TokenUsage,
     Turn,
     TurnStreamAsk,
     TurnStreamSession,
 )
+from ralph.harness import NOTHING, TokenConsumption
 
 MODEL = "claude-opus-4-8"
 """The Editor is the expensive one on purpose. It runs at most three times per sub-issue and it is
@@ -54,7 +54,8 @@ class _SdkSession:
             )
 
             async def can_use_tool(tool: str, input: dict[str, object], context: object) -> object:
-                """**The enforcement surface.** The harness adjudicates the call before it happens."""
+                """**The enforcement surface.** The harness adjudicates the call before it
+                happens."""
                 assert self._ask.permit is not None
                 permission = self._ask.permit(tool, input)
                 if permission.allowed:
@@ -67,9 +68,16 @@ class _SdkSession:
                 can_use_tool=can_use_tool,
                 cwd=str(self._ask.cwd),
             )
+            # The SDK bills per message, and a `Turn` is a running total — so the accumulating
+            # happens here, where it is known that these are increments.
+            consumed = NOTHING
             async for message in query(prompt=self._ask.prompt, options=options):
                 for turn in _turns_of(message):
-                    self._turns.put_nowait(turn)
+                    if isinstance(turn, TokenConsumption):
+                        consumed += turn
+                        self._turns.put_nowait(consumed)
+                    else:
+                        self._turns.put_nowait(turn)
             self._code = 0
         except asyncio.CancelledError:
             self._code = -9
@@ -128,19 +136,23 @@ def _turns_of(message: object) -> list[Turn]:
     return turns
 
 
-def _observed(usage: object) -> TokenUsage:
-    """Token consumption from one SDK usage payload."""
+def _observed(usage: object) -> TokenConsumption:
+    """One SDK usage payload, translated into the harness's three buckets.
+
+    Claude's `input_tokens` already excludes both cached halves, so no subtraction is needed — but
+    `cache_creation_input_tokens` is folded in, because a cache *write* is prompt the model paid
+    close to full price for, and the bucket boundary that matters is the one against cache reads.
+    """
 
     def count(name: str) -> int:
         value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, 0)
         return value if isinstance(value, int) else 0
 
-    prompt = (
-        count("input_tokens")
-        + count("cache_read_input_tokens")
-        + count("cache_creation_input_tokens")
+    return TokenConsumption.split(
+        input=count("input_tokens") + count("cache_creation_input_tokens"),
+        cache_read=count("cache_read_input_tokens"),
+        output=count("output_tokens"),
     )
-    return TokenUsage(consumed_tokens=prompt + count("output_tokens"))
 
 
 def claude_sdk_session(ask: TurnStreamAsk) -> TurnStreamSession:

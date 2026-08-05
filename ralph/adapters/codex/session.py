@@ -13,11 +13,11 @@ from ralph.adapters.runtime.prompt import implementer_prompt
 from ralph.adapters.runtime.session import Session
 from ralph.adapters.runtime.turn_stream import (
     AutoCompaction,
-    TokenUsage,
     Turn,
     TurnStreamAsk,
     TurnStreamSession,
 )
+from ralph.harness import TokenConsumption
 from ralph.issues import Findings, Spec
 from ralph.ports import Worktree
 
@@ -33,6 +33,7 @@ CONTEXT_COMPACTION = "context_compaction"
 
 TOTAL_TOKENS = "total_tokens"
 INPUT_TOKENS = "input_tokens"
+CACHED_INPUT_TOKENS = "cached_input_tokens"
 OUTPUT_TOKENS = "output_tokens"
 
 
@@ -171,39 +172,48 @@ def _nested_usage(event: Mapping[str, object]) -> dict[str, object]:
     return {}
 
 
-def _usage_total(event: Mapping[str, object]) -> int | None:
-    """`total_tokens` where Codex sends it, else input plus output.
+def _reported_consumption(event: Mapping[str, object]) -> TokenConsumption | None:
+    """Codex's components, translated into the harness's three buckets — or a bare total.
 
-    Releases since codex-cli 0.143.0 drop `total_tokens` from `turn.completed` and send the
-    components instead. `cached_input_tokens` and `reasoning_output_tokens` are breakdowns *of*
-    those two, not addends — summing all four double-counts.
+    Components first: releases since codex-cli 0.143.0 drop `total_tokens` from `turn.completed` and
+    send the components instead, so the total is the legacy path and reading it first would discard
+    a breakdown that was right there.
+
+    Codex counts cached tokens *inside* `input_tokens`, so the fresh half is the difference. It has
+    no cache-write signal at all; those tokens are billed in `input_tokens` and stay there, which is
+    what the harness's `input` bucket means. `reasoning_output_tokens` is likewise a breakdown *of*
+    output, not an addend — adding it would double-count.
     """
     usage = _nested_usage(event)
+    input_tokens = _optional_int(usage, INPUT_TOKENS)
+    output_tokens = _optional_int(usage, OUTPUT_TOKENS)
+    if input_tokens is not None or output_tokens is not None:
+        cache_read = _optional_int(usage, CACHED_INPUT_TOKENS) or 0
+        return TokenConsumption.split(
+            input=max((input_tokens or 0) - cache_read, 0),
+            cache_read=cache_read,
+            output=output_tokens or 0,
+        )
     total = _optional_int(usage, TOTAL_TOKENS)
-    if total is not None:
-        return total
-    parts = (_optional_int(usage, INPUT_TOKENS), _optional_int(usage, OUTPUT_TOKENS))
-    if all(part is None for part in parts):
-        return None
-    return sum(part for part in parts if part is not None)
+    return None if total is None else TokenConsumption.total_only(total)
 
 
-def _completed_turn_tokens(event: Mapping[str, object], line: str) -> int:
+def _completed_turn_consumption(event: Mapping[str, object], line: str) -> TokenConsumption:
     """A `turn.completed` carrying no readable count is a schema break, not a zero."""
-    total = _usage_total(event)
-    if total is None:
+    consumption = _reported_consumption(event)
+    if consumption is None:
         raise CodexUsageError(f"a turn.completed event with no token counts in it: {line!r}")
-    return total
+    return consumption
 
 
-async def end_of_turn_consumed_tokens(session: Session, _worktree: Worktree) -> int | None:
-    """The total Codex reports when the `exec` turn completes, or none if it never completed."""
-    found: int | None = None
+async def end_of_turn_consumption(session: Session, _worktree: Worktree) -> TokenConsumption | None:
+    """What Codex reports when the `exec` turn completes, or none if it never completed."""
+    found: TokenConsumption | None = None
     for line in session.output.splitlines():
         event = _loads(line)
         if _event_type(event) != TURN_COMPLETED:
             continue
-        found = _completed_turn_tokens(event, line)
+        found = _completed_turn_consumption(event, line)
     return found
 
 
@@ -304,7 +314,7 @@ class CodexJsonSession(TurnStreamSession):
                 self._resumable_identifier = id
 
         if kind == TURN_COMPLETED:
-            self._turns.put_nowait(TokenUsage(consumed_tokens=_completed_turn_tokens(event, line)))
+            self._turns.put_nowait(_completed_turn_consumption(event, line))
 
         if _is_compaction(kind):
             self._auto_compactions.append(_compaction_of(kind, event))
