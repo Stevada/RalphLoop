@@ -42,6 +42,21 @@ Two bounds and one guide, kept distinct. The terms name them:
 - **"About three tries"** is soft — advisory, uncounted guidance in the prompt about behaviour
   *within* a session. It is not a bound.
 
+## Consumption
+
+What a session cost, in tokens. Telemetry only: nothing is gated on any of it.
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Consumed tokens** | A session's authoritative token total. | usage, spend, cost |
+| **Input tokens** | Prompt tokens *not* served from cache — fresh prompt and cache writes together. | prompt tokens, request tokens |
+| **Cache read tokens** | Prompt tokens served from cache. | cached tokens, cache hits |
+| **Output tokens** | Tokens the model generated, reasoning included. | completion tokens, response tokens |
+
+The three buckets are disjoint and sum to **consumed tokens**. Every concrete adapter reports the
+same three, whatever its vendor calls them; a vendor that reports only a total leaves the buckets
+unknown rather than zero.
+
 ## Work
 
 | Term | Definition | Aliases to avoid |
@@ -82,8 +97,8 @@ intervention *ends* a run; resumption is a new run against a freshly read graph.
 ## Pre-flight
 
 The **pre-flight** is the gate a **Run** passes before it opens any session: it **refuses**, it does
-not warn, and it returns every **refusal**, not the first. Each refusal names one of six checks — the
-condition it found, never merely that the run cannot start.
+not warn, and it returns every **refusal**, not the first. Each refusal names one of seven checks —
+the condition it found, never merely that the run cannot start.
 
 | Check | What it names |
 | ----- | ------------- |
@@ -93,6 +108,7 @@ condition it found, never merely that the run cannot start.
 | `missing-test-command` | Command discovery found no runnable `test` command. |
 | `invalid-issue-source` | The issue source could not be read — unreachable or misconfigured. |
 | `invalid-issue-graph` | The source read, but its graph is malformed — a cycle, or a spec with no acceptance criteria. |
+| `missing-actor-runtime` | A named actor's runtime is not installed, so its sessions could never open. |
 
 ## Session outcomes
 
@@ -109,8 +125,12 @@ state; the harness's word for everything the model cannot observe about itself.
 `impasse` can only come from an Implementer session — an Editor cannot fail to deliver a spec
 it was never given. `infra-failed` can come from either actor. `integration-failed` is not a
 session outcome at all: the Implementer committed work that reached the merge queue, and the merge
-queue raises it when that tree will not integrate with a sibling that landed first. It routes to the
-Editor on the first failure and counts as a **cycle** like any other.
+queue raises it when that tree will not integrate with a sibling that landed first.
+
+It reaches the Editor by one of two paths, and counts as a **cycle** either way. A prospective merge
+that goes **red** routes to the Editor directly. A prospective merge that **conflicts** attempts
+**rebase-conflict recovery** first, and routes to the Editor only if that fails or the session is
+not resumable.
 
 `infra-failed` routes to the human — **no retry, no cycle, never the Editor**.
 
@@ -121,6 +141,7 @@ Editor on the first failure and counts as a **cycle** like any other.
 | **Sentinel** | A fixed marker string the model prints for the harness to grep, e.g. `<impasse>`. The channel for a model's word about its own state. | flag, marker, token |
 | **Impasse** | The outcome of an Implementer session that could not satisfy its spec — whether the model **declared** it via the `<impasse>` sentinel, or the harness **caught** it undeclared by observing no commits. | blocked, stuck, giving up, silent-red |
 | **Impasse report** | The Implementer's structured exit artifact, corroborated by harness-supplied facts. | blocker report, failure report |
+| **Rebase-conflict recovery** | The one exception to "no retry": on a merge-queue conflict, the harness rebases in the worktree and resumes **the same** Implementer session, once, to resolve it. No new spec, no revision, and it spends no **cycle**. | retry, re-run, second attempt |
 | **Revision** | The Editor's rewrite of a spec (and its findings), recorded alongside the Planner's original rather than over it. | edit, fix, update |
 | **Verdict** | The Editor's decision when its session succeeds: `revise`, `planning-defect`, or `inconclusive`. | outcome, ruling, judgment |
 | **Run log** | An append-only file, one line per event, recording session states and Editor verdicts for a run — nothing heavier. | trace, audit log, journal |
@@ -184,5 +205,7 @@ every green result is produced inside the blast radius of the thing being tested
 - An Implementer **Session** ends in a green delivery or an **Impasse**.
 - An **Impasse** produces the report that is the Editor's only sensor.
 - An Editor **Session** produces one **Revision** and one **Verdict**.
+- An `integration-failed` raised by a conflict may spend one **Rebase-conflict recovery** before it
+  reaches the **Editor**; a red one may not.
 - A **Sub-issue** becomes **Eligible** when every sub-issue it is blocked by has **Landed**.
 - A **Parent issue** is **Done** only after a check outside the blast radius has passed.
