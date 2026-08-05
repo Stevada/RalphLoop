@@ -51,6 +51,16 @@ pre-commit hook the repo asks for and has not installed, a graph that will not p
 CLI or SDK is not installed — each gets its own sentence, and `ralph run` runs the same checks before
 it dispatches anything.
 
+A run narrates itself while it goes: every event appended to `<repo>/.scratch/<phase>/run.jsonl` is
+printed as it is written, so a run in flight is watchable rather than silent until its notification.
+
+```
+16:42:22  VIR-80     implementer  session-started   in-progress
+16:54:02  VIR-82     implementer  session-finished  integration-failed
+16:55:19  VIR-80     implementer  sub-issue-closed  landed
+17:12:44  VIR-82     editor       verdict-recorded  revise
+```
+
 ## Target repo commands
 
 Each target repo declares Ralph's commands in a `.ralph.toml` file at its root:

@@ -50,8 +50,8 @@ from ralph.issues.linear import (
 from ralph.issues.store import IssueStore
 from ralph.mergequeue import MergeQueue
 from ralph.notification import Notification
-from ralph.ports import Budget, CommandSource, Editor, Implementer, RepoCommands
-from ralph.runlog import JsonlRunLog
+from ralph.ports import Budget, CommandSource, Editor, Implementer, RepoCommands, RunLog
+from ralph.runlog import Event, JsonlRunLog
 from ralph.scheduler import RunReport, Scheduler
 
 log = logging.getLogger("ralph")
@@ -516,7 +516,7 @@ async def run(
         repo=repo,
         git=git,
         store=store,
-        run_log=JsonlRunLog(path=scratch / "run.jsonl"),
+        run_log=NarratedRunLog(JsonlRunLog(path=scratch / "run.jsonl")),
         implementer=selected_implementer,
         editor=selected_editor,
         merge_queue=MergeQueue(git=git, runner=runner, integration=integration),
@@ -531,6 +531,42 @@ async def run(
     except Exception:  # noqa: BLE001 — stdout still carries the notification
         log.warning("could not publish the final notification to the issue store", exc_info=True)
     return report
+
+
+def render_event(e: Event) -> str:
+    """One run-log event, for a human watching it happen.
+
+    The same five fields the JSONL line carries, in the same order — this is a *view* of the record,
+    not a second record. UTC like the file, and time-of-day only: a run is hours, not days, and the
+    date would be five characters of noise on every line.
+    """
+    return (
+        f"{e.ts:%H:%M:%S}  {e.sub_issue:<10} {e.actor.value:<12} "
+        f"{e.kind.value:<17} {e.details.value}"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class NarratedRunLog:
+    """A `RunLog` that also narrates to the terminal as it writes.
+
+    The file is the record; this is the only account of a run *while it is still happening*. The
+    notification comes at the end, which is hours too late to tell you a wave has started, and
+    `tail -f` on a path the run computes for itself is a poor substitute for the run saying so.
+
+    Ordered file-first on purpose: the terminal must never claim something the record does not.
+    """
+
+    inner: RunLog
+
+    async def write(self, e: Event) -> None:
+        await self.inner.write(e)
+        # Unbuffered, because the whole value here is timeliness — a narration that arrives in a
+        # 4KB block when the run ends is the notification again, with worse formatting.
+        print(render_event(e), flush=True)
+
+    def events(self) -> tuple[Event, ...]:
+        return self.inner.events()
 
 
 def render_consumption(c: TokenConsumption) -> str:

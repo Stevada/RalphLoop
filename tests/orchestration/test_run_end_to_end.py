@@ -97,6 +97,32 @@ async def test_the_run_log_tells_the_true_story_in_order(
     assert all(set(e) == {"ts", "sub_issue", "actor", "kind", "details"} for e in lines)
 
 
+async def test_every_run_log_event_is_narrated_to_the_terminal_as_it_happens(
+    repo: TargetRepo, agent: StandInAgent, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The file is the record, but nobody watches a file. A run is hours long and its only other
+    output arrives at the end — so what reaches the terminal must be *every* event, in the order the
+    record has them, and nothing the record does not have."""
+    await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
+        options=make_options(),
+    )
+
+    log = (repo.path / ".scratch" / PARENT_ISSUE_NAME / "run.jsonl").read_text().splitlines()
+    narrated = [
+        line for line in capsys.readouterr().out.splitlines() if "session-" in line or "closed" in line
+    ]
+
+    assert len(narrated) == len(log)
+    for line, recorded in zip(narrated, (json.loads(x) for x in log), strict=True):
+        for field in ("sub_issue", "actor", "kind", "details"):
+            assert recorded[field] in line
+        assert recorded["ts"][11:19] in line  # the record's own UTC clock, not a second one
+
+
 async def test_a_red_base_is_caught_by_the_merge_queue_gate(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:

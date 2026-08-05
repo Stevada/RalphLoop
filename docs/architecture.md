@@ -332,6 +332,11 @@ Append-only, one line per event, two kinds of thing only: session states and Edi
 spend is deliberately not a run-log event; per-session consumption is persisted through the
 `IssueStore`, and diffstats and failing-test output belong in the impasse report.
 
+`cli.py` wraps the JSONL writer in a `NarratedRunLog`, so every event reaching the file also reaches
+the terminal as it is written — file first, so the narration can never claim something the record
+does not. It is a **view**, not a second sink: same fields, same order, same UTC clock. Between the
+first session and the closing notification a run is otherwise silent for hours.
+
 `Event` and `EventKind` live in [runlog/model.py](../ralph/runlog/model.py), outside `harness/`,
 because they are the ledger vocabulary rather than a harness decision. `event()` lives beside them
 because it reads the clock, and the harness core stays pure. `JsonlRunLog` is the concrete append-only
