@@ -23,7 +23,8 @@ from pathlib import Path
 from ralph.adapters.runtime.implementer import SubprocessImplementer
 from ralph.cli import RunOptions
 from ralph.issues import Findings, Spec
-from ralph.ports import Implementer, Worktree
+from ralph.ports import Editor, Implementer, Worktree
+from tests.fakes import FakeEditor, FakeImplementer
 
 # The suite the throwaway repo ships with. Real pytest, run as a real subprocess, in the venv
 # interpreter — the same one the harness itself will detect and run.
@@ -203,6 +204,22 @@ def stand_in_implementer(agent: StandInAgent, behaviour: Behaviour | str) -> Imp
         return agent.argv(behaviour, tag)
 
     return SubprocessImplementer(build_argv=build_argv)
+
+
+def unengaged_editor() -> Editor:
+    """An Editor for a run that is not supposed to need one.
+
+    The pre-flight refuses a run whose *named* Editor has no runtime installed, and no machine
+    running this suite is required to have one. Passing an Editor through the seam states what is
+    already true of these tests — nothing in them reaches adjudication — and keeps the refusal
+    about runs that would really construct the thing.
+    """
+    return FakeEditor()
+
+
+def unengaged_implementer() -> Implementer:
+    """The Implementer half of the same seam, for a pre-flight test that opens no session at all."""
+    return FakeImplementer()
 
 
 def make_target_repo(root: Path) -> TargetRepo:

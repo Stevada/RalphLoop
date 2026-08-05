@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import sys
 
+import pytest
+
 from ralph.adapters.runtime.bounding import Bound, run_bounded
 from ralph.adapters.git import GitCli
 from ralph.adapters.runtime.implementer import SubprocessImplementer
@@ -44,6 +46,42 @@ async def test_the_clock_catches_a_stuck_session() -> None:
 
     assert bound == Bound(killed="wall-clock", consumed_tokens=0)
     assert proc.returncode is not None
+
+
+class _UnkillableSession:
+    """A session whose `kill()` does not work. Not a hypothetical: a `TurnStreamSession` whose
+    conversation crashed before it could queue its end-of-stream sentinel is exactly this — the
+    reader it was supposed to release is still waiting, and nothing will release it."""
+
+    def __init__(self) -> None:
+        self.killed = False
+
+    @property
+    def returncode(self) -> int | None:
+        return None
+
+    def kill(self) -> None:
+        self.killed = True
+
+    async def wait(self) -> int:
+        await asyncio.Event().wait()
+        return 0
+
+
+async def test_a_kill_that_does_not_take_still_returns_to_the_caller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bound's own escape hatch. Reaping a killed session is the last wait in `run_bounded`, and
+    an unbounded one there would hang the run *past* the clock that had just fired — leaving a dead
+    sub-issue holding a slot for the life of the run, which is what a wall clock exists to prevent.
+    """
+    monkeypatch.setattr("ralph.adapters.runtime.bounding.KILL_GRACE_S", 0.2)
+    session = _UnkillableSession()
+
+    bound = await asyncio.wait_for(run_bounded(session, SHORT_CLOCK), timeout=10)
+
+    assert bound == Bound(killed="wall-clock", consumed_tokens=0)
+    assert session.killed  # it was asked to stop, and the harness did not wait forever to be obeyed
 
 
 async def test_real_session_telemetry_has_no_context_peak(repo: TargetRepo) -> None:

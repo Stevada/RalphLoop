@@ -20,19 +20,59 @@ from dataclasses import replace
 
 import pytest
 
-from ralph.cli import NoActor, Refused, main, render_plan, render_refusals, run, validate
+from ralph.cli import (
+    NoActor,
+    Refused,
+    RunOptions,
+    main,
+    render_plan,
+    render_refusals,
+    run,
+    validate,
+)
 from ralph.harness import (
     Check,
+    Refusal,
     RepoFacts,
     build_order,
     refusals,
 )
 from ralph.issues import IssueGraph, SubIssue, SubIssueId, SubIssueState
-from ralph.ports import RepoCommands
+from ralph.ports import CommandSource, RepoCommands
 from tests.fakes import FakeCommandSource
-from tests.testbed import TEST_CMD, TargetRepo, make_options
+from tests.testbed import (
+    TEST_CMD,
+    TargetRepo,
+    make_options,
+    unengaged_editor,
+    unengaged_implementer,
+)
 
 READY_COMMANDS = RepoCommands(test=("uv", "run", "pytest"), install=("uv", "sync"))
+
+
+def validate_repo(
+    repo: TargetRepo,
+    options: RunOptions | None = None,
+    command_source: CommandSource | None = None,
+) -> tuple[Refusal, ...]:
+    """`validate`, with both actors supplied through the seam.
+
+    Every test below asks a question about the *repository*. Handing in the actors takes
+    `missing-actor-runtime` out of the answer, because no machine running this suite is required to
+    have a Codex CLI or an SDK installed — and that check has its own tests.
+    """
+    return validate(
+        repo.path, None, options, command_source, unengaged_implementer(), unengaged_editor()
+    )
+
+
+@pytest.fixture
+def installed_runtimes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`main` builds its actors from argv, so there is no seam to hand them through. The tests that
+    go through it are about what the CLI prints, not about what this machine has installed."""
+    monkeypatch.setattr("ralph.cli._installed", lambda runtime: True)
+
 
 CLEAN = RepoFacts(
     head_branch="feature/x",
@@ -40,6 +80,7 @@ CLEAN = RepoFacts(
     dirty=(),
     has_test_command=True,
     command_error=None,
+    actor_runtime_error=None,
     source_error=None,
     graph_error=None,
     pre_commit_config=None,
@@ -55,8 +96,8 @@ def test_a_clean_repo_is_not_refused() -> None:
 
 
 def test_each_refusal_says_which_morning_it_is() -> None:
-    """The one property the whole pre-flight exists for. Six different repositories, six different
-    sentences — and none of them is "validation failed"."""
+    """The one property the whole pre-flight exists for. Seven different repositories, seven
+    different sentences — and none of them is "validation failed"."""
     said = {
         r.check: r.reason
         for r in refusals(
@@ -66,6 +107,7 @@ def test_each_refusal_says_which_morning_it_is() -> None:
                 dirty=("src/app.py",),
                 has_test_command=False,
                 command_error=None,
+                actor_runtime_error="editor 'claude': `claude_agent_sdk` is not installed",
                 source_error="Linear issue 'ENG-1' was not found",
                 graph_error="03-sub.md has no `## Acceptance criteria`",
                 pre_commit_config=".pre-commit-config.yaml",
@@ -74,13 +116,14 @@ def test_each_refusal_says_which_morning_it_is() -> None:
         )
     }
 
-    assert set(said) == set(Check)  # all six fire, and all six are reported
-    assert len(set(said.values())) == 6  # and no two of them say the same thing
+    assert set(said) == set(Check)  # all seven fire, and all seven are reported
+    assert len(set(said.values())) == len(Check)  # and no two of them say the same thing
 
     assert "main" in said[Check.PROTECTED_BRANCH]
     assert "src/app.py" in said[Check.UNCOMMITTED_CHANGES]
     assert "pre-commit install" in said[Check.UNINSTALLED_PRE_COMMIT_HOOKS]
     assert "test command" in said[Check.MISSING_TEST_COMMAND]
+    assert "claude_agent_sdk" in said[Check.MISSING_ACTOR_RUNTIME]
     assert "ENG-1" in said[Check.INVALID_ISSUE_SOURCE]
     assert "no `## Acceptance criteria`" in said[Check.INVALID_ISSUE_GRAPH]
 
@@ -136,7 +179,7 @@ def test_the_dirty_list_is_elided_rather_than_unrolled() -> None:
 def test_a_protected_branch_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
     repo.git("checkout", "main")
 
-    (refused,) = validate(repo.path)
+    (refused,) = validate_repo(repo)
 
     assert refused.check is Check.PROTECTED_BRANCH
     assert "'main'" in refused.reason
@@ -145,7 +188,7 @@ def test_a_protected_branch_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
 def test_the_protected_list_is_the_humans_to_set(repo: TargetRepo) -> None:
     options = make_options(protected=frozenset({"integration", "trunk"}))
 
-    (refused,) = validate(repo.path, options=options)
+    (refused,) = validate_repo(repo, options=options)
 
     assert refused.check is Check.PROTECTED_BRANCH  # `integration` is the fixture's HEAD, and now protected
 
@@ -153,7 +196,7 @@ def test_the_protected_list_is_the_humans_to_set(repo: TargetRepo) -> None:
 def test_a_dirty_tree_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
     (repo.path / "calculator.py").write_text("def add(a: int, b: int) -> int:\n    return a - b\n")
 
-    (refused,) = validate(repo.path)
+    (refused,) = validate_repo(repo)
 
     assert refused.check is Check.UNCOMMITTED_CHANGES
     assert "calculator.py" in refused.reason
@@ -162,7 +205,7 @@ def test_a_dirty_tree_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
 def test_preflight_consults_the_command_source(
     repo: TargetRepo, command_source: FakeCommandSource
 ) -> None:
-    assert validate(repo.path) == ()
+    assert validate_repo(repo) == ()
 
     assert command_source.calls == [repo.path.resolve()]
 
@@ -170,7 +213,7 @@ def test_preflight_consults_the_command_source(
 def test_a_repo_without_a_discoverable_test_command_is_refused(repo: TargetRepo) -> None:
     missing = FakeCommandSource(RepoCommands(test=(), install=None))
 
-    (refused,) = validate(repo.path, command_source=missing)
+    (refused,) = validate_repo(repo, command_source=missing)
 
     assert missing.calls == [repo.path.resolve()]
     assert refused.check is Check.MISSING_TEST_COMMAND
@@ -183,13 +226,13 @@ def test_the_harnesss_own_run_log_does_not_count_as_dirt(repo: TargetRepo) -> No
     run."""
     (repo.path / ".scratch" / "run.jsonl").write_text('{"kind": "session-started"}\n')
 
-    assert validate(repo.path) == ()
+    assert validate_repo(repo) == ()
 
 
 def test_a_cyclic_graph_is_refused_on_a_real_repo(repo: TargetRepo) -> None:
     repo.write_graph({"01": ["02"], "02": ["01"]})
 
-    (refused,) = validate(repo.path)
+    (refused,) = validate_repo(repo)
 
     assert refused.check is Check.INVALID_ISSUE_GRAPH
     assert "cycle" in refused.reason
@@ -200,7 +243,7 @@ def test_an_incoherent_issue_source_is_refused_on_a_real_repo(repo: TargetRepo) 
     graph. Under `issue_mode: linear`, omitting the Linear parent is an invocation problem, not a
     graph problem."""
     options = make_options(issue_mode="linear", linear_api_key="lin_x")
-    (refused,) = validate(repo.path, options=options)
+    (refused,) = validate_repo(repo, options=options)
 
     assert refused.check is Check.INVALID_ISSUE_SOURCE
     assert "issue_source" in refused.reason
@@ -212,21 +255,45 @@ def test_a_sub_issue_with_no_acceptance_criteria_is_refused(repo: TargetRepo) ->
     (repo.issues_dir / "01-first.md").write_text("# 01 — first\n\nStatus: ready\n\nDo the thing.\n")
     repo.git("commit", "-am", "drop the criteria")
 
-    (refused,) = validate(repo.path)
+    (refused,) = validate_repo(repo)
 
     assert refused.check is Check.INVALID_ISSUE_GRAPH
     assert "Acceptance criteria" in refused.reason
 
 
+def test_an_actor_whose_runtime_is_not_installed_is_refused(
+    repo: TargetRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal that would otherwise arrive as a hung Editor session, hours in, after a sub-issue
+    has already failed and a wave of tokens has already been spent."""
+    monkeypatch.setattr("ralph.cli._installed", lambda runtime: runtime.name != "claude_agent_sdk")
+
+    (refused,) = validate(repo.path, None, None, None, unengaged_implementer(), None)
+
+    assert refused.check is Check.MISSING_ACTOR_RUNTIME
+    assert "editor 'claude'" in refused.reason
+    assert "uv sync --extra editor" in refused.reason  # and it says how to fix it
+
+
+def test_an_actor_handed_in_is_not_checked_for_a_runtime_it_will_not_use(
+    repo: TargetRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing is constructed for a role that was given an actor, so what the options *name* for
+    that role is not a fact about this run — and the machine's install state is beside the point."""
+    monkeypatch.setattr("ralph.cli._installed", lambda runtime: False)
+
+    assert validate_repo(repo) == ()
+
+
 def test_the_fixture_repo_is_ready_to_run(repo: TargetRepo) -> None:
-    """The guard that stops every test above from passing vacuously: the same five checks, against
+    """The guard that stops every test above from passing vacuously: the same seven checks, against
     the repo they are all built on, say nothing at all."""
-    assert validate(repo.path) == ()
+    assert validate_repo(repo) == ()
     assert render_refusals(()) == "ready to run."
 
 
 def test_validate_prints_the_discovered_commands(
-    repo: TargetRepo, capsys: pytest.CaptureFixture[str]
+    repo: TargetRepo, capsys: pytest.CaptureFixture[str], installed_runtimes: None
 ) -> None:
     assert main(["validate", str(repo.path)]) == 0
 
@@ -295,7 +362,7 @@ def test_the_dry_run_accepts_an_explicit_filesystem_issue_source(repo: TargetRep
 
 
 def test_the_dry_run_opens_no_session_and_touches_no_branch(
-    repo: TargetRepo, capsys: pytest.CaptureFixture[str]
+    repo: TargetRepo, capsys: pytest.CaptureFixture[str], installed_runtimes: None
 ) -> None:
     """It costs nothing to run, which is the whole reason it is worth having."""
     before = repo.head("integration")

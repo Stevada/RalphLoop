@@ -28,6 +28,7 @@ from tests.testbed import (
     behaviour_spec,
     make_options,
     stand_in_implementer as stand_in,
+    unengaged_editor,
 )
 
 
@@ -116,6 +117,7 @@ async def test_a_killed_session_yields_a_report_built_from_harness_facts_only(
         None,
         budget=Budget(wall_clock_s=1.0),
         implementer=stand_in(agent, Behaviour.HANG),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -201,6 +203,7 @@ async def test_nothing_is_ever_retried(
         None,
         budget=Budget(wall_clock_s=1.0),
         implementer=stand_in(agent, spec),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 

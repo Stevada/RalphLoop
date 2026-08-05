@@ -30,6 +30,7 @@ from tests.testbed import (
     TargetRepo,
     make_options,
     stand_in_implementer as stand_in,
+    unengaged_editor,
 )
 
 
@@ -46,6 +47,7 @@ async def test_ralph_run_lands_a_sub_issue_end_to_end(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -75,6 +77,7 @@ async def test_the_run_log_tells_the_true_story_in_order(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -126,6 +129,7 @@ async def test_a_failed_install_aborts_the_run_before_a_single_agent_starts(
             repo.path,
             None,
             implementer=stand_in(agent, Behaviour.SUCCEED),
+            editor=unengaged_editor(),
             command_source=commands,
         )
 
@@ -149,6 +153,7 @@ async def test_the_install_runs_once_in_the_base_checkout_never_per_worktree(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         command_source=commands,
     )
 
@@ -167,6 +172,7 @@ async def test_a_repo_without_install_command_skips_base_install(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         command_source=commands,
     )
 
@@ -186,6 +192,9 @@ async def test_the_editor_allowlist_uses_the_discovered_test_command(
         return terminal_editor()
 
     monkeypatch.setattr("ralph.cli.claude_editor", editor_for)
+    # No Editor through the seam: this test is about the one the *run* builds. Which means the
+    # pre-flight would check for a Claude runtime that `editor_for` has just replaced.
+    monkeypatch.setattr("ralph.cli._installed", lambda runtime: True)
 
     report = await run(
         repo.path,
@@ -247,6 +256,7 @@ async def test_a_hanging_session_is_killed_and_does_not_land(
         None,
         budget=Budget(wall_clock_s=1.0),
         implementer=stand_in(agent, Behaviour.HANG),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -287,6 +297,7 @@ async def test_a_read_only_issue_store_does_not_crash_the_run(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -314,6 +325,7 @@ async def test_a_landed_sub_issue_leaves_no_worktree_and_no_branch(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 

@@ -31,6 +31,7 @@ from tests.testbed import (
     make_options,
     peak_concurrency,
     stand_in_implementer as stand_in,
+    unengaged_editor,
 )
 
 
@@ -66,6 +67,7 @@ async def test_all_currently_eligible_sub_issues_run_concurrently(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SLOW),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -86,7 +88,13 @@ async def test_a_fast_sub_issue_lands_without_waiting_for_a_slower_sibling(
     repo.write_graph({"01": [], "02": []})
     spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.SLOW})
 
-    report = await run(repo.path, None, implementer=stand_in(agent, spec), options=make_options())
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, spec),
+        editor=unengaged_editor(),
+        options=make_options(),
+    )
 
     assert report.landed == (SubIssueId("02"), SubIssueId("01"))
 
@@ -102,6 +110,7 @@ async def test_concurrent_sub_issues_serialize_into_a_linear_history(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -163,7 +172,13 @@ async def test_a_sub_issue_is_dispatched_the_moment_its_blockers_land(
     spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.SLOW})
     ledger = with_ledger(monkeypatch, repo)
 
-    report = await run(repo.path, None, implementer=stand_in(agent, spec), options=make_options())
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, spec),
+        editor=unengaged_editor(),
+        options=make_options(),
+    )
 
     assert report.clean
     assert report.landed[-1] == SubIssueId("01")  # the slow one finished last, blocking nobody

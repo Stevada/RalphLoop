@@ -358,7 +358,7 @@ cycle's worth reads as a story with two characters:
 
 ### The pre-flight — [preflight.py](../ralph/harness/rules/preflight.py), gathered in `cli.py`
 
-**It refuses; it does not warn.** Six checks, each describing a repo the harness would otherwise
+**It refuses; it does not warn.** Seven checks, each describing a run the harness would otherwise
 damage or misjudge:
 
 | Check | What it would otherwise do |
@@ -367,6 +367,7 @@ damage or misjudge:
 | `uncommitted-changes` | Fight the merge queue's fast-forwards over uncommitted work, and lose. |
 | `uninstalled-pre-commit-hooks` | Land commits that skipped the checks the repo believes it enforces. |
 | `missing-test-command` | Start without a suite command the merge queue can run. |
+| `missing-actor-runtime` | Start with an actor whose CLI or SDK is absent, and discover it at the session that needed it. |
 | `invalid-issue-source` | Start against an issue source it cannot reach or was misconfigured to find. |
 | `invalid-issue-graph` | Read a source that read fine but holds a graph it cannot use. |
 

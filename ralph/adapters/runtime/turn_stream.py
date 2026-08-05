@@ -123,7 +123,14 @@ async def run_turn_stream(session: TurnStreamSession, budget: Budget) -> TurnStr
 
     reading = asyncio.create_task(pump())
     bound = await run_bounded(_TurnStreamKillable(session, reading), budget)
-    await reading
+    if reading.done():
+        await reading  # whatever the pump raised is this function's failure too. Loudly.
+    else:
+        # The bound has fired and the session was killed, yet its turns never ended. Everything it
+        # emitted before now is still in `said`, and that transcript is the only account a human
+        # will get of a session that would not stop.
+        reading.cancel()
+        await asyncio.gather(reading, return_exceptions=True)
 
     return TurnStreamRun(
         bound=Bound(killed=bound.killed, consumed_tokens=consumed_tokens),

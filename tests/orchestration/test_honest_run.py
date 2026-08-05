@@ -32,6 +32,7 @@ from tests.testbed import (
     behaviour_spec,
     make_options,
     stand_in_implementer as stand_in,
+    unengaged_editor,
 )
 
 # A contract, two in parallel behind it, one integrating both. The smallest graph in which
@@ -63,6 +64,7 @@ async def test_every_sub_issue_lands_and_the_history_is_linear(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -98,6 +100,7 @@ async def test_the_run_log_tells_the_true_story_in_order(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 

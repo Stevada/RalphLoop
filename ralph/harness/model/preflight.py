@@ -25,6 +25,7 @@ class Check(StrEnum):
     UNCOMMITTED_CHANGES = "uncommitted-changes"
     UNINSTALLED_PRE_COMMIT_HOOKS = "uninstalled-pre-commit-hooks"
     MISSING_TEST_COMMAND = "missing-test-command"
+    MISSING_ACTOR_RUNTIME = "missing-actor-runtime"
     INVALID_ISSUE_SOURCE = "invalid-issue-source"
     INVALID_ISSUE_GRAPH = "invalid-issue-graph"
 
@@ -61,6 +62,9 @@ class RepoFacts:
 
     command_error: str | None
     """The message from command discovery when it could not discover a runnable test command."""
+
+    actor_runtime_error: str | None
+    """The message naming every named actor whose runtime is not installed. `None` means both are."""
 
     source_error: str | None
     """The message from a source that could not be read at all. `None` means it was read; whether

@@ -42,36 +42,42 @@ class _SdkSession:
         self._running = asyncio.create_task(self._converse())
 
     async def _converse(self) -> None:
-        # Imported here, not at module scope: `claude-agent-sdk` is an optional dependency, and a
-        # run that never reaches Claude adjudication must not require it to be installed.
-        from claude_agent_sdk import (
-            ClaudeAgentOptions,
-            PermissionResultAllow,
-            PermissionResultDeny,
-            query,
-        )
-
-        async def can_use_tool(tool: str, input: dict[str, object], context: object) -> object:
-            """**The enforcement surface.** The harness adjudicates the call before it happens."""
-            assert self._ask.permit is not None
-            permission = self._ask.permit(tool, input)
-            if permission.allowed:
-                return PermissionResultAllow()
-            return PermissionResultDeny(message=permission.reason)
-
-        options = ClaudeAgentOptions(
-            model=MODEL,
-            allowed_tools=sorted(READ_ONLY_TOOLS),
-            can_use_tool=can_use_tool,
-            cwd=str(self._ask.cwd),
-        )
+        # Nothing above the `try`. This coroutine runs as a bare task nobody awaits, so an exception
+        # raised before it is a *silent* one, and the sentinel in `finally` is what tells the reader
+        # the stream ended — without it, the reader waits on an empty queue for the life of the run.
         try:
+            from claude_agent_sdk import (
+                ClaudeAgentOptions,
+                PermissionResultAllow,
+                PermissionResultDeny,
+                query,
+            )
+
+            async def can_use_tool(tool: str, input: dict[str, object], context: object) -> object:
+                """**The enforcement surface.** The harness adjudicates the call before it happens."""
+                assert self._ask.permit is not None
+                permission = self._ask.permit(tool, input)
+                if permission.allowed:
+                    return PermissionResultAllow()
+                return PermissionResultDeny(message=permission.reason)
+
+            options = ClaudeAgentOptions(
+                model=MODEL,
+                allowed_tools=sorted(READ_ONLY_TOOLS),
+                can_use_tool=can_use_tool,
+                cwd=str(self._ask.cwd),
+            )
             async for message in query(prompt=self._ask.prompt, options=options):
                 for turn in _turns_of(message):
                     self._turns.put_nowait(turn)
             self._code = 0
         except asyncio.CancelledError:
             self._code = -9
+        except Exception as failure:
+            # Into the transcript, not just into a return code: an Editor session that ends with no
+            # verdict is `infra-failed`, and the transcript is where the human reads *why*.
+            self._code = 1
+            self._turns.put_nowait(f"\nthe Claude SDK session failed: {failure!r}\n")
         finally:
             self._turns.put_nowait(None)
 
@@ -92,8 +98,11 @@ class _SdkSession:
             yield turn
 
     def kill(self) -> None:
-        if not self._running.done():
-            self._running.cancel()
+        # The sentinel unconditionally, cancelled or not: `TurnStreamSession` requires that `kill()`
+        # *end* `turns()`, and cancelling a task that has already finished does nothing at all. A
+        # kill that cannot end the stream is how a dead conversation outlives the wall clock.
+        self._running.cancel()
+        self._turns.put_nowait(None)
 
     async def wait(self) -> int:
         await asyncio.gather(self._running, return_exceptions=True)

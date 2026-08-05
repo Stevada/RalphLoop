@@ -47,8 +47,9 @@ uv run ralph run <repo> [issue-source]       # run the graph to completion
 ```
 
 `validate` refuses; it does not warn. A protected branch, a dirty tree, a missing test command, a
-pre-commit hook the repo asks for and has not installed, a graph that will not parse — each gets its
-own sentence, and `ralph run` runs the same checks before it dispatches anything.
+pre-commit hook the repo asks for and has not installed, a graph that will not parse, an actor whose
+CLI or SDK is not installed — each gets its own sentence, and `ralph run` runs the same checks before
+it dispatches anything.
 
 ## Target repo commands
 

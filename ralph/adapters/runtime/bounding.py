@@ -39,6 +39,10 @@ class Killable(Protocol):
     async def wait(self) -> int: ...
 
 
+KILL_GRACE_S = 30.0
+"""How long a killed session has to actually die before the harness stops waiting for it."""
+
+
 async def run_bounded(proc: Killable, budget: Budget) -> Bound:
     """Run a process to completion under the wall-clock bound."""
     killed: Killed | None = None
@@ -49,8 +53,19 @@ async def run_bounded(proc: Killable, budget: Budget) -> Bound:
     except TimeoutError:
         killed = "wall-clock"
 
-    if killed is not None and proc.returncode is None:
+    if killed is None:
+        return Bound(killed=None, consumed_tokens=0)
+
+    if proc.returncode is None:
         proc.kill()
-    await proc.wait()
+    # Bounded too. Reaping a killed session is the last thing between the wall clock and the run
+    # continuing, so it cannot be the one wait with no clock on it: a `kill()` that fails to take
+    # effect would otherwise hang the whole run *past* the bound that just fired, which is the
+    # opposite of what the bound is for.
+    try:
+        async with asyncio.timeout(KILL_GRACE_S):
+            await proc.wait()
+    except TimeoutError:
+        pass
 
     return Bound(killed=killed, consumed_tokens=0)
