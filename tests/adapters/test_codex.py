@@ -27,7 +27,7 @@ from ralph.adapters.codex import (
     end_of_turn_consumption,
 )
 from ralph.adapters.runtime.bounding import Bound
-from ralph.adapters.git import GitCli
+from ralph.adapters.git import GitCli, git_metadata
 from ralph.adapters.runtime.prompt import integrator_prompt
 from ralph.adapters.runtime.session import Session
 from ralph.adapters.runtime.turn_stream import AutoCompaction, Turn, TurnStreamAsk
@@ -59,9 +59,14 @@ def session_context(
 # ── the argv ─────────────────────────────────────────────────────────────────────────────────
 
 
+WRITABLE = (Path("/repo/.git"),)
+
+
 def test_the_session_is_asked_for_json() -> None:
     """`--json` is how the session reports completed-turn usage."""
-    argv = codex_argv(SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="main"))
+    argv = codex_argv(
+        SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="main"), WRITABLE
+    )
 
     assert argv[:4] == ["codex", "--ask-for-approval", "never", "exec"]
     assert "--json" in argv
@@ -69,7 +74,9 @@ def test_the_session_is_asked_for_json() -> None:
 
 
 def test_the_spec_and_the_findings_both_reach_the_model() -> None:
-    prompt = codex_argv(SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"))[-1]
+    prompt = codex_argv(
+        SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"), WRITABLE
+    )[-1]
 
     assert "`add(1, 2) == 3`" in prompt
     assert "already in calculator.py" in prompt
@@ -77,12 +84,26 @@ def test_the_spec_and_the_findings_both_reach_the_model() -> None:
 
 
 def test_how_codex_is_driven_is_fixed_not_configured() -> None:
-    argv = codex_argv(SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"))
+    argv = codex_argv(
+        SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"), WRITABLE
+    )
 
     assert "--sandbox" in argv and IMPLEMENTER_SANDBOX in argv
     assert "--ask-for-approval" in argv and "never" in argv
     assert "--dangerously-bypass-approvals-and-sandbox" not in argv
     assert "gpt-5.5" in argv
+
+
+def test_the_git_directory_is_writable_or_the_session_cannot_commit() -> None:
+    """The worktree is not enough. A session confined to `--cd` can resolve every file it was
+    asked to and still fail `git add` with `Read-only file system`, because the index, the objects
+    and the refs are all outside the checkout."""
+    argv = codex_argv(
+        SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"), WRITABLE
+    )
+
+    assert "--add-dir" in argv
+    assert argv[argv.index("--add-dir") + 1] == "/repo/.git"
 
 
 # ── completed-turn usage ─────────────────────────────────────────────────────────────────────
@@ -332,13 +353,14 @@ async def test_the_codex_integrator_opens_a_fresh_session_in_the_conflicted_work
     monkeypatch.setenv("RALPH_CODEX_ARGV_LOG", str(argv_log))
 
     context = session_context(wt)
-    t = await codex_integrator().reconcile(context)
+    t = await codex_integrator(git_metadata(repo.path)).reconcile(context)
 
     argv = json.loads(argv_log.read_text())
     assert argv[:3] == ["--ask-for-approval", "never", "exec"]
     assert "--json" in argv
     assert "--sandbox" in argv and IMPLEMENTER_SANDBOX in argv, "it must be able to write"
     assert "--cd" in argv and str(wt.path) in argv
+    assert "--add-dir" in argv and str(git_metadata(repo.path)) in argv, "it must be able to commit"
     assert "resume" not in argv, "a fresh session: the conflict is in the repo, not in a transcript"
     assert argv[-1] == integrator_prompt(context.spec, context.findings)
     assert t.killed is None
@@ -432,7 +454,7 @@ async def test_a_real_codex_session_lands_a_real_sub_issue(repo: TargetRepo) -> 
             """)
     )
 
-    t = await codex_implementer().run(
+    t = await codex_implementer(git_metadata(repo.path)).run(
         session_context(
             wt, spec=spec, findings=Findings(body=""), budget=Budget(wall_clock_s=600.0)
         )
@@ -467,7 +489,7 @@ async def test_a_real_codex_integrator_resolves_a_real_merge_conflict(
         wt, spec=spec, findings=Findings(body=""), budget=Budget(wall_clock_s=900.0)
     )
 
-    first = await codex_implementer().run(context)
+    first = await codex_implementer(git_metadata(repo.path)).run(context)
     assert first.resumable_identifier is not None
     assert first.commits >= 1
 
@@ -484,7 +506,7 @@ async def test_a_real_codex_integrator_resolves_a_real_merge_conflict(
     assert merge.returncode != 0
     assert "<<<<<<<" in (wt.path / "shared.py").read_text()
 
-    reconciled = await codex_integrator().reconcile(context)
+    reconciled = await codex_integrator(git_metadata(repo.path)).reconcile(context)
 
     assert reconciled.killed is None
     assert reconciled.consumption.consumed_tokens > 0

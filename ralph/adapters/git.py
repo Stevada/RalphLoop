@@ -38,6 +38,19 @@ def _try_git(cwd: Path, *args: str) -> bool:
     return proc.returncode == 0
 
 
+def git_metadata(repo: Path) -> Path:
+    """Where git writes when a session commits — the index, the objects, the refs — for `repo` and
+    every worktree cut from it.
+
+    **None of it is inside the worktree.** A linked worktree's `.git` is a pointer file into this
+    directory, so an actor confined to its own checkout can rewrite every source file it was asked
+    to and still not be able to record that it did. Asked of git rather than assembled as
+    `repo / ".git"`, which is a file, not a directory, whenever the target repo is itself a
+    worktree or was cloned with `--separate-git-dir`.
+    """
+    return Path(run_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+
+
 @dataclass(frozen=True, slots=True)
 class GitCli:
     repo: Path

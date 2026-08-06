@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import partial
+from pathlib import Path
 
 from ralph.adapters.codex.session import codex_read_only_session, codex_sdk_session
 from ralph.adapters.runtime.editor import run_editor
@@ -77,12 +79,12 @@ class CodexEditor:
         return await run_editor(session, context.budget)
 
 
-def codex_implementer() -> CodexImplementer:
-    return CodexImplementer(open_session=codex_sdk_session)
+def codex_implementer(git_metadata: Path) -> CodexImplementer:
+    return CodexImplementer(open_session=partial(codex_sdk_session, git_metadata=git_metadata))
 
 
-def codex_integrator() -> CodexIntegrator:
-    return CodexIntegrator(open_session=codex_sdk_session)
+def codex_integrator(git_metadata: Path) -> CodexIntegrator:
+    return CodexIntegrator(open_session=partial(codex_sdk_session, git_metadata=git_metadata))
 
 
 def codex_editor(suite: Sequence[str]) -> CodexEditor:

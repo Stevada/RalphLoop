@@ -7,6 +7,7 @@ import json
 import os
 import signal
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from functools import partial
 from pathlib import Path
 
 from ralph.adapters.runtime.prompt import implementer_prompt
@@ -45,6 +46,7 @@ def codex_argv(
     spec: Spec,
     findings: Findings,
     worktree: Worktree,
+    writable: Sequence[Path],
     *,
     sandbox: str = IMPLEMENTER_SANDBOX,
 ) -> Sequence[str]:
@@ -53,10 +55,22 @@ def codex_argv(
         prompt=implementer_prompt(spec, findings),
         cwd=worktree.path,
         sandbox=sandbox,
+        writable=writable,
     )
 
 
-def _codex_exec_argv(*, prompt: str, cwd: Path, sandbox: str) -> list[str]:
+def _writable_argv(writable: Sequence[Path]) -> list[str]:
+    """`--cd` makes the worktree writable and stops there, which is one directory short of a
+    commit: `git add` writes the index, and `git commit` writes objects and moves a ref, none of
+    which live in the checkout. Without this the kernel refuses those writes and git reports
+    `Read-only file system` — a session can then resolve everything correctly and land nothing.
+
+    Empty for the Editor, which is denied writes on purpose.
+    """
+    return [arg for dir in writable for arg in ("--add-dir", str(dir))]
+
+
+def _codex_exec_argv(*, prompt: str, cwd: Path, sandbox: str, writable: Sequence[Path]) -> list[str]:
     """Codex global options precede `exec`; `exec` options follow it."""
     return [
         "codex",
@@ -66,12 +80,13 @@ def _codex_exec_argv(*, prompt: str, cwd: Path, sandbox: str) -> list[str]:
         "--model", MODEL,
         "--sandbox", sandbox,
         "--cd", str(cwd),
+        *_writable_argv(writable),
         prompt,
     ]
 
 
 def _codex_resume_argv(
-    *, prompt: str, cwd: Path, sandbox: str, resumable_identifier: str
+    *, prompt: str, cwd: Path, sandbox: str, writable: Sequence[Path], resumable_identifier: str
 ) -> list[str]:
     """`resume` is an `exec` subcommand, so `exec` options come before it."""
     return [
@@ -82,6 +97,7 @@ def _codex_resume_argv(
         "--model", MODEL,
         "--sandbox", sandbox,
         "--cd", str(cwd),
+        *_writable_argv(writable),
         "resume",
         resumable_identifier,
         prompt,
@@ -230,11 +246,12 @@ class CodexJsonSession(TurnStreamSession):
         ask: TurnStreamAsk,
         *,
         sandbox: str,
+        writable: Sequence[Path] = (),
         build_argv: Callable[[TurnStreamAsk, str], Sequence[str]] | None = None,
     ) -> None:
         self._ask = ask
         self._sandbox = sandbox
-        self._build_argv = build_argv or _session_argv
+        self._build_argv = build_argv or partial(_session_argv, writable=writable)
         self._turns: asyncio.Queue[Turn | None] = asyncio.Queue()
         self._auto_compactions: list[AutoCompaction] = []
         self._resumable_identifier = ask.resumable_identifier
@@ -329,15 +346,16 @@ class CodexJsonSession(TurnStreamSession):
             self._turns.put_nowait(None)
 
 
-def _session_argv(ask: TurnStreamAsk, sandbox: str) -> Sequence[str]:
+def _session_argv(ask: TurnStreamAsk, sandbox: str, *, writable: Sequence[Path]) -> Sequence[str]:
     if ask.resumable_identifier is not None:
         return _codex_resume_argv(
             prompt=ask.prompt,
             cwd=ask.cwd,
             sandbox=sandbox,
+            writable=writable,
             resumable_identifier=ask.resumable_identifier,
         )
-    return _codex_exec_argv(prompt=ask.prompt, cwd=ask.cwd, sandbox=sandbox)
+    return _codex_exec_argv(prompt=ask.prompt, cwd=ask.cwd, sandbox=sandbox, writable=writable)
 
 
 def _is_compaction(kind: str) -> bool:
@@ -368,8 +386,11 @@ def _compaction_of(kind: str, event: Mapping[str, object]) -> AutoCompaction:
     )
 
 
-def codex_sdk_session(ask: TurnStreamAsk) -> CodexJsonSession:
-    return CodexJsonSession(ask=ask, sandbox=IMPLEMENTER_SANDBOX)
+def codex_sdk_session(ask: TurnStreamAsk, git_metadata: Path) -> CodexJsonSession:
+    """For the two actors that commit. `git_metadata` is not optional for either of them: an
+    Implementer that cannot commit is an `impasse`, and an Integrator that cannot commit is a
+    human being paged."""
+    return CodexJsonSession(ask=ask, sandbox=IMPLEMENTER_SANDBOX, writable=(git_metadata,))
 
 
 def codex_read_only_session(ask: TurnStreamAsk) -> CodexJsonSession:

@@ -31,7 +31,7 @@ from ralph.adapters.copilot import (
     copilot_implementer,
     copilot_integrator,
 )
-from ralph.adapters.git import GitCli, run_git
+from ralph.adapters.git import GitCli, git_metadata, run_git
 from ralph.adapters.suite import SubprocessTestRunner, install_once
 from ralph.harness import (
     CycleLedger,
@@ -276,23 +276,23 @@ def editor_of(options: RunOptions, suite: tuple[str, ...]) -> Editor:
     raise AssertionError("validate_actors accepted an unknown Editor")
 
 
-def integrator_of(options: RunOptions) -> Integrator:
+def integrator_of(options: RunOptions, git_metadata: Path) -> Integrator:
     """Which model reconciles a conflict. Its own flag because reconciling two correct trees is a
     different job from writing one, and worth being able to price differently."""
     named = options.integrator
     if named == CODEX:
-        return codex_integrator()
+        return codex_integrator(git_metadata)
     if named == COPILOT:
         return copilot_integrator()
     validate_actors(options)
     raise AssertionError("validate_actors accepted an unknown Integrator")
 
 
-def implementer_of(options: RunOptions) -> Implementer:
+def implementer_of(options: RunOptions, git_metadata: Path) -> Implementer:
     """Which model implements — the one decision only this module is allowed to make."""
     named = options.implementer
     if named == CODEX:
-        return codex_implementer()
+        return codex_implementer(git_metadata)
     if named == COPILOT:
         return copilot_implementer()
     validate_actors(options)
@@ -557,9 +557,14 @@ async def run(
         await install_once(repo, commands.install)
 
     store = issue_store(repo, issue_source, options)
-    selected_implementer = implementer if implementer is not None else implementer_of(options)
+    metadata = git_metadata(repo)
+    selected_implementer = (
+        implementer if implementer is not None else implementer_of(options, metadata)
+    )
     selected_editor = editor if editor is not None else editor_of(options, commands.test)
-    selected_integrator = integrator if integrator is not None else integrator_of(options)
+    selected_integrator = (
+        integrator if integrator is not None else integrator_of(options, metadata)
+    )
     parent = parent_issue_name(repo, issue_source, options)
     scratch = repo / ".scratch" / parent if parent is not None else repo / ".scratch"
     scheduler = Scheduler(
