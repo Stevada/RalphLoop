@@ -25,7 +25,7 @@ from ralph.adapters.runtime.turn_stream import (
 )
 from ralph.harness import NOTHING, TokenConsumption
 
-MODEL = "claude-opus-4-8"
+MODEL = "claude-opus-5"
 """The Editor is the expensive one on purpose. It runs at most three times per sub-issue and it is
 the only actor whose judgment the harness cannot check against a suite."""
 
