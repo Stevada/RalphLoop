@@ -20,7 +20,11 @@ from ralph.harness.model.impasse import Approach, ImpasseReport
 from ralph.harness.model.preflight import Check, Refusal, RepoFacts
 from ralph.harness.model.session import Actor, Killed, Outcome, SessionTelemetry, SuiteResult
 from ralph.harness.model.verdict import EditorVerdict, Verdict
-from ralph.harness.rules.classify import classify_editor, classify_implementer
+from ralph.harness.rules.classify import (
+    classify_editor,
+    classify_implementer,
+    classify_integrator,
+)
 from ralph.harness.rules.cycles import CycleLedger
 from ralph.harness.rules.eligibility import build_order, eligible, never_eligible
 from ralph.harness.rules.preflight import refusals
@@ -50,6 +54,7 @@ __all__ = [
     "build_order",
     "classify_editor",
     "classify_implementer",
+    "classify_integrator",
     "eligible",
     "failure_report",
     "never_eligible",

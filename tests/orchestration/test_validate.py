@@ -46,6 +46,7 @@ from tests.testbed import (
     make_options,
     unengaged_editor,
     unengaged_implementer,
+    unengaged_integrator,
 )
 
 READY_COMMANDS = RepoCommands(test=("uv", "run", "pytest"), install=("uv", "sync"))
@@ -56,14 +57,20 @@ def validate_repo(
     options: RunOptions | None = None,
     command_source: CommandSource | None = None,
 ) -> tuple[Refusal, ...]:
-    """`validate`, with both actors supplied through the seam.
+    """`validate`, with every unattended actor supplied through the seam.
 
     Every test below asks a question about the *repository*. Handing in the actors takes
     `missing-actor-runtime` out of the answer, because no machine running this suite is required to
     have a Codex CLI or an SDK installed — and that check has its own tests.
     """
     return validate(
-        repo.path, None, options, command_source, unengaged_implementer(), unengaged_editor()
+        repo.path,
+        None,
+        options,
+        command_source,
+        unengaged_implementer(),
+        unengaged_editor(),
+        unengaged_integrator(),
     )
 
 

@@ -24,9 +24,13 @@ from typing import Literal
 from dotenv import load_dotenv
 
 from ralph.adapters.claude import claude_editor
-from ralph.adapters.codex import codex_editor, codex_implementer
+from ralph.adapters.codex import codex_editor, codex_implementer, codex_integrator
 from ralph.adapters.commands import DescriptorCommandError, DescriptorCommandSource
-from ralph.adapters.copilot import copilot_editor, copilot_implementer
+from ralph.adapters.copilot import (
+    copilot_editor,
+    copilot_implementer,
+    copilot_integrator,
+)
 from ralph.adapters.git import GitCli, run_git
 from ralph.adapters.suite import SubprocessTestRunner, install_once
 from ralph.harness import (
@@ -50,7 +54,15 @@ from ralph.issues.linear import (
 from ralph.issues.store import IssueStore
 from ralph.mergequeue import MergeQueue
 from ralph.notification import Notification
-from ralph.ports import Budget, CommandSource, Editor, Implementer, RepoCommands, RunLog
+from ralph.ports import (
+    Budget,
+    CommandSource,
+    Editor,
+    Implementer,
+    Integrator,
+    RepoCommands,
+    RunLog,
+)
 from ralph.runlog import Event, JsonlRunLog
 from ralph.scheduler import RunReport, Scheduler
 
@@ -86,6 +98,7 @@ LINEAR = "linear"
 DEFAULT_ISSUE_MODE = FILESYSTEM
 DEFAULT_IMPLEMENTER = CODEX
 DEFAULT_EDITOR = CLAUDE
+DEFAULT_INTEGRATOR = CODEX
 DEFAULT_PROTECTED = ("main", "master")
 
 LINEAR_API_KEY = "LINEAR_API_KEY"
@@ -127,6 +140,7 @@ class RunOptions:
     issue_mode: str = DEFAULT_ISSUE_MODE
     implementer: str = DEFAULT_IMPLEMENTER
     editor: str = DEFAULT_EDITOR
+    integrator: str = DEFAULT_INTEGRATOR
     protected: frozenset[str] = frozenset(DEFAULT_PROTECTED)
     linear_api_key: str | None = None
 
@@ -135,6 +149,7 @@ class RunOptions:
             f"issue_mode={self.issue_mode} "
             f"implementer={self.implementer} "
             f"editor={self.editor} "
+            f"integrator={self.integrator} "
             f"protected={{{', '.join(sorted(self.protected))}}} "
             f"linear_api_key={'set' if self.linear_api_key else 'unset'}"
         )
@@ -146,12 +161,14 @@ def _options_for(
     issue_mode: str = DEFAULT_ISSUE_MODE,
     implementer: str = DEFAULT_IMPLEMENTER,
     editor: str = DEFAULT_EDITOR,
+    integrator: str = DEFAULT_INTEGRATOR,
     protected: Sequence[str] = DEFAULT_PROTECTED,
 ) -> RunOptions:
     return RunOptions(
         issue_mode=issue_mode,
         implementer=implementer,
         editor=editor,
+        integrator=integrator,
         protected=frozenset(protected),
         linear_api_key=env.get(LINEAR_API_KEY),
     )
@@ -177,6 +194,12 @@ def _add_option_flags(parser: argparse.ArgumentParser) -> None:
         help=f"the CLI that diagnoses failures. Defaults to {DEFAULT_EDITOR}.",
     )
     parser.add_argument(
+        "--integrator",
+        choices=(CODEX, COPILOT),
+        default=DEFAULT_INTEGRATOR,
+        help=f"the CLI that reconciles merge conflicts. Defaults to {DEFAULT_INTEGRATOR}.",
+    )
+    parser.add_argument(
         "--protected",
         action="append",
         default=None,
@@ -195,6 +218,10 @@ def validate_actors(options: RunOptions) -> None:
         raise NoActor(
             f"editor: {options.editor!r} names no Editor. Known: {CLAUDE}, {CODEX}, {COPILOT}."
         )
+    if options.integrator not in {CODEX, COPILOT}:
+        raise NoActor(
+            f"integrator: {options.integrator!r} names no Integrator. Known: {CODEX}, {COPILOT}."
+        )
 
 
 def _installed(runtime: ActorRuntime) -> bool:
@@ -208,6 +235,7 @@ def actor_runtime_error(
     options: RunOptions,
     implementer: Implementer | None = None,
     editor: Editor | None = None,
+    integrator: Integrator | None = None,
 ) -> str | None:
     """Every actor this run would *construct* whose runtime is missing, or `None` if there is none.
 
@@ -220,6 +248,7 @@ def actor_runtime_error(
     named_roles = [
         ("implementer", options.implementer, implementer),
         ("editor", options.editor, editor),
+        ("integrator", options.integrator, integrator),
     ]
     missing = [
         f"{role} {named!r}: `{runtime.name}` is not installed — {runtime.fix}"
@@ -245,6 +274,18 @@ def editor_of(options: RunOptions, suite: tuple[str, ...]) -> Editor:
         return copilot_editor(suite=suite)
     validate_actors(options)
     raise AssertionError("validate_actors accepted an unknown Editor")
+
+
+def integrator_of(options: RunOptions) -> Integrator:
+    """Which model reconciles a conflict. Its own flag because reconciling two correct trees is a
+    different job from writing one, and worth being able to price differently."""
+    named = options.integrator
+    if named == CODEX:
+        return codex_integrator()
+    if named == COPILOT:
+        return copilot_integrator()
+    validate_actors(options)
+    raise AssertionError("validate_actors accepted an unknown Integrator")
 
 
 def implementer_of(options: RunOptions) -> Implementer:
@@ -345,6 +386,7 @@ def _facts_and_commands(
     command_source: CommandSource | None = None,
     implementer: Implementer | None = None,
     editor: Editor | None = None,
+    integrator: Integrator | None = None,
 ) -> tuple[RepoFacts, RepoCommands | None]:
     """Ask the world the pre-flight questions, and hand the answers to a rule that cannot ask anything.
 
@@ -372,7 +414,7 @@ def _facts_and_commands(
             dirty=git.dirty_files(),
             has_test_command=commands is not None and bool(commands.test),
             command_error=command_error,
-            actor_runtime_error=actor_runtime_error(options, implementer, editor),
+            actor_runtime_error=actor_runtime_error(options, implementer, editor, integrator),
             source_error=source_error,
             graph_error=graph_error,
             pre_commit_config=pre_commit_config,
@@ -399,8 +441,11 @@ def validate(
     command_source: CommandSource | None = None,
     implementer: Implementer | None = None,
     editor: Editor | None = None,
+    integrator: Integrator | None = None,
 ) -> tuple[Refusal, ...]:
-    return readiness(repo, issue_source, options, command_source, implementer, editor).refusals
+    return readiness(
+        repo, issue_source, options, command_source, implementer, editor, integrator
+    ).refusals
 
 
 def readiness(
@@ -410,12 +455,13 @@ def readiness(
     command_source: CommandSource | None = None,
     implementer: Implementer | None = None,
     editor: Editor | None = None,
+    integrator: Integrator | None = None,
 ) -> Readiness:
     """An actor passed here is one this run will not construct, so its runtime is not checked."""
     options = options or _options_for()
     validate_actors(options)
     facts, commands = _facts_and_commands(
-        repo.resolve(), issue_source, options, command_source, implementer, editor
+        repo.resolve(), issue_source, options, command_source, implementer, editor, integrator
     )
     return Readiness(
         refusals=refusals(facts),
@@ -480,6 +526,7 @@ async def run(
     budget: Budget | None = None,
     implementer: Implementer | None = None,
     editor: Editor | None = None,
+    integrator: Integrator | None = None,
     options: RunOptions | None = None,
     command_source: CommandSource | None = None,
 ) -> RunReport:
@@ -492,7 +539,9 @@ async def run(
 
     # The same checks `ralph validate` runs, and they are not advisory. A run that starts on `main`
     # has already done the damage by the time anybody reads the warning it printed.
-    ready = readiness(repo, issue_source, options, command_source, implementer, editor)
+    ready = readiness(
+        repo, issue_source, options, command_source, implementer, editor, integrator
+    )
     if ready.refusals:
         raise Refused(render_refusals(ready.refusals))
     if ready.commands is None:
@@ -510,6 +559,7 @@ async def run(
     store = issue_store(repo, issue_source, options)
     selected_implementer = implementer if implementer is not None else implementer_of(options)
     selected_editor = editor if editor is not None else editor_of(options, commands.test)
+    selected_integrator = integrator if integrator is not None else integrator_of(options)
     parent = parent_issue_name(repo, issue_source, options)
     scratch = repo / ".scratch" / parent if parent is not None else repo / ".scratch"
     scheduler = Scheduler(
@@ -519,7 +569,9 @@ async def run(
         run_log=NarratedRunLog(JsonlRunLog(path=scratch / "run.jsonl")),
         implementer=selected_implementer,
         editor=selected_editor,
-        merge_queue=MergeQueue(git=git, runner=runner, integration=integration),
+        merge_queue=MergeQueue(
+            git=git, runner=runner, integration=integration, integrator=selected_integrator
+        ),
         integration=integration,
         budget=budget or Budget(),
         parent_issue_name=parent,
@@ -701,6 +753,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         issue_mode=args.issue_mode,
         implementer=args.implementer,
         editor=args.editor,
+        integrator=args.integrator,
         protected=args.protected or DEFAULT_PROTECTED,
     )
     try:

@@ -31,6 +31,7 @@ from ralph.ports import (
     Editor,
     Git,
     Implementer,
+    Integrator,
     RepoCommands,
     RunLog,
     SessionContext,
@@ -43,6 +44,7 @@ from tests.fakes import (
     FakeEditor,
     FakeGit,
     FakeImplementer,
+    FakeIntegrator,
     FakeIssueStore,
     FakeRunLog,
     FakeTestRunner,
@@ -85,7 +87,13 @@ def test_the_outcome_taxonomy_is_exactly_four_failures_and_one_success() -> None
 
 def test_there_is_no_retry_destination() -> None:
     """There is no retry destination in this system."""
-    assert {d.value for d in Destination} == {"merge-queue", "act-on-verdict", "editor", "human"}
+    assert {d.value for d in Destination} == {
+        "merge-queue",
+        "act-on-verdict",
+        "suite-gate",
+        "editor",
+        "human",
+    }
     assert not any("retry" in d.value for d in Destination)
 
 
@@ -144,6 +152,7 @@ def test_the_cycle_cap_is_three() -> None:
 
 def test_every_port_has_a_fake_that_satisfies_it() -> None:
     implementer: Implementer = FakeImplementer()
+    integrator: Integrator = FakeIntegrator()
     editor: Editor = FakeEditor()
     store: IssueStore = FakeIssueStore(graph=graph_of({"01": []}))
     log: RunLog = FakeRunLog()
@@ -154,6 +163,7 @@ def test_every_port_has_a_fake_that_satisfies_it() -> None:
     )
 
     assert isinstance(implementer, Implementer)
+    assert isinstance(integrator, Integrator)
     assert isinstance(editor, Editor)
     assert isinstance(store, IssueStore)
     assert isinstance(log, RunLog)
@@ -189,7 +199,10 @@ def test_session_context_groups_the_shared_actor_inputs() -> None:
     assert context.budget.wall_clock_s == 1.0
 
 
-async def test_an_implementer_can_be_asked_to_resolve_a_conflict() -> None:
+async def test_an_integrator_is_asked_only_for_a_worktree() -> None:
+    """No `must_be_terminal`, no failure report, no resumable identifier. The conflict is fully
+    described by the repository it is standing in, which is what lets any adapter play the role —
+    a resumed-session contract would have restricted it to transports that can resume."""
     wt = Worktree(path=Path("/tmp/wt"), branch="ralph/01", base="integration")
     context = SessionContext(
         spec=Spec(body="build it"),
@@ -197,12 +210,12 @@ async def test_an_implementer_can_be_asked_to_resolve_a_conflict() -> None:
         worktree=wt,
         budget=Budget(wall_clock_s=1.0),
     )
-    implementer = FakeImplementer()
+    integrator = FakeIntegrator()
 
-    result = await implementer.resolve_conflict(context, "opaque-session")
+    result = await integrator.reconcile(context)
 
     assert isinstance(result, SessionTelemetry)
-    assert implementer.resolve_conflict_calls == [(context, "opaque-session")]
+    assert integrator.calls == [context]
 
 
 def test_an_impasse_report_is_the_models_story_not_the_harnesss_facts() -> None:

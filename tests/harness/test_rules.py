@@ -149,12 +149,28 @@ def test_an_editors_success_is_a_verdict_to_act_on() -> None:
     assert route(Actor.EDITOR, Outcome.SUCCESS) is Destination.ACT_ON_VERDICT
 
 
+def test_an_integrators_success_continues_the_landing_it_is_inside() -> None:
+    """Not back to the merge queue: the queue never released the merge lock, so a reconciled
+    worktree carries on to the suite gate rather than making a second trip."""
+    assert route(Actor.INTEGRATOR, Outcome.SUCCESS) is Destination.SUITE_GATE
+
+
 @pytest.mark.parametrize("outcome", [Outcome.IMPASSE, Outcome.INTEGRATION_FAILED])
 def test_the_diagnosable_failures_go_to_the_editor(outcome: Outcome) -> None:
     assert route(Actor.IMPLEMENTER, outcome) is Destination.EDITOR
 
 
-def test_infra_failures_go_to_the_human_from_either_actor() -> None:
+def test_an_integrators_integration_failure_goes_to_a_human_not_the_editor() -> None:
+    """The same outcome, the same word, a different answer — because the actor changes what it
+    means. Raised against an Implementer it says two trees disagree and an Editor should look.
+    Raised against the Integrator it says the actor *sent* to reconcile them could not, and no spec
+    was ever wrong, so there is nothing for an Editor to rewrite.
+    """
+    assert route(Actor.INTEGRATOR, Outcome.INTEGRATION_FAILED) is Destination.HUMAN
+    assert route(Actor.IMPLEMENTER, Outcome.INTEGRATION_FAILED) is Destination.EDITOR
+
+
+def test_infra_failures_go_to_the_human_from_any_actor() -> None:
     for actor in Actor:
         assert route(actor, Outcome.INFRA_FAILED) is Destination.HUMAN
         assert route(actor, Outcome.INFRA_FAILED) is not Destination.EDITOR

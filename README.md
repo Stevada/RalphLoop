@@ -100,7 +100,8 @@ leaves everything else points down to.
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) — it fetches Python 3.12 itself,
   so that is the only thing you must install first
-- `codex` or `copilot` CLI for the Implementer; Claude Code or `copilot` for the Editor
+- `codex` or `copilot` CLI for the Implementer and the Integrator; Claude Code or `copilot`
+  for the Editor
 - Git 2.38+ (worktree support)
 - [mattpocock/skills](https://github.com/mattpocock/skills) at user level (provides `/tdd`):
   ```bash

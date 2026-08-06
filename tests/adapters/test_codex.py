@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from ralph.adapters.codex import (
+    codex_integrator,
     EDITOR_SANDBOX,
     IMPLEMENTER_SANDBOX,
     CodexUsageError,
@@ -27,7 +28,7 @@ from ralph.adapters.codex import (
 )
 from ralph.adapters.runtime.bounding import Bound
 from ralph.adapters.git import GitCli
-from ralph.adapters.runtime.prompt import conflict_resolution_prompt
+from ralph.adapters.runtime.prompt import integrator_prompt
 from ralph.adapters.runtime.session import Session
 from ralph.adapters.runtime.turn_stream import AutoCompaction, Turn, TurnStreamAsk
 from ralph.harness import (
@@ -294,7 +295,7 @@ def codex_implementer_with_blocking_stub() -> CodexImplementer:
     return CodexImplementer(open_session=open_session)
 
 
-async def test_the_codex_implementer_resumes_the_specific_thread_for_conflict_resolution(
+async def test_the_codex_integrator_opens_a_fresh_session_in_the_conflicted_worktree(
     repo: TargetRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     git = GitCli(repo=repo.path)
@@ -330,21 +331,19 @@ async def test_the_codex_implementer_resumes_the_specific_thread_for_conflict_re
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("RALPH_CODEX_ARGV_LOG", str(argv_log))
 
-    t = await codex_implementer().resolve_conflict(session_context(wt), "codex-thread-789")
+    context = session_context(wt)
+    t = await codex_integrator().reconcile(context)
 
     argv = json.loads(argv_log.read_text())
-    resume = argv.index("resume")
     assert argv[:3] == ["--ask-for-approval", "never", "exec"]
     assert "--json" in argv
-    assert "--sandbox" in argv and IMPLEMENTER_SANDBOX in argv
+    assert "--sandbox" in argv and IMPLEMENTER_SANDBOX in argv, "it must be able to write"
     assert "--cd" in argv and str(wt.path) in argv
-    assert "--last" not in argv
-    assert argv[resume + 1] == "codex-thread-789"
-    assert argv[resume + 2] == conflict_resolution_prompt()
-    assert "Acceptance criteria" not in argv[resume + 2]
+    assert "resume" not in argv, "a fresh session: the conflict is in the repo, not in a transcript"
+    assert argv[-1] == integrator_prompt(context.spec, context.findings)
     assert t.killed is None
+    assert t.resumable_identifier is None
     assert t.consumption.consumed_tokens == 770
-    assert t.resumable_identifier == "codex-thread-789"
     assert t.commits == 1
     assert "resolved" in t.session_output
 
@@ -447,10 +446,11 @@ async def test_a_real_codex_session_lands_a_real_sub_issue(repo: TargetRepo) -> 
 
 
 @REAL
-async def test_a_real_codex_resumed_session_resolves_a_real_merge_conflict(
+async def test_a_real_codex_integrator_resolves_a_real_merge_conflict(
     repo: TargetRepo,
 ) -> None:
-    """Spends two real Codex turns: one to create work, one to resume it after a moved base."""
+    """Spends two real Codex turns: one to create the work, one to reconcile it after the base
+    moved. The second is a *fresh* session — it is told nothing about the first."""
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
     spec = Spec(
@@ -484,10 +484,9 @@ async def test_a_real_codex_resumed_session_resolves_a_real_merge_conflict(
     assert merge.returncode != 0
     assert "<<<<<<<" in (wt.path / "shared.py").read_text()
 
-    resumed = await codex_implementer().resolve_conflict(context, first.resumable_identifier)
+    reconciled = await codex_integrator().reconcile(context)
 
-    assert resumed.killed is None
-    assert resumed.resumable_identifier == first.resumable_identifier
-    assert resumed.consumption.consumed_tokens > 0
-    assert resumed.commits >= 1
+    assert reconciled.killed is None
+    assert reconciled.consumption.consumed_tokens > 0
+    assert git.merge_finished(wt), "it resolved the conflict but never committed it"
     assert repo.run_suite(wt.path)

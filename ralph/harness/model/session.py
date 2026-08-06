@@ -13,6 +13,7 @@ from ralph.harness.model.impasse import ImpasseReport
 class Actor(StrEnum):
     IMPLEMENTER = "implementer"
     EDITOR = "editor"
+    INTEGRATOR = "integrator"
 
 
 type Killed = Literal["wall-clock"]

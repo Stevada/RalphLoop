@@ -55,9 +55,18 @@ class SessionContext:
 class Implementer(Protocol):
     async def run(self, context: SessionContext) -> SessionTelemetry: ...
 
-    async def resolve_conflict(
-        self, context: SessionContext, resumable_identifier: str
-    ) -> SessionTelemetry: ...
+
+@runtime_checkable
+class Integrator(Protocol):
+    """Dispatched by the merge queue, into a worktree holding a conflict it just created.
+
+    It is never asked whether the work is *right* — that was settled before the sub-issue reached
+    the queue. It is asked only to make two correct trees into one, and it commits that the way an
+    Implementer commits anything. It gets the spec because knowing what the work was *for* is how
+    you choose between two intents; it has no authority to change what the spec asks.
+    """
+
+    async def reconcile(self, context: SessionContext) -> SessionTelemetry: ...
 
 
 @runtime_checkable
@@ -116,6 +125,11 @@ class Git(Protocol):
         """Merge the integration branch into the worktree. False on conflict, with the conflict
         left in place — it is the input to conflict resolution, and the evidence a human gets if
         that fails."""
+        ...
+
+    def merge_finished(self, wt: Worktree) -> bool:
+        """Whether the merge left in this worktree has been committed. The harness's own answer to
+        "did the Integrator finish?", asked of git rather than of the model."""
         ...
 
     def merge_ff_only(self, branch: str) -> bool: ...

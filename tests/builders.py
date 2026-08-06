@@ -21,6 +21,7 @@ from ralph.harness import (
     Verdict,
 )
 from ralph.issues import Findings, IssueGraph, Spec, SubIssue, SubIssueId
+from ralph.ports import Budget, SessionContext, Worktree
 
 DEFAULT_CONSUMPTION = TokenConsumption.split(input=30_000, cache_read=15_000, output=5_000)
 """50,000 tokens, split the way a real session's are: mostly prompt, much of it cached."""
@@ -96,6 +97,18 @@ def verdict(
         revised_spec=Spec(body=spec) if revising else None,
         revised_findings=Findings(body=findings) if findings is not None else None,
         rationale=rationale,
+    )
+
+
+def context(worktree: Worktree, spec: str = "build it", findings: str = "") -> SessionContext:
+    """A session's inputs, for the tests that are about something else. The merge queue takes one
+    because the Integrator it may dispatch needs a spec to break ties with; every other field is
+    scenery."""
+    return SessionContext(
+        spec=Spec(body=spec),
+        findings=Findings(body=findings),
+        worktree=worktree,
+        budget=Budget(),
     )
 
 

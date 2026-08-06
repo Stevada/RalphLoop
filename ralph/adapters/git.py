@@ -31,8 +31,9 @@ def run_git(cwd: Path, *args: str) -> str:
 
 
 def _try_git(cwd: Path, *args: str) -> bool:
-    """For the two commands whose failure is a *result*, not an error: a merge can conflict, a
-    fast-forward can be refused. Everything else goes through `run_git` and raises."""
+    """For the commands whose failure is a *result*, not an error: a merge can conflict, a
+    fast-forward can be refused, a ref can simply not exist. Everything else goes through `run_git`
+    and raises."""
     proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=False)
     return proc.returncode == 0
 
@@ -75,6 +76,14 @@ class GitCli:
         lock until the run was killed.
         """
         return _try_git(wt.path, "merge", "--no-edit", onto)
+
+    def merge_finished(self, wt: Worktree) -> bool:
+        """`MERGE_HEAD` is git's own record that a merge is still open; the commit that concludes
+        one deletes it. Asking git beats asking the model, and beats counting commits: a session
+        that resolved everything and stopped without committing leaves a branch carrying exactly the
+        commits it had before, which is indistinguishable from success by any count.
+        """
+        return not _try_git(wt.path, "rev-parse", "--verify", "--quiet", "MERGE_HEAD")
 
     def merge_ff_only(self, branch: str) -> bool:
         """False when git **refuses**, which is the point. `git merge` does not fire the pre-commit

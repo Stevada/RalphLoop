@@ -86,8 +86,9 @@ The rules that hold this shape together:
   imports `ralph.fakes`, and a test asserts the package imports nothing from `tests/`. That is what
   makes "no adapter may reach for a fake" enforceable rather than aspirational.
 
-The Implementer and the Editor are each chosen at startup — Codex or Copilot implements, Claude Code,
-Codex, or Copilot edits — and nothing downstream of `cli.py` knows which.
+The three unattended actors are each chosen at startup — Codex or Copilot implements, Codex or
+Copilot reconciles, Claude Code / Codex / Copilot edits — and nothing downstream of `cli.py` knows
+which.
 
 ---
 
@@ -155,9 +156,12 @@ that reads as success.
 taxonomy table with one test per row. Four destinations — `MERGE_QUEUE`, `ACT_ON_VERDICT`, `EDITOR`,
 `HUMAN` — and **no retry destination** (a test asserts no row returns anything else).
 
-Only `SUCCESS` needs to know who is asking (Implementer → merge queue, Editor → act on verdict,
-Integrator → the suite gate). `INFRA_FAILED` routes to the **human** from any actor, never to the
-Editor, and spends no cycle.
+Two outcomes need to know who is asking. `SUCCESS`, because an Implementer's goes to the merge
+queue, an Editor's is a verdict to act on, and an Integrator's continues the landing it is already
+inside. `INTEGRATION_FAILED`, because the same word means different things by actor: from an
+Implementer it says two trees disagree and an Editor should look; from the Integrator it says the
+actor *sent* to reconcile them could not, and no spec was ever wrong. `INFRA_FAILED` routes to the
+**human** from any actor, never to the Editor, and spends no cycle.
 
 A merge conflict never reaches `route` at all. The merge queue raises it, dispatches the Integrator, and runs its suite gate on the result — all
 inside one hold of the merge lock ([mergequeue.py](../ralph/mergequeue.py); `docs/design.md` §4.5 for
@@ -182,11 +186,12 @@ needs a real model, network, or `codex` binary is in the wrong layer.
 | Protocol | The seam | Notes that don't show in the signature |
 |---|---|---|
 | `Implementer` | writes code from a spec → `SessionTelemetry` | Either Codex or Copilot. |
+| `Integrator` | reconciles a conflicted worktree → `SessionTelemetry` | Takes only a `SessionContext`: no failure report, no `must_be_terminal`, no resumable identifier. The conflict is fully described by the repository it stands in, which is what lets *any* adapter play the role — a resumed-session contract would have restricted it to transports that can resume. Dispatched by the merge queue, never by the scheduler. |
 | `Editor` | adjudicates a failure → `(SessionTelemetry, EditorVerdict \| None)` | Bounded exactly like an Implementer — same `Budget`, same telemetry. Takes `must_be_terminal`; takes **no** `RunLog` or `IssueStore`, so every *consequence* of a verdict happens in the scheduler. |
 | `RunLog` | the harness's **authoritative** record | A Protocol, not the JSONL adapter, because the merge queue and scheduler both take one and orchestration may not name an adapter. |
 | `CommandSource` | target repo → `RepoCommands` | Used during pre-flight readiness. `cli.py` names the concrete descriptor adapter and passes only the discovered value downstream. |
 | `TestRunner` | a suite run → `SuiteResult` | The merge queue owns the single harness suite run, using `RepoCommands.test`. |
-| `Git` | worktree / merge / ff plumbing | `discard_worktree` destroys the checkout **and the branch** — `git worktree add -b` refuses an existing name, so a branch that outlived its checkout could never be cut again. The scheduler calls it on both non-quarantine exits: after a landing (the commits are on integration already) and on a `revise` verdict (losing them is the point). |
+| `Git` | worktree / merge / ff plumbing | `merge_finished` is how the queue asks whether an Integrator finished — git's own `MERGE_HEAD`, not the session's word and not a commit count, because a session that resolves everything and never commits leaves a count that reads exactly as it would on success. `discard_worktree` destroys the checkout **and the branch** — `git worktree add -b` refuses an existing name, so a branch that outlived its checkout could never be cut again. The scheduler calls it on both non-quarantine exits: after a landing (the commits are on integration already) and on a `revise` verdict (losing them is the point). |
 
 `Budget` ([ports.py](../ralph/ports.py)) carries the wall-clock backstop for an actor session.
 `RepoCommands` is the command discovery value: the required `test` command and optional `install`
@@ -212,14 +217,19 @@ Spec and findings are separate files because a revision may change one and leave
 
 ## 4. Adapters — `ralph/adapters/`
 
-The Implementer and Editor are chosen in `cli.py` from CLI arguments; nothing downstream knows which
+All three unattended actors are chosen in `cli.py` from CLI arguments; nothing downstream knows which
 concrete adapter is running, and `cli.py` remains the only module that names one.
 
-| Vendor | Implementer transport | Editor transport |
-|---|---|---|
-| **Codex** | `CodexJsonSession` over `codex exec --json` | `CodexJsonSession` over `codex exec --json` with `--sandbox read-only` |
-| **Copilot** | `CopilotSdkSession` | `CopilotSdkSession` with the SDK permission request hook |
-| **Claude Code** | — | Claude Agent SDK session with `can_use_tool` |
+| Vendor | Implementer transport | Integrator transport | Editor transport |
+|---|---|---|---|
+| **Codex** | `CodexJsonSession` over `codex exec --json` | the same, writable sandbox | `CodexJsonSession` over `codex exec --json` with `--sandbox read-only` |
+| **Copilot** | `CopilotSdkSession` | the same, permitting writes | `CopilotSdkSession` with the SDK permission request hook |
+| **Claude Code** | — | — | Claude Agent SDK session with `can_use_tool` |
+
+The Integrator rides the Implementer's transport unchanged: both write code and commit it, so the
+only thing that differs is the prompt. `runtime/integrator.py` is correspondingly the thinnest of the
+three role cores — it collects no sentinel and parses no verdict, because the merge queue reads the
+answer off git instead of out of the transcript.
 
 The reason for keeping multiple vendors available on each unattended role lives in
 [`docs/design.md`](design.md).
@@ -328,6 +338,9 @@ One dispatch loop: read the graph once, then repeatedly dispatch every `eligible
 - **The `editor` is always an `Editor`.** The CLI names a concrete Editor, `cli.py` resolves it
   before the scheduler starts, and any unknown name is a loud option failure. A failed
   Implementer session that routes to adjudication always reaches the Editor loop.
+- **The scheduler never dispatches the Integrator.** The merge queue does, inside its own lock, and
+  hands the session's telemetry back on the `Land`. The scheduler's only job for it is the one that
+  was always the scheduler's: writing down that it happened and what it cost.
 
 When a sub-issue escalates the run does **not** stop: everything transitively blocked by it never
 becomes eligible, every unaffected sub-issue lands, and the run ends with **one** notification

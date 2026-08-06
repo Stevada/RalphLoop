@@ -16,11 +16,18 @@ from dataclasses import dataclass, field
 
 from ralph.adapters.git import GitCli
 from ralph.adapters.suite import SubprocessTestRunner
-from ralph.harness import SuiteResult
+from ralph.harness import Outcome, SuiteResult
 from ralph.mergequeue import Land, LandResult, MergeQueue
-from ralph.ports import Worktree
-from tests.fakes import FakeGit, FakeTestRunner
-from tests.testbed import TEST_CMD, Behaviour, StandInAgent, TargetRepo
+from ralph.ports import Integrator, Worktree
+from tests.builders import context
+from tests.fakes import FakeGit, FakeIntegrator, FakeTestRunner
+from tests.testbed import (
+    TEST_CMD,
+    Behaviour,
+    StandInAgent,
+    StandInIntegrator,
+    TargetRepo,
+)
 
 
 @dataclass(slots=True)
@@ -45,10 +52,18 @@ class OverlapWatchingRunner:
         return SuiteResult(green=True, output="1 passed", duration_s=0.05)
 
 
-def real_queue(repo: TargetRepo) -> tuple[MergeQueue, GitCli]:
+def real_queue(
+    repo: TargetRepo, integrator: Integrator | None = None
+) -> tuple[MergeQueue, GitCli]:
     git = GitCli(repo=repo.path)
     runner = SubprocessTestRunner(cmd=TEST_CMD)
-    return MergeQueue(git=git, runner=runner, integration="integration"), git
+    queue = MergeQueue(
+        git=git,
+        runner=runner,
+        integration="integration",
+        integrator=integrator if integrator is not None else FakeIntegrator(),
+    )
+    return queue, git
 
 
 def work(agent: StandInAgent, behaviour: Behaviour, tag: str, wt: Worktree) -> None:
@@ -62,7 +77,7 @@ async def test_a_green_sub_issue_lands_and_the_history_stays_linear(
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
     work(agent, Behaviour.SUCCEED, "01", wt)
 
-    land = await queue.land(wt)
+    land = await queue.land(context(wt))
 
     assert land.result is LandResult.LANDED
     assert land.suite is not None and land.suite.green
@@ -70,22 +85,56 @@ async def test_a_green_sub_issue_lands_and_the_history_stays_linear(
     assert repo.git("log", "--merges", "--oneline", "integration") == ""
 
 
-async def test_a_conflicting_sibling_is_a_merge_conflict(
+async def test_a_conflicting_sibling_is_reconciled_and_lands(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    queue, git = real_queue(repo)
+    """The whole feature, against real git. 01 and 02 rewrite the same line; 01 wins the lock.
+    02's merge conflicts, an Integrator is dispatched into the conflict, and the sub-issue lands
+    **without leaving the queue** — one hold of the lock, start to finish."""
+    resolver = StandInIntegrator()
+    queue, git = real_queue(repo, resolver)
     left = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
     right = git.add_worktree("ralph/02", repo.path / ".worktrees" / "active" / "02", "integration")
     work(agent, Behaviour.CONFLICT, "01", left)
     work(agent, Behaviour.CONFLICT, "02", right)
 
-    assert (await queue.land(left)).result is LandResult.LANDED
+    assert (await queue.land(context(left))).result is LandResult.LANDED
+    assert resolver.calls == [], "a clean landing must not open an Integrator session"
 
-    land = await queue.land(right)
+    land = await queue.land(context(right))
 
-    assert land.result is LandResult.MERGE_CONFLICT
+    assert land.result is LandResult.LANDED
+    assert len(resolver.calls) == 1
+    # Billed even though it succeeded and the sub-issue landed as if nothing had happened.
+    assert land.integrator is not None
+    assert land.suite is not None and land.suite.green
+    assert repo.git("rev-parse", "integration") == repo.git("rev-parse", "ralph/02")
+    # Both commits, in order: what the Implementer wrote, then what it took to make it land.
+    assert repo.git("log", "-1", "--format=%s", "integration").startswith("reconcile")
+
+
+async def test_an_unreconciled_conflict_goes_to_a_human_and_never_reaches_the_suite(
+    repo: TargetRepo, agent: StandInAgent
+) -> None:
+    """VIR-85's failure, as a test. The session ran and the merge is still open — which is what the
+    queue asks git, rather than asking the session or counting its commits. The branch it would have
+    landed carries the Implementer's commits and nothing else, so a commit count reads exactly as it
+    would on success."""
+    queue, git = real_queue(repo, StandInIntegrator(resolves=False))
+    left = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
+    right = git.add_worktree("ralph/02", repo.path / ".worktrees" / "active" / "02", "integration")
+    work(agent, Behaviour.CONFLICT, "01", left)
+    work(agent, Behaviour.CONFLICT, "02", right)
+    assert (await queue.land(context(left))).result is LandResult.LANDED
+
+    land = await queue.land(context(right))
+
+    assert land.result is LandResult.CONFLICT_UNRESOLVED
+    assert land.integrator_outcome is Outcome.INTEGRATION_FAILED
     assert land.suite is None  # it never got as far as running one, and does not pretend it did
     assert repo.git("rev-parse", "integration") == repo.git("rev-parse", "ralph/01")
+    # The conflict is preserved, unresolved, for the human who now owns it.
+    assert "<<<<<<<" in (right.path / "shared.py").read_text()
 
 
 async def test_the_suite_runs_on_the_prospective_merge_not_on_the_worktree_as_it_was(
@@ -114,9 +163,9 @@ async def test_the_suite_runs_on_the_prospective_merge_not_on_the_worktree_as_it
     subprocess.run(["git", "add", "-A"], cwd=right.path, check=True)
     subprocess.run(["git", "commit", "-m", "one more test for add"], cwd=right.path, check=True)
 
-    assert (await queue.land(left)).result is LandResult.LANDED
+    assert (await queue.land(context(left))).result is LandResult.LANDED
 
-    land = await queue.land(right)
+    land = await queue.land(context(right))
 
     assert land.result is LandResult.SUITE_RED
     # And it hands back *that* suite result — the red one, from the prospective merge. The Editor
@@ -139,7 +188,7 @@ async def test_the_land_aborts_if_the_base_repo_moved_out_from_under_it(
     work(agent, Behaviour.SUCCEED, "01", wt)
     repo.git("checkout", "main")
 
-    assert (await queue.land(wt)).result is LandResult.HEAD_MOVED
+    assert (await queue.land(context(wt))).result is LandResult.HEAD_MOVED
 
 
 async def test_a_refused_fast_forward_is_reported_never_papered_over() -> None:
@@ -152,10 +201,15 @@ async def test_a_refused_fast_forward_is_reported_never_papered_over() -> None:
     which is the point.
     """
     git = FakeGit(head="integration", ff_refuses={"ralph/01"})
-    queue = MergeQueue(git=git, runner=FakeTestRunner(), integration="integration")
+    queue = MergeQueue(
+        git=git,
+        runner=FakeTestRunner(),
+        integration="integration",
+        integrator=FakeIntegrator(),
+    )
     wt = git.add_worktree("ralph/01", Path("/nowhere"), "integration")
 
-    assert (await queue.land(wt)).result is LandResult.FF_REFUSED
+    assert (await queue.land(context(wt))).result is LandResult.FF_REFUSED
 
     assert git.fast_forwarded == []
 
@@ -170,11 +224,13 @@ async def test_the_merge_lock_serializes_two_concurrent_lands() -> None:
     """
     runner = OverlapWatchingRunner()
     git = FakeGit(head="integration")
-    queue = MergeQueue(git=git, runner=runner, integration="integration")
+    queue = MergeQueue(
+        git=git, runner=runner, integration="integration", integrator=FakeIntegrator()
+    )
     left = git.add_worktree("ralph/01", Path("/nowhere/01"), "integration")
     right = git.add_worktree("ralph/02", Path("/nowhere/02"), "integration")
 
-    results = await asyncio.gather(queue.land(left), queue.land(right))
+    results = await asyncio.gather(queue.land(context(left)), queue.land(context(right)))
 
     assert [r.result for r in results] == [LandResult.LANDED, LandResult.LANDED]
     assert runner.peak == 1, "two lands ran their suites at once — the merge lock did not hold"

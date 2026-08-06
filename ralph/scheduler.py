@@ -254,26 +254,40 @@ class Scheduler:
         detail: str | None = None
 
         if route(Actor.IMPLEMENTER, outcome) is Destination.MERGE_QUEUE:
-            land = await self._merge_queue.land(wt)
+            land = await self._merge_queue.land(context)
+            await self._record_reconciliation(sub.id, land)
+
             if land.result is LandResult.LANDED:
                 return await self._landed(sub.id, wt)
 
-            if land.result is LandResult.MERGE_CONFLICT:
-                recovered = await self._resolve_merge_conflict(sub.id, context, telemetry)
-                if isinstance(recovered, _Closed):
-                    return recovered
-                outcome = recovered.outcome
-                telemetry = recovered.telemetry
-                suite = recovered.suite
-                detail = recovered.detail
-            else:
-                # The merge queue is the first harness suite gate. A red prospective merge goes to the
-                # Editor with that gate's evidence, and spends a cycle exactly like an impasse does.
-                outcome, detail = Outcome.INTEGRATION_FAILED, land.result.value
-                if land.suite is not None:
-                    # The suite on the *prospective merge*. This is the only suite evidence the
-                    # scheduler is allowed to hand the Editor for an Implementer failure.
-                    suite = land.suite
+            if land.result is LandResult.CONFLICT_UNRESOLVED:
+                # The Integrator was dispatched and the merge is still open. This escalates on the
+                # **Integrator's** outcome and telemetry, not the Implementer's: the Implementer
+                # delivered, and what a human needs to see is the reconciliation that failed.
+                assert land.integrator is not None and land.integrator_outcome is not None
+                await self._record(
+                    sub.id, Actor.INTEGRATOR, EventKind.SESSION_FINISHED, land.integrator_outcome
+                )
+                return await self._quarantine(
+                    sub.id,
+                    Actor.INTEGRATOR,
+                    wt,
+                    failure_report(
+                        land.integrator_outcome,
+                        land.integrator,
+                        None,
+                        land.result.value,
+                        attempt,
+                    ),
+                )
+
+            # The merge queue is the first harness suite gate. A red prospective merge goes to the
+            # Editor with that gate's evidence, and spends a cycle exactly like an impasse does.
+            outcome, detail = Outcome.INTEGRATION_FAILED, land.result.value
+            if land.suite is not None:
+                # The suite on the *prospective merge*. This is the only suite evidence the
+                # scheduler is allowed to hand the Editor for an Implementer failure.
+                suite = land.suite
 
         await self._record(sub.id, Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, outcome)
         report = failure_report(outcome, telemetry, suite, detail, attempt)
@@ -294,63 +308,6 @@ class Scheduler:
         # Nothing is thrown away here: the fast-forward put these commits on the integration branch.
         self._git.discard_worktree(wt)
         return _Closed(id, None)
-
-    async def _resolve_merge_conflict(
-        self,
-        id: SubIssueId,
-        context: SessionContext,
-        telemetry: SessionTelemetry,
-    ) -> _Closed | _FailedLanding:
-        # The merge queue left the conflict in the worktree, so there is no git call to make here:
-        # the state the session needs is already the state it is in.
-        if telemetry.resumable_identifier is None:
-            return _FailedLanding(
-                outcome=Outcome.INTEGRATION_FAILED,
-                telemetry=telemetry,
-                suite=None,
-                detail=LandResult.MERGE_CONFLICT.value,
-            )
-
-        await self._record(
-            id, Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, Outcome.INTEGRATION_FAILED
-        )
-        await self._record(id, Actor.IMPLEMENTER, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS)
-        resolved = await self._implementer.resolve_conflict(
-            context, telemetry.resumable_identifier
-        )
-        await self._store.record_consumption(
-            id,
-            SessionConsumption(
-                actor=Actor.IMPLEMENTER,
-                consumption=resolved.consumption,
-                auto_compactions=resolved.auto_compactions,
-            ),
-        )
-        outcome = classify_implementer(resolved)
-        if route(Actor.IMPLEMENTER, outcome) is not Destination.MERGE_QUEUE:
-            return _FailedLanding(outcome=outcome, telemetry=resolved, suite=None, detail=None)
-
-        land = await self._merge_queue.land(context.worktree)
-        return await self._landed_or_failed(id, context.worktree, resolved, land)
-
-    async def _landed_or_failed(
-        self,
-        id: SubIssueId,
-        wt: Worktree,
-        telemetry: SessionTelemetry,
-        land: Land,
-    ) -> _Closed | _FailedLanding:
-        result = land.result
-        suite = land.suite
-        if result is LandResult.LANDED:
-            return await self._landed(id, wt)
-
-        return _FailedLanding(
-            outcome=Outcome.INTEGRATION_FAILED,
-            telemetry=telemetry,
-            suite=suite,
-            detail=result.value,
-        )
 
     async def _adjudicate(
         self,
@@ -433,6 +390,24 @@ class Scheduler:
         )
         self._git.discard_worktree(context.worktree)
         return None
+
+    async def _record_reconciliation(self, id: SubIssueId, land: Land) -> None:
+        """The queue dispatched the Integrator; the scheduler writes down that it happened.
+
+        Both events, in order, whatever the landing did next: a session that spent tokens is billed
+        even when it succeeded and the sub-issue went on to land as if nothing had happened.
+        """
+        if land.integrator is None:
+            return
+        await self._record(id, Actor.INTEGRATOR, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS)
+        await self._store.record_consumption(
+            id,
+            SessionConsumption(
+                actor=Actor.INTEGRATOR,
+                consumption=land.integrator.consumption,
+                auto_compactions=land.integrator.auto_compactions,
+            ),
+        )
 
     async def _quarantine(
         self, id: SubIssueId, actor: Actor, wt: Worktree, report: FailureReport

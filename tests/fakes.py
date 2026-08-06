@@ -37,9 +37,7 @@ class FakeImplementer:
     """Returns scripted telemetry, one per call, and records what it was asked to build."""
 
     scripted: Sequence[SessionTelemetry] = field(default_factory=list)
-    conflict_scripted: Sequence[SessionTelemetry] = field(default_factory=list)
     calls: list[SessionContext] = field(default_factory=list)
-    resolve_conflict_calls: list[tuple[SessionContext, str]] = field(default_factory=list)
 
     async def run(self, context: SessionContext) -> SessionTelemetry:
         self.calls.append(context)
@@ -47,14 +45,28 @@ class FakeImplementer:
             return telemetry()
         return self.scripted[min(len(self.calls) - 1, len(self.scripted) - 1)]
 
-    async def resolve_conflict(
-        self, context: SessionContext, resumable_identifier: str
-    ) -> SessionTelemetry:
-        self.resolve_conflict_calls.append((context, resumable_identifier))
-        if not self.conflict_scripted:
+
+@dataclass(slots=True)
+class FakeIntegrator:
+    """Returns scripted telemetry and records the conflicts it was asked to reconcile.
+
+    `resolves` decides what it does to the fake git it shares with the queue: reconciling for real
+    means clearing the conflict, and a fake that returned success while leaving the merge open
+    would hide the one failure this actor exists to make visible.
+    """
+
+    git: FakeGit | None = None
+    resolves: bool = True
+    scripted: Sequence[SessionTelemetry] = field(default_factory=list)
+    calls: list[SessionContext] = field(default_factory=list)
+
+    async def reconcile(self, context: SessionContext) -> SessionTelemetry:
+        self.calls.append(context)
+        if self.git is not None and self.resolves:
+            self.git.open_merges.discard(context.worktree.branch)
+        if not self.scripted:
             return telemetry()
-        index = min(len(self.resolve_conflict_calls) - 1, len(self.conflict_scripted) - 1)
-        return self.conflict_scripted[index]
+        return self.scripted[min(len(self.calls) - 1, len(self.scripted) - 1)]
 
 
 @dataclass(slots=True)
@@ -167,6 +179,7 @@ class FakeGit:
 
     head: str = "integration"
     merge_conflicts: set[str] = field(default_factory=set)  # branches whose merge conflicts
+    open_merges: set[str] = field(default_factory=set)  # branches with a merge still uncommitted
     merge_results: dict[str, list[bool]] = field(default_factory=dict)
     ff_refuses: set[str] = field(default_factory=set)  # branches whose fast-forward is refused
     commit_counts: dict[str, int] = field(default_factory=dict)
@@ -190,9 +203,15 @@ class FakeGit:
 
     def merge(self, wt: Worktree, onto: str) -> bool:
         self.merges.append((wt.branch, onto))
-        if scripted := self.merge_results.get(wt.branch):
-            return scripted.pop(0)
-        return wt.branch not in self.merge_conflicts
+        clean = scripted.pop(0) if (scripted := self.merge_results.get(wt.branch)) else (
+            wt.branch not in self.merge_conflicts
+        )
+        if not clean:
+            self.open_merges.add(wt.branch)
+        return clean
+
+    def merge_finished(self, wt: Worktree) -> bool:
+        return wt.branch not in self.open_merges
 
     def merge_ff_only(self, branch: str) -> bool:
         if branch in self.ff_refuses:

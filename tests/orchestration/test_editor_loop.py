@@ -40,6 +40,7 @@ from tests.fakes import (
     FakeEditor,
     FakeGit,
     FakeImplementer,
+    FakeIntegrator,
     FakeIssueStore,
     FakeRunLog,
     FakeTestRunner,
@@ -85,7 +86,12 @@ async def run_with(
         run_log=log,
         implementer=implementer,
         editor=editor,
-        merge_queue=MergeQueue(git=git, runner=runner, integration="integration"),
+        merge_queue=MergeQueue(
+            git=git,
+            runner=runner,
+            integration="integration",
+            integrator=FakeIntegrator(git=git),
+        ),
         integration="integration",
         budget=Budget(),
     ).run()

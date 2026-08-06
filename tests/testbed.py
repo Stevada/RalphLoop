@@ -16,15 +16,23 @@ import json
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
 from ralph.adapters.runtime.implementer import SubprocessImplementer
 from ralph.cli import RunOptions
 from ralph.issues import Findings, Spec
-from ralph.ports import Editor, Implementer, Worktree
-from tests.fakes import FakeEditor, FakeImplementer
+from ralph.harness import SessionTelemetry
+from ralph.ports import (
+    Editor,
+    Implementer,
+    Integrator,
+    SessionContext,
+    Worktree,
+)
+from tests.builders import telemetry
+from tests.fakes import FakeEditor, FakeImplementer, FakeIntegrator
 
 # The suite the throwaway repo ships with. Real pytest, run as a real subprocess, in the venv
 # interpreter — the same one the harness itself will detect and run.
@@ -220,6 +228,46 @@ def unengaged_editor() -> Editor:
 def unengaged_implementer() -> Implementer:
     """The Implementer half of the same seam, for a pre-flight test that opens no session at all."""
     return FakeImplementer()
+
+
+def unengaged_integrator() -> Integrator:
+    """The Integrator half of the same seam, for a run whose landings are not supposed to conflict."""
+    return FakeIntegrator()
+
+
+@dataclass(slots=True)
+class StandInIntegrator:
+    """A stand-in Integrator: real git work, no intelligence — the same bargain as the stand-in
+    agent. It keeps every side of every conflict, which is what an Integrator does in the ordinary
+    case where two siblings simply appended to the same place.
+
+    `resolves=False` is the one worth having. It opens a session, spends wall clock, returns
+    perfectly ordinary success telemetry, and leaves the merge open — which is exactly the failure
+    the harness has to catch by asking git instead of asking the session.
+    """
+
+    resolves: bool = True
+    calls: list[SessionContext] = field(default_factory=list)
+
+    async def reconcile(self, context: SessionContext) -> SessionTelemetry:
+        self.calls.append(context)
+        if not self.resolves:
+            return telemetry()
+        path = context.worktree.path
+        for conflicted in path.rglob("*.py"):
+            text = conflicted.read_text()
+            if "<<<<<<<" not in text:
+                continue
+            conflicted.write_text(
+                "".join(
+                    line
+                    for line in text.splitlines(keepends=True)
+                    if not line.startswith(("<<<<<<<", "=======", ">>>>>>>"))
+                )
+            )
+        _git(path, "add", "-A")
+        _git(path, "commit", "-m", "reconcile with the integration branch")
+        return telemetry()
 
 
 def make_target_repo(root: Path) -> TargetRepo:

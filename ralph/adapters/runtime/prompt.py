@@ -101,13 +101,16 @@ Implement the work described by the user in the spec or tickets.
 
 Use /tdd where possible, at pre-agreed seams."""
 
-CONFLICT_RESOLUTION_ROLE = """\
-You are the **Implementer**, resuming your own prior session.
+INTEGRATOR_ROLE = """\
+You are the **Integrator**. This worktree holds finished work that could not land: a sibling
+sub-issue reached the integration branch first, and merging that branch in left a conflict. Both
+sides are correct; neither is a mistake to undo.
 
-The worktree now contains a git merge conflict in your previous work. Do not re-derive the
-feature from the spec. Inspect the conflict markers, preserve the intended behavior from both
-sides where they are compatible, resolve the conflict, run the relevant checks, and commit the
-resolution."""
+Resolve it with /resolving-merge-conflicts.
+
+You are not being asked whether this work is right — that was settled before it reached the merge
+queue. The spec below is here to break ties when two sides cannot both be kept, and for nothing
+else."""
 
 FINAL_CYCLE = """\
 ## This is the final cycle
@@ -230,6 +233,16 @@ def implementer_prompt(spec: Spec, findings: Findings) -> str:
     return "\n\n".join(parts)
 
 
-def conflict_resolution_prompt() -> str:
-    """Ask a resumed Implementer session to resolve the conflict in front of it."""
-    return "\n\n".join([CONFLICT_RESOLUTION_ROLE, COMMIT, IMPASSE])
+def integrator_prompt(spec: Spec, findings: Findings) -> str:
+    """The conflict in front of it, and what the work was *for*.
+
+    The spec is here to break ties, not to be re-satisfied: when two sides are genuinely
+    incompatible, the only non-arbitrary way to choose is to know what this sub-issue was asked to
+    do. No `IMPASSE` — that sentinel means "this spec cannot be met", which is not a question an
+    Integrator is being asked. Its way of giving up is to leave the merge unfinished, which the
+    harness reads off git rather than out of the transcript.
+    """
+    parts = [INTEGRATOR_ROLE, f"## What this sub-issue was asked to do\n\n{spec.body}"]
+    if findings.body.strip():
+        parts.append(f"## What an earlier session learned about this repo\n\n{findings.body}")
+    return "\n\n".join(parts)

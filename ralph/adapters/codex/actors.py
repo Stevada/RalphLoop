@@ -1,4 +1,4 @@
-"""Codex's two actors over the JSONL turn stream."""
+"""Codex's three actors over the JSONL turn stream."""
 
 from __future__ import annotations
 
@@ -7,10 +7,11 @@ from dataclasses import dataclass
 
 from ralph.adapters.codex.session import codex_read_only_session, codex_sdk_session
 from ralph.adapters.runtime.editor import run_editor
+from ralph.adapters.runtime.integrator import run_turn_stream_integrator
 from ralph.adapters.runtime.prompt import (
-    conflict_resolution_prompt,
     editor_prompt,
     implementer_prompt,
+    integrator_prompt,
 )
 from ralph.adapters.runtime.implementer import run_turn_stream_implementer
 from ralph.adapters.runtime.turn_stream import OpenSession, TurnStreamAsk
@@ -33,17 +34,22 @@ class CodexImplementer:
         )
         return await run_turn_stream_implementer(session, context)
 
-    async def resolve_conflict(
-        self, context: SessionContext, resumable_identifier: str
-    ) -> SessionTelemetry:
+
+@dataclass(frozen=True, slots=True)
+class CodexIntegrator:
+    """Codex reconciling a conflicted worktree. A fresh session, not a resumed one — the conflict
+    is fully described by the repository it is standing in."""
+
+    open_session: OpenSession
+
+    async def reconcile(self, context: SessionContext) -> SessionTelemetry:
         session = self.open_session(
             TurnStreamAsk(
-                prompt=conflict_resolution_prompt(),
+                prompt=integrator_prompt(context.spec, context.findings),
                 cwd=context.worktree.path,
-                resumable_identifier=resumable_identifier,
             )
         )
-        return await run_turn_stream_implementer(session, context)
+        return await run_turn_stream_integrator(session, context)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +79,10 @@ class CodexEditor:
 
 def codex_implementer() -> CodexImplementer:
     return CodexImplementer(open_session=codex_sdk_session)
+
+
+def codex_integrator() -> CodexIntegrator:
+    return CodexIntegrator(open_session=codex_sdk_session)
 
 
 def codex_editor(suite: Sequence[str]) -> CodexEditor:

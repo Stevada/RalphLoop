@@ -17,8 +17,14 @@ from pathlib import Path
 import pytest
 
 from ralph.cli import render
-from ralph.adapters.copilot import CopilotEditor, CopilotImplementer, copilot_implementer
-from ralph.adapters.runtime.prompt import conflict_resolution_prompt
+from ralph.adapters.copilot import (
+    CopilotEditor,
+    CopilotImplementer,
+    CopilotIntegrator,
+    copilot_implementer,
+    copilot_integrator,
+)
+from ralph.adapters.runtime.prompt import integrator_prompt
 from ralph.adapters.runtime.turn_stream import AutoCompaction, Permission, Turn, TurnStreamAsk
 from ralph.adapters.git import GitCli, run_git
 from ralph.harness import (
@@ -155,7 +161,7 @@ async def test_the_implementer_reports_sdk_usage_and_git_facts(repo: TargetRepo)
     assert t.session_output == "implemented\n"
 
 
-async def test_the_implementer_resumes_the_specific_session_for_conflict_resolution(
+async def test_the_integrator_opens_a_fresh_session_in_the_conflicted_worktree(
     repo: TargetRepo,
 ) -> None:
     git = GitCli(repo=repo.path)
@@ -173,19 +179,16 @@ async def test_the_implementer_resumes_the_specific_session_for_conflict_resolut
             on_start=commit_work,
         )
 
-    t = await CopilotImplementer(open_session=open_session).resolve_conflict(
-        _context(wt), "copilot-session-789"
-    )
+    context = _context(wt)
+    t = await CopilotIntegrator(open_session=open_session).reconcile(context)
 
     assert seen[0].cwd == wt.path
-    assert seen[0].prompt == conflict_resolution_prompt()
-    assert "Acceptance criteria" not in seen[0].prompt
-    assert seen[0].resumable_identifier == "copilot-session-789"
+    assert seen[0].prompt == integrator_prompt(context.spec, context.findings)
+    assert seen[0].resumable_identifier is None, "a fresh session, not a resumed one"
     assert seen[0].permit is not None
     assert seen[0].permit("Write", {"file_path": "copilot.txt"}).allowed
     assert t.killed is None
     assert t.consumption.consumed_tokens == 333_333
-    assert t.resumable_identifier == "copilot-session-789"
     assert t.commits == 1
     assert "resolved" in t.session_output
 
@@ -320,7 +323,7 @@ REAL = pytest.mark.skipif(
 
 
 @REAL
-async def test_a_real_copilot_resumed_session_resolves_a_real_merge_conflict(
+async def test_a_real_copilot_integrator_resolves_a_real_merge_conflict(
     repo: TargetRepo,
 ) -> None:
     git = GitCli(repo=repo.path)
@@ -359,12 +362,11 @@ async def test_a_real_copilot_resumed_session_resolves_a_real_merge_conflict(
     assert merge.returncode != 0
     assert "<<<<<<<" in (wt.path / "shared.py").read_text()
 
-    resumed = await copilot_implementer().resolve_conflict(context, first.resumable_identifier)
+    reconciled = await copilot_integrator().reconcile(context)
 
-    assert resumed.killed is None
-    assert resumed.resumable_identifier == first.resumable_identifier
-    assert resumed.consumption.consumed_tokens > 0
-    assert resumed.commits >= 1
+    assert reconciled.killed is None
+    assert reconciled.consumption.consumed_tokens > 0
+    assert git.merge_finished(wt), "it resolved the conflict but never committed it"
     assert repo.run_suite(wt.path)
 
 

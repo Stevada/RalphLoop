@@ -30,6 +30,7 @@ from tests.testbed import (
     behaviour_spec,
     make_options,
     peak_concurrency,
+    StandInIntegrator,
     stand_in_implementer as stand_in,
     unengaged_editor,
 )
@@ -124,15 +125,48 @@ async def test_concurrent_sub_issues_serialize_into_fast_forwards(
     assert all((repo.path / f"feature_{id}.py").exists() for id in ("01", "02", "03"))
 
 
-async def test_a_merge_conflict_does_not_stall_the_queue_for_its_siblings(
+async def test_a_merge_conflict_is_reconciled_inside_the_queue_and_both_land(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """01 and 02 both rewrite the same line; 03 is minding its own business.
 
-    One of the two wins the lock and lands. The other's merge conflicts — which is
-    `integration-failed`, a signal about how the work was cut, **not** a transient hiccup. The lock
-    is released, nothing is retried, and 03 lands regardless.
+    One of the two wins the lock and lands. The other conflicts — and instead of failing, an
+    **Integrator** is dispatched into the conflicted worktree without the lock ever being released.
+    All three land, no Editor is ever engaged, and no Implementer session is opened twice.
     """
+    repo.write_graph({"01": [], "02": [], "03": []})
+    spec = behaviour_spec(Behaviour.CONFLICT, {"03": Behaviour.SUCCEED})
+    integrator = StandInIntegrator()
+
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, spec),
+        editor=terminal_editor(),
+        integrator=integrator,
+        options=make_options(),
+    )
+
+    assert report.clean
+    assert sorted(report.landed) == ["01", "02", "03"]
+    assert len(integrator.calls) == 1, "only the sub-issue that lost the lock needed reconciling"
+    assert repo.run_suite() is True
+
+    # No retry: every sub-issue opened exactly one Implementer session.
+    log = (repo.path / ".scratch" / PARENT_ISSUE_NAME / "run.jsonl").read_text().splitlines()
+    opened = [
+        line for line in log if '"actor": "implementer"' in line and "session-started" in line
+    ]
+    assert len(opened) == 3
+    # And the reconciliation is on the record, under its own actor.
+    assert any('"actor": "integrator"' in line for line in log)
+
+
+async def test_an_unreconciled_conflict_pages_a_human_and_its_siblings_still_land(
+    repo: TargetRepo, agent: StandInAgent
+) -> None:
+    """The Integrator ran and left the merge open. That sub-issue is quarantined — no Editor, because
+    no spec was wrong — and everything unaffected still lands."""
     repo.write_graph({"01": [], "02": [], "03": []})
     spec = behaviour_spec(Behaviour.CONFLICT, {"03": Behaviour.SUCCEED})
 
@@ -141,27 +175,18 @@ async def test_a_merge_conflict_does_not_stall_the_queue_for_its_siblings(
         None,
         implementer=stand_in(agent, spec),
         editor=terminal_editor(),
+        integrator=StandInIntegrator(resolves=False),
         options=make_options(),
     )
 
     assert SubIssueId("03") in report.landed
+    assert len(report.landed) == 2  # the winner of the lock, and 03
     losers = [id for id, o in report.failed.items() if o is Outcome.INTEGRATION_FAILED]
     assert len(losers) == 1, "exactly one of the two conflicting sub-issues should have landed"
-    assert len(report.landed) == 2  # the winner, and 03
 
-    # No retry: the loser opened exactly one session.
-    opened = [
-        line for line in (repo.path / ".scratch" / PARENT_ISSUE_NAME / "run.jsonl").read_text().splitlines()
-        if f'"{losers[0]}"' in line
-        and '"actor": "implementer"' in line
-        and "session-started" in line
-    ]
-    assert len(opened) == 1
-
-    assert all(
-        m.startswith("Merge branch 'integration' into ralph/")
-        for m in repo.git("log", "--merges", "--format=%s", "integration").splitlines()
-    )
+    # No Editor was engaged for it: a textual conflict is not evidence that a spec is wrong.
+    log = (repo.path / ".scratch" / PARENT_ISSUE_NAME / "run.jsonl").read_text().splitlines()
+    assert not any('"actor": "editor"' in line and f'"{losers[0]}"' in line for line in log)
     assert repo.run_suite() is True
 
 
