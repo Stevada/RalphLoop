@@ -141,21 +141,28 @@ Pure functions over frozen dataclasses. Tested with no subprocess, no git, no mo
 | `Approach`, `ImpasseReport` | [impasse.py](../ralph/harness/model/impasse.py) | The model's narration — a leaf that knows nothing about how it was classified. |
 | `FailureReport` | [failure.py](../ralph/harness/model/failure.py) | The claim beside the harness's facts. It sits downstream of `session.py` (which imports `impasse.py`); splitting them is what breaks the import cycle. The Editor's job is to check one against the other — *their disagreeing is itself a signal*. |
 
-`classify_implementer` / `classify_editor` ([classify.py](../ralph/harness/rules/classify.py)) turn
-telemetry into an `Outcome`. Two facts to know without reading the bodies: **zero commits is never a
-benign skip** — it is an `impasse`; and `INTEGRATION_FAILED` is unreachable from either classifier —
-only the merge queue raises it.
+`classify_implementer` / `classify_editor` / `classify_integrator`
+([classify.py](../ralph/harness/rules/classify.py)) turn telemetry into an `Outcome`. Three facts to
+know without reading the bodies: **zero commits is never a benign skip** — it is an `impasse`;
+`INTEGRATION_FAILED` is unreachable from the Implementer's and Editor's classifiers — only the merge
+queue raises it; and the Integrator's classifier asks a question about git state rather than about
+commit count, because a session that resolved a conflict and did not commit leaves a commit count
+that reads as success.
 
 ### Routing — the taxonomy, executable
 
 `route(actor, outcome) → Destination` ([routing.py](../ralph/harness/rules/routing.py)) is the
 taxonomy table with one test per row. Four destinations — `MERGE_QUEUE`, `ACT_ON_VERDICT`, `EDITOR`,
-`HUMAN` — and **no retry destination** (a test asserts no row returns anything else). Mechanical
-rebase-conflict recovery is the single narrow exception: the scheduler may resume the same
-Implementer session once in the conflicted worktree before it creates an Editor cycle.
+`HUMAN` — and **no retry destination** (a test asserts no row returns anything else).
 
-Only `SUCCESS` needs to know who is asking (Implementer → merge queue, Editor → act on verdict).
-`INFRA_FAILED` routes to the **human** from either actor, never to the Editor, and spends no cycle.
+Only `SUCCESS` needs to know who is asking (Implementer → merge queue, Editor → act on verdict,
+Integrator → the suite gate). `INFRA_FAILED` routes to the **human** from any actor, never to the
+Editor, and spends no cycle.
+
+A merge conflict never reaches `route` at all. The merge queue raises it, dispatches the Integrator, and runs its suite gate on the result — all
+inside one hold of the merge lock ([mergequeue.py](../ralph/mergequeue.py); `docs/design.md` §4.5 for
+why). The sub-issue lands or goes to the human; it never re-enters the queue, so there is no
+destination for it to route to.
 
 ### Verdicts, the cycle cap, and lifecycle
 
@@ -179,7 +186,7 @@ needs a real model, network, or `codex` binary is in the wrong layer.
 | `RunLog` | the harness's **authoritative** record | A Protocol, not the JSONL adapter, because the merge queue and scheduler both take one and orchestration may not name an adapter. |
 | `CommandSource` | target repo → `RepoCommands` | Used during pre-flight readiness. `cli.py` names the concrete descriptor adapter and passes only the discovered value downstream. |
 | `TestRunner` | a suite run → `SuiteResult` | The merge queue owns the single harness suite run, using `RepoCommands.test`. |
-| `Git` | worktree / rebase / ff plumbing | `discard_worktree` destroys the checkout **and the branch** — `git worktree add -b` refuses an existing name, so a branch that outlived its checkout could never be cut again. The scheduler calls it on both non-quarantine exits: after a landing (the commits are on integration already) and on a `revise` verdict (losing them is the point). |
+| `Git` | worktree / merge / ff plumbing | `discard_worktree` destroys the checkout **and the branch** — `git worktree add -b` refuses an existing name, so a branch that outlived its checkout could never be cut again. The scheduler calls it on both non-quarantine exits: after a landing (the commits are on integration already) and on a `revise` verdict (losing them is the point). |
 
 `Budget` ([ports.py](../ralph/ports.py)) carries the wall-clock backstop for an actor session.
 `RepoCommands` is the command discovery value: the required `test` command and optional `install`
@@ -287,7 +294,7 @@ Depends on ports only, never on a concrete adapter.
 ### `MergeQueue` — [mergequeue.py](../ralph/mergequeue.py)
 
 Sub-issues run in parallel but **land one at a time**. `land(wt)` holds the merge lock (an
-`asyncio.Lock`) for exactly: check the integration head has not moved → rebase → **run the suite in
+`asyncio.Lock`) for exactly: check the integration head has not moved → merge it in → **run the suite in
 the worktree** → fast-forward. It returns a `Land(result, suite)`.
 
 - The suite runs on the *prospective* merge result, so `merge --ff-only` is only ever a fast-forward

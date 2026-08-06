@@ -112,15 +112,10 @@ class Git(Protocol):
         either case — `git worktree add -b` refuses a name that still exists, so a sub-issue whose
         branch outlived its checkout could not be cut again."""
 
-    def rebase(self, wt: Worktree, onto: str) -> bool: ...
-
-    def rebase_for_conflict_resolution(self, wt: Worktree, onto: str) -> bool:
-        """Rebase immediately before a conflict-resolution session.
-
-        Unlike ordinary landing rebases, a conflict here is left exactly as git produced it:
-        rebase still in progress, conflict markers still present. The ordinary landing path must
-        keep using `rebase`, which aborts on conflict.
-        """
+    def merge(self, wt: Worktree, onto: str) -> bool:
+        """Merge the integration branch into the worktree. False on conflict, with the conflict
+        left in place — it is the input to conflict resolution, and the evidence a human gets if
+        that fails."""
         ...
 
     def merge_ff_only(self, branch: str) -> bool: ...

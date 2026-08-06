@@ -2,10 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Ralph is a **harness** for autonomous issue execution. Three actors: a **Planner** (human) cuts a
+Ralph is a **harness** for autonomous issue execution. Four actors: a **Planner** (human) cuts a
 parent issue into a graph of sub-issues; an **Implementer** (Codex or Copilot) writes code + tests,
 one sub-issue per session in an isolated worktree; an **Editor** (Claude Code or Copilot, read-only)
-diagnoses failed sessions and returns a verdict. The harness is the machinery between them.
+diagnoses failed sessions and returns a verdict; an **Integrator** (Codex by default) reconciles the
+merge conflicts that parallel landing creates. The harness is the machinery between them.
 
 ## Status
 
@@ -59,15 +60,19 @@ load-bearing facts:
   zero logic); `harness/rules/` is the verbs (the pure functions that *are* the design). Every
   `ports.py` Protocol has a fake in `tests/fakes.py`, and the fakes are what the suite runs against.
 - **Concrete adapters are named only in `cli.py`.** Nothing downstream knows whether the Implementer
-  is Codex or Copilot, or the Editor is Claude Code or Copilot. Either CLI can back either actor.
+  is Codex or Copilot, the Editor is Claude Code or Copilot, or the Integrator is either. Any of
+  these CLIs can back any of the three unattended actors.
 - **The merge queue is the harness suite gate.** The harness runs the discovered test command on the
   prospective merge; a model's exit code is only its opinion. A suite the harness runs is inside the
   **blast radius** — only CI on a clean checkout is **honest**.
 - **No retry destination.** A failed sub-issue is quarantined (`needs-human`, worktree preserved, its
-  dependents never become eligible); everything unaffected still lands. The one narrow exception is
-  mechanical rebase-conflict recovery: the same Implementer session may be resumed once, in the
-  conflicted worktree, before the Editor is engaged. The run never stops early; the human is paged
-  **once**, at the end.
+  dependents never become eligible); everything unaffected still lands. The run never stops early;
+  the human is paged **once**, at the end.
+- **A conflict is answered in the queue, not by the Editor.** On a merge conflict the merge queue
+  holds its lock, merges the integration branch into the worktree, and dispatches an **Integrator**
+  to resolve and commit. The sub-issue does not re-enter the queue: it either passes the suite gate
+  and lands, or it goes to the human. This is not a retry — it is a different actor answering a
+  question the Implementer could not have seen.
 - **The Editor writes nothing but spec and findings,** enforced by a tool allowlist (not the
   prompt): `adapters/runtime/editor.py` for the model-agnostic half. At most **three cycles**, enforced by the
   scheduler alone.

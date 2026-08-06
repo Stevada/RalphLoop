@@ -447,7 +447,7 @@ async def test_a_real_codex_session_lands_a_real_sub_issue(repo: TargetRepo) -> 
 
 
 @REAL
-async def test_a_real_codex_resumed_session_resolves_a_real_rebase_conflict(
+async def test_a_real_codex_resumed_session_resolves_a_real_merge_conflict(
     repo: TargetRepo,
 ) -> None:
     """Spends two real Codex turns: one to create work, one to resume it after a moved base."""
@@ -474,14 +474,14 @@ async def test_a_real_codex_resumed_session_resolves_a_real_rebase_conflict(
     (repo.path / "shared.py").write_text('MARKER = "integration-side"\n')
     repo.git("add", "shared.py")
     repo.git("commit", "-m", "move integration marker")
-    rebase = subprocess.run(
-        ["git", "rebase", "integration"],
+    merge = subprocess.run(
+        ["git", "merge", "--no-edit", "integration"],
         cwd=wt.path,
         capture_output=True,
         text=True,
         check=False,
     )
-    assert rebase.returncode != 0
+    assert merge.returncode != 0
     assert "<<<<<<<" in (wt.path / "shared.py").read_text()
 
     resumed = await codex_implementer().resolve_conflict(context, first.resumable_identifier)

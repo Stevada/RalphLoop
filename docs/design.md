@@ -1,6 +1,6 @@
 # Ralph Loop — Design rationale
 
-Harnessed engineering for coding models. Three actors, one medium, one repo, one PR.
+Harnessed engineering for coding models. Four actors, one medium, one repo, one PR.
 
 This is the **why**: the design and the reasoning behind it, including the risks accepted
 deliberately. The first implementation has been built against it — where the code and this document
@@ -13,23 +13,28 @@ those terms and does not define them.
 
 ## 1. Actors
 
-Three actors. They never talk to each other. They talk to a sub-issue's **spec** and
-**findings**.
+Four actors. They never talk to each other. Three of them talk to a sub-issue's **spec** and
+**findings**; the fourth talks only to git.
 
 | Actor | Backed by | Writes | Reads |
 |---|---|---|---|
 | **Planner** | Claude Opus, in conversation | The issue graph and the first draft of every spec | PRD, codebase, integration branch |
 | **Editor** | Claude Code, Codex, **or** Copilot | A single sub-issue's spec and findings | Everything; may run read-only commands |
 | **Implementer** | Codex **or** Copilot | All code, tests included | Its spec and findings, the repo |
+| **Integrator** | Codex **or** Copilot | Anything in a conflicted worktree, plus the commit that resolves it | The conflict, both sides' history, the repo |
 
-The Planner is invoked by a human, in conversation. The Editor and Implementer run
-unattended inside a run.
+The Planner is invoked by a human, in conversation. The other three run unattended inside a run.
 
-**An actor is a role, not a model.** Either Codex or Copilot can back either of the two unattended
+**An actor is a role, not a model.** Either Codex or Copilot can back any of the three unattended
 roles; `cli.py` chooses from CLI arguments, and nothing downstream knows which is running. That is a
 portfolio decision, not a hedge: the Implementer and the Editor should not be the same model on the
 same failure, because an Editor adjudicating an impasse declared by *itself* is the least independent
 sensor the system could have.
+
+The Integrator is the one actor with no spec. It is not asked whether the work is right — that
+question was already answered when the sub-issue reached the merge queue. It is asked only to make
+two correct trees into one, which is why it is dispatched by the queue rather than the scheduler,
+and why its failure pages a human instead of reaching an Editor.
 
 ### Transport per vendor
 
@@ -163,10 +168,10 @@ iterates as it sees fit — running the suite, fixing, trying again — using it
 when it has reached an impasse.
 
 That inner loop is the *model's*, inside one session. Ralph still has no retry destination and no
-backoff. The only scheduler-owned exception is mechanical rebase-conflict recovery: if landing
-order leaves conflict markers in otherwise completed work, Ralph may resume the same Implementer
-session once in that conflicted worktree before involving the Editor. Do not read the sentence above
-as licence to add another one.
+backoff. A merge conflict is not an exception to that: it is not the same session run again, it is
+a different actor — the Integrator — answering a question about landing order that the Implementer
+could not have seen from inside its own worktree. Do not read this paragraph as licence to add a
+retry.
 
 It exits exactly one of two ways:
 
@@ -206,19 +211,59 @@ This is the piece that makes parallelism honest.
 When an Implementer reaches green in its own worktree:
 
 1. **Acquire the merge lock.**
-2. **Rebase** onto the current integration head.
+2. **Merge** the current integration head into the worktree. On conflict, **reconcile** (below).
 3. **Run the suite in its own worktree.**
 4. On green: **fast-forward merge**, then write `landed` to Linear.
 5. **Release the lock.**
 
-On rebase conflict or red suite on the prospective merge: **release the lock, preserve the
-worktree, and route the sub-issue to the Editor** as an `integration-failed` outcome. The
-Implementer does not retry. A failed merge is not a transient hiccup to paper over — it is
-a signal about how the work was cut, and adjudicating it is the Editor's job, not something
-the actor that just failed to integrate should be trusted to fix by trying again.
+On a red suite on the prospective merge: **release the lock, preserve the worktree, and route the
+sub-issue to the Editor** as an `integration-failed` outcome. The Implementer does not retry. A red
+prospective merge is not a transient hiccup to paper over — it is a semantic conflict between two
+trees that each satisfy their own spec, and adjudicating it is the Editor's job, not something the
+actor that just failed to integrate should be trusted to fix by trying again.
 
-The lock is held only for rebase, suite, fast-forward, release — never while the Editor
-reasons. One sub-issue's integration failure never stalls the queue for its siblings.
+The lock is held for merge, reconciliation, suite, fast-forward, release — never while the Editor
+reasons. One sub-issue's *red* integration failure never stalls the queue for its siblings.
+
+#### Reconciliation, when the merge conflicts
+
+A textual conflict is a different animal, and it gets a different answer. It says nothing about
+whether either spec was right; it is an artefact of the order two siblings happened to land in.
+Sending it to an Editor would invite a spec rewrite for a problem no spec caused.
+
+So the queue answers it itself, without releasing the lock:
+
+1. **Dispatch the Integrator** into the conflicted worktree. It may change anything it needs to and
+   it commits its resolution, exactly as the Implementer commits its work. Two commits result, in
+   order: what the Implementer wrote, then what it took to make that land.
+2. **Check that the merge is finished**, then continue at step 3 above. The suite gate is not
+   waived — a conflict resolved perfectly can still leave a tree that does not build, and the
+   Integrator's own opinion of its work is worth exactly what any actor's is.
+
+Two exits, and the sub-issue never re-enters the queue: it lands, or it goes to the human. Holding
+the lock across a model session costs throughput on the rare run where conflicts are frequent. It
+buys correct-by-construction: nothing can move the integration head between the reconciliation and
+the fast-forward that depends on it.
+
+#### Why merge and not rebase
+
+Step 2 merges rather than rebases, and that choice is what makes the rest of this section short.
+
+A rebase re-creates the Implementer's commit: it detaches HEAD onto the integration head and replays
+the work as a patch, moving the branch ref only when the replay finishes. A conflict therefore
+strands the worktree in a state that is not a commit and not a branch — and an actor that resolves
+it perfectly, but stops before finishing the replay, leaves a branch ref that never moved and a
+commit count that reads as zero. Every mechanism the harness would need to survive that (finishing
+the replay on the actor's behalf, measuring success against refs instead of HEAD, forbidding the
+abort that would silently discard the resolution) exists only because of the rebase.
+
+A merge has none of it. HEAD stays attached, the Implementer's commit stays where it is, and the
+resolution is an ordinary commit made by an ordinary `git commit`. The Integrator needs no
+git-specific contract at all: it edits a worktree and commits, which is what an Implementer does.
+
+The price is that the integration branch is no longer linear — a merge commit appears whenever a
+sibling landed between a worktree being cut and that worktree landing. That is the honest record of
+what happened, and it is cheaper than the machinery linearity would cost.
 
 Because the suite runs on the *prospective* merge result, `git merge` in the harness is
 only ever a fast-forward of an already-verified tree. The integration branch is correct by
@@ -227,7 +272,7 @@ construction.
 The merge queue is the only harness suite gate. The Implementer still runs whatever checks it needs
 inside its own session; that is its feedback loop and its completion signal. A second harness run
 immediately after the session would only repeat the Implementer's isolated view. The merge-queue run
-is different: it runs after rebase on the prospective merged tree, so it catches two sub-issues that
+is different: it runs on the prospective merged tree, so it catches two sub-issues that
 were each green alone but break when combined, which the Implementer cannot observe from its
 isolated worktree. It also catches a false green before landing, because the Editor fires only on
 failures and cannot adjudicate success the harness never challenged.
@@ -253,7 +298,7 @@ to make either.
 #### A failed merge is an Editor trigger, except for mechanical conflict recovery
 
 A red suite on the prospective merge routes the sub-issue to the Editor as `integration-failed` —
-immediately, on the first failure, with no Implementer requeue. A textual rebase conflict gets one
+immediately, on the first failure, with no Implementer requeue. A textual merge conflict gets one
 cheaper mechanical path first: Ralph leaves the conflict markers in place, resumes the same
 Implementer session once, and retries the landing once. If that still does not land, the Editor
 reads the preserved worktree and the sibling that landed first. If 105 can adapt to 104, it says
@@ -264,7 +309,8 @@ That trip through the Editor spends one of the sub-issue's three **cycles** — 
 `integration-failed` is counted exactly like an impasse, so a sub-issue that keeps failing
 to integrate is escalated at the third.
 
-The merge queue itself does no model work: rebase and the suite run are mechanical, so a
+The merge queue itself does no model work outside reconciliation: the merge and the suite run are
+mechanical, so a
 sub-issue spends no tokens to land work it has already finished. Only the Editor, on an
 integration failure, costs anything.
 
@@ -374,19 +420,26 @@ of harness logic.
 | Outcome | Detection | Routes to |
 |---|---|---|
 | `impasse` | Session did not deliver: the `<impasse>` sentinel, or no commits | **Editor** |
-| `integration-failed` | Prospective merge conflicts, or the suite is red after rebase onto the integration head | **Editor** |
-| `infra-failed` | Setup failure, wall-clock timeout (exit 124), rate limit, OOM | **Human — from either actor. Never the Editor.** |
+| `integration-failed` | The suite is red on the prospective merged tree | **Editor** |
+| `integration-failed` | The prospective merge conflicts | **Integrator**, inside the queue |
+| `infra-failed` | Setup failure, wall-clock timeout (exit 124), rate limit, OOM | **Human — from any actor. Never the Editor.** |
 
 `integration-failed` is the one outcome that does not classify a *session*: the Implementer
 committed work that reached the merge queue. The merge queue raises it when that tree will not
 integrate with a sibling that landed first — precisely the kind of failure the Implementer cannot
-observe about itself, so it goes to the Editor rather than back to the actor that produced it.
+observe about itself, so it goes to another actor rather than back to the one that produced it.
 
-**There is no retry destination in this system.** Mechanical rebase-conflict recovery is a named
-exception, not a routing destination: the same Implementer session may be resumed once in the
-conflicted worktree before the failure becomes an Editor cycle.
+**Which actor depends on how it failed, and the split is not arbitrary.** A red prospective merge is
+a semantic conflict: two trees that each satisfy their own spec and contradict each other in
+meaning. Only a spec can resolve that, so it goes to the Editor and spends a cycle. A *textual*
+conflict is not evidence that either spec was wrong — it is an artefact of landing order, and
+sending it to an Editor would invite a spec rewrite for a problem no spec caused. It goes to the
+Integrator, inside the merge lock, and spends no cycle.
 
-`infra-failed` pages the human immediately, from either actor, and never reaches the Editor. A
+**There is no retry destination in this system.** The Integrator is not one: it is a different actor
+with a different job, not the same session run again.
+
+`infra-failed` pages the human immediately, from any actor, and never reaches the Editor. A
 stale lockfile, a 429, an OOM, a wall-clock kill: none of these are fixed by running the same
 session again against the same broken environment. Retrying would burn the budget, delay the
 notification, and — because the failure is invisible to the model — produce a second failure

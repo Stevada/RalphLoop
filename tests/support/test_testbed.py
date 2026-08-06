@@ -151,10 +151,10 @@ def test_hang_really_outlives_a_short_wall_clock_bound(
 def test_conflict_really_conflicts_with_a_real_sibling_branch(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    """Two agents, two worktrees, one line. The first lands; the second cannot rebase onto it.
+    """Two agents, two worktrees, one line. The first lands; the second cannot merge with it.
 
     This is the fixture behind `integration-failed`, and it is the one most worth distrusting:
-    a "conflict" mode that quietly rebases clean would make the merge queue's hardest path
+    a "conflict" mode that quietly merged clean would make the merge queue's hardest path
     untested while every test stayed green.
     """
     left, right = repo.add_worktree("01"), repo.add_worktree("02")
@@ -165,17 +165,17 @@ def test_conflict_really_conflicts_with_a_real_sibling_branch(
     repo.git("merge", "--ff-only", "ralph/01")
     assert (repo.path / "shared.py").read_text() == "MARKER = '01'\n"
 
-    rebase = subprocess.run(
-        ["git", "rebase", "integration"],
+    merge = subprocess.run(
+        ["git", "merge", "--no-edit", "integration"],
         cwd=right,
         capture_output=True,
         text=True,
         check=False,
     )
 
-    assert rebase.returncode != 0
-    assert "CONFLICT" in rebase.stdout + rebase.stderr
-    assert "shared.py" in rebase.stdout + rebase.stderr
+    assert merge.returncode != 0
+    assert "CONFLICT" in merge.stdout + merge.stderr
+    assert "shared.py" in merge.stdout + merge.stderr
 
 
 def test_two_succeeding_agents_do_not_conflict(repo: TargetRepo, agent: StandInAgent) -> None:
@@ -185,15 +185,15 @@ def test_two_succeeding_agents_do_not_conflict(repo: TargetRepo, agent: StandInA
     _run(agent, Behaviour.SUCCEED, "02", cwd=right)
 
     repo.git("merge", "--ff-only", "ralph/01")
-    rebase = subprocess.run(
-        ["git", "rebase", "integration"],
+    merge = subprocess.run(
+        ["git", "merge", "--no-edit", "integration"],
         cwd=right,
         capture_output=True,
         text=True,
         check=False,
     )
 
-    assert rebase.returncode == 0
+    assert merge.returncode == 0
     assert repo.run_suite(cwd=right) is True
 
 

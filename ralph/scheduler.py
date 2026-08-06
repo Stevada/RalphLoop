@@ -258,8 +258,8 @@ class Scheduler:
             if land.result is LandResult.LANDED:
                 return await self._landed(sub.id, wt)
 
-            if land.result is LandResult.REBASE_CONFLICT:
-                recovered = await self._resolve_rebase_conflict(sub.id, context, telemetry)
+            if land.result is LandResult.MERGE_CONFLICT:
+                recovered = await self._resolve_merge_conflict(sub.id, context, telemetry)
                 if isinstance(recovered, _Closed):
                     return recovered
                 outcome = recovered.outcome
@@ -295,21 +295,22 @@ class Scheduler:
         self._git.discard_worktree(wt)
         return _Closed(id, None)
 
-    async def _resolve_rebase_conflict(
+    async def _resolve_merge_conflict(
         self,
         id: SubIssueId,
         context: SessionContext,
         telemetry: SessionTelemetry,
     ) -> _Closed | _FailedLanding:
+        # The merge queue left the conflict in the worktree, so there is no git call to make here:
+        # the state the session needs is already the state it is in.
         if telemetry.resumable_identifier is None:
             return _FailedLanding(
                 outcome=Outcome.INTEGRATION_FAILED,
                 telemetry=telemetry,
                 suite=None,
-                detail=LandResult.REBASE_CONFLICT.value,
+                detail=LandResult.MERGE_CONFLICT.value,
             )
 
-        self._git.rebase_for_conflict_resolution(context.worktree, self._integration)
         await self._record(
             id, Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, Outcome.INTEGRATION_FAILED
         )

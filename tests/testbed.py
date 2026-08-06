@@ -1,12 +1,12 @@
 """The test bed: a real git repository, and a stand-in agent that is a real subprocess.
 
 Neither of these is a fake. `tests/fakes.py` satisfies a Protocol in-process; these two do the
-real thing in a temporary directory — real `git init`, real commits, real worktrees, real rebase
+real thing in a temporary directory — real `git init`, real commits, real worktrees, real merge
 conflicts, a real suite that really goes red. The only thing the stand-in agent is not is
 intelligent.
 
 That is why every ticket after this one can be verified end-to-end **with no model at all**. A
-fake git that always says "rebase succeeded" tests nothing; the merge queue is the trickiest code
+fake git that always says "merge succeeded" tests nothing; the merge queue is the trickiest code
 in the harness and it deserves an adversary.
 """
 
@@ -56,7 +56,7 @@ class Behaviour(StrEnum):
 
     Each is a correct, green, self-contained sub-issue: one renames `calculator.add` to `plus` and
     updates its test; the other adds a test that calls `add`. They touch **different files**, so
-    there is no rebase conflict to catch them — git will merge them without a murmur, and the
+    there is no merge conflict to catch them — git will merge them without a murmur, and the
     integration branch will be red.
 
     This is the failure `CONFLICT` cannot express. A textual conflict is git's to notice; a semantic
@@ -237,7 +237,7 @@ def make_target_repo(root: Path) -> TargetRepo:
         "from calculator import add\n\n\ndef test_add() -> None:\n    assert add(1, 2) == 3\n"
     )
     # The line both CONFLICT agents rewrite. It exists on the base so they *modify* it rather
-    # than both adding it — a plain content conflict, the kind a real rebase actually hits.
+    # than both adding it — a plain content conflict, the kind a real merge actually hits.
     (root / "shared.py").write_text('MARKER = "base"\n')
     (root / ".gitignore").write_text(".worktrees/\n.pytest_cache/\n__pycache__/\n")
 

@@ -8,7 +8,7 @@ They live here rather than in `ralph/` because nothing in the shipped package ma
 and the surest way to guarantee that is for the package not to contain one.
 
 `Git` and `TestRunner` also have *real* adapters, tested against real temporary repositories — a
-fake git that always says "rebase succeeded" tests nothing. The fakes here are for the layers
+fake git that always says "merge succeeded" tests nothing. The fakes here are for the layers
 above, which have no business knowing what git is.
 """
 
@@ -166,15 +166,13 @@ class FakeGit:
     tested against real repositories."""
 
     head: str = "integration"
-    rebase_conflicts: set[str] = field(default_factory=set)  # branches whose rebase fails
-    rebase_results: dict[str, list[bool]] = field(default_factory=dict)
-    conflict_resolution_rebase_results: dict[str, list[bool]] = field(default_factory=dict)
+    merge_conflicts: set[str] = field(default_factory=set)  # branches whose merge conflicts
+    merge_results: dict[str, list[bool]] = field(default_factory=dict)
     ff_refuses: set[str] = field(default_factory=set)  # branches whose fast-forward is refused
     commit_counts: dict[str, int] = field(default_factory=dict)
     worktrees: list[Worktree] = field(default_factory=list)
-    rebased: list[tuple[str, str]] = field(default_factory=list)
-    conflict_resolution_rebased: list[tuple[str, str]] = field(default_factory=list)
-    merged: list[str] = field(default_factory=list)
+    merges: list[tuple[str, str]] = field(default_factory=list)
+    fast_forwarded: list[str] = field(default_factory=list)
     moved: list[tuple[str, Path]] = field(default_factory=list)
     discarded: list[str] = field(default_factory=list)
 
@@ -190,22 +188,16 @@ class FakeGit:
     def discard_worktree(self, wt: Worktree) -> None:
         self.discarded.append(wt.branch)
 
-    def rebase(self, wt: Worktree, onto: str) -> bool:
-        self.rebased.append((wt.branch, onto))
-        if scripted := self.rebase_results.get(wt.branch):
+    def merge(self, wt: Worktree, onto: str) -> bool:
+        self.merges.append((wt.branch, onto))
+        if scripted := self.merge_results.get(wt.branch):
             return scripted.pop(0)
-        return wt.branch not in self.rebase_conflicts
-
-    def rebase_for_conflict_resolution(self, wt: Worktree, onto: str) -> bool:
-        self.conflict_resolution_rebased.append((wt.branch, onto))
-        if scripted := self.conflict_resolution_rebase_results.get(wt.branch):
-            return scripted.pop(0)
-        return wt.branch not in self.rebase_conflicts
+        return wt.branch not in self.merge_conflicts
 
     def merge_ff_only(self, branch: str) -> bool:
         if branch in self.ff_refuses:
             return False
-        self.merged.append(branch)
+        self.fast_forwarded.append(branch)
         return True
 
     def commits_between(self, base: str, branch: str) -> int:

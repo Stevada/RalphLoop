@@ -1,12 +1,12 @@
 """**Many land, in parallel, serialized by the merge lock.**
 
 Sub-issues run in parallel but land one at a time. That is the whole trick, and every test here is
-the real thing: real concurrent subprocesses, a real merge lock, real rebases onto a branch that is
+the real thing: real concurrent subprocesses, a real merge lock, real merges of a branch that is
 moving under them.
 
 The hard part of testing parallelism is proving it *happened*. A run that is secretly sequential
-passes every correctness assertion you can write — the work still lands, the history is still
-linear. So the stand-in agent keeps a ledger of when it was alive, and the tests read the
+passes every correctness assertion you can write — the work still lands, the branch still ends up
+correct. So the stand-in agent keeps a ledger of when it was alive, and the tests read the
 high-water mark off it. Nothing else can tell the difference.
 """
 
@@ -99,11 +99,11 @@ async def test_a_fast_sub_issue_lands_without_waiting_for_a_slower_sibling(
     assert report.landed == (SubIssueId("02"), SubIssueId("01"))
 
 
-async def test_concurrent_sub_issues_serialize_into_a_linear_history(
+async def test_concurrent_sub_issues_serialize_into_fast_forwards(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    """Three at once, landing one at a time. Each rebases onto whatever the last one landed, so the
-    integration branch grows by fast-forward and there is not a merge commit in it."""
+    """Three at once, landing one at a time. Each merges in whatever the last one landed, runs its
+    suite on that result, and the integration branch then grows by fast-forward alone."""
     repo.write_graph({"01": [], "02": [], "03": []})
 
     report = await run(
@@ -115,18 +115,21 @@ async def test_concurrent_sub_issues_serialize_into_a_linear_history(
     )
 
     assert report.clean
-    assert repo.commit_count("integration") == 5  # initial + the graph + three sub-issues
-    assert repo.git("log", "--merges", "--oneline", "integration") == ""
+    catch_ups = repo.git("log", "--merges", "--format=%s", "integration").splitlines()
+    assert all(m.startswith("Merge branch 'integration' into ralph/") for m in catch_ups)
+    # initial + the graph + three sub-issues, plus a catch-up merge per worktree that had to
+    # integrate a sibling that won the lock first.
+    assert repo.commit_count("integration") == 5 + len(catch_ups)
     assert repo.run_suite() is True
     assert all((repo.path / f"feature_{id}.py").exists() for id in ("01", "02", "03"))
 
 
-async def test_a_rebase_conflict_does_not_stall_the_queue_for_its_siblings(
+async def test_a_merge_conflict_does_not_stall_the_queue_for_its_siblings(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """01 and 02 both rewrite the same line; 03 is minding its own business.
 
-    One of the two wins the lock and lands. The other's rebase conflicts — which is
+    One of the two wins the lock and lands. The other's merge conflicts — which is
     `integration-failed`, a signal about how the work was cut, **not** a transient hiccup. The lock
     is released, nothing is retried, and 03 lands regardless.
     """
@@ -155,7 +158,10 @@ async def test_a_rebase_conflict_does_not_stall_the_queue_for_its_siblings(
     ]
     assert len(opened) == 1
 
-    assert repo.git("log", "--merges", "--oneline", "integration") == ""
+    assert all(
+        m.startswith("Merge branch 'integration' into ralph/")
+        for m in repo.git("log", "--merges", "--format=%s", "integration").splitlines()
+    )
     assert repo.run_suite() is True
 
 

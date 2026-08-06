@@ -25,19 +25,20 @@ def test_add_worktree_cuts_a_real_checkout_off_the_base(repo: TargetRepo) -> Non
     assert repo.branch_exists("ralph/01")
 
 
-def test_a_clean_rebase_succeeds(repo: TargetRepo, agent: StandInAgent) -> None:
+def test_a_clean_merge_succeeds(repo: TargetRepo, agent: StandInAgent) -> None:
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
     subprocess.run(agent.argv(Behaviour.SUCCEED, "01"), cwd=wt.path, check=True, capture_output=True)
 
-    assert git.rebase(wt, "integration") is True
+    assert git.merge(wt, "integration") is True
 
 
-def test_a_conflicting_rebase_returns_false_and_leaves_no_rebase_in_progress(
+def test_a_conflicting_merge_returns_false_and_leaves_the_conflict_in_place(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    """A half-finished rebase in a worktree is worse than a failed one: the Editor would read a
-    tree with conflict markers in it that neither actor ever produced."""
+    """The conflict is not wreckage to clean up — it is the input to conflict resolution, and the
+    evidence a human reads if that fails. HEAD stays on the branch throughout, so resolving it is
+    an ordinary commit."""
     git = GitCli(repo=repo.path)
     left = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
     right = git.add_worktree("ralph/02", repo.path / ".worktrees" / "active" / "02", "integration")
@@ -47,75 +48,49 @@ def test_a_conflicting_rebase_returns_false_and_leaves_no_rebase_in_progress(
         )
     git.merge_ff_only("ralph/01")
 
-    assert git.rebase(right, "integration") is False
-
-    assert not (right.path / ".git").is_dir()  # a worktree's .git is a file, not a dir
-    status = subprocess.run(
-        ["git", "status"], cwd=right.path, capture_output=True, text=True, check=True
-    )
-    assert "rebase in progress" not in status.stdout
-    assert "<<<<<<<" not in (right.path / "shared.py").read_text()
-
-
-def test_a_conflicting_conflict_resolution_rebase_leaves_the_rebase_in_progress(
-    repo: TargetRepo, agent: StandInAgent
-) -> None:
-    git = GitCli(repo=repo.path)
-    left = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
-    right = git.add_worktree("ralph/02", repo.path / ".worktrees" / "active" / "02", "integration")
-    for wt, tag in ((left, "01"), (right, "02")):
-        subprocess.run(
-            agent.argv(Behaviour.CONFLICT, tag), cwd=wt.path, check=True, capture_output=True
-        )
-    git.merge_ff_only("ralph/01")
-
-    assert git.rebase_for_conflict_resolution(right, "integration") is False
+    assert git.merge(right, "integration") is False
 
     status = subprocess.run(
         ["git", "status"], cwd=right.path, capture_output=True, text=True, check=True
     )
     shared = (right.path / "shared.py").read_text()
-    assert "rebase in progress" in status.stdout
+    assert "You have unmerged paths" in status.stdout
     assert "<<<<<<<" in shared
     assert "=======" in shared
     assert ">>>>>>>" in shared
+    # The branch, not a detached HEAD. This is what makes the resolution a plain `git commit`.
+    head = subprocess.run(
+        ["git", "symbolic-ref", "--short", "HEAD"],
+        cwd=right.path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert head.stdout.strip() == "ralph/02"
 
 
-def test_a_clean_conflict_resolution_rebase_matches_the_existing_rebase(
+def test_a_clean_merge_leaves_integration_an_ancestor_so_the_fast_forward_can_follow(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
+    """The invariant the merge queue's fast-forward rests on: after the merge, whatever the
+    integration head was, it is behind this branch."""
     git = GitCli(repo=repo.path)
-    ordinary = git.add_worktree(
-        "ralph/01", repo.path / ".worktrees" / "active" / "01", "integration"
-    )
-    conflict_resolution = git.add_worktree(
-        "ralph/02", repo.path / ".worktrees" / "active" / "02", "integration"
-    )
-    for wt, tag in ((ordinary, "01"), (conflict_resolution, "02")):
-        subprocess.run(
-            agent.argv(Behaviour.SUCCEED, tag), cwd=wt.path, check=True, capture_output=True
-        )
+    wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
+    subprocess.run(agent.argv(Behaviour.SUCCEED, "01"), cwd=wt.path, check=True, capture_output=True)
     (repo.path / "integration_only.py").write_text("VALUE = 1\n")
     repo.git("add", "-A")
     repo.git("commit", "-m", "integration moves cleanly")
 
-    assert git.rebase(ordinary, "integration") is True
-    assert git.rebase_for_conflict_resolution(conflict_resolution, "integration") is True
+    assert git.merge(wt, "integration") is True
 
     repo.git("merge-base", "--is-ancestor", "integration", "ralph/01")
-    repo.git("merge-base", "--is-ancestor", "integration", "ralph/02")
-    for wt in (ordinary, conflict_resolution):
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=wt.path,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        assert status.stdout == ""
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=wt.path, capture_output=True, text=True, check=True
+    )
+    assert status.stdout == ""
 
 
-def test_merge_ff_only_fast_forwards_and_leaves_history_linear(
+def test_merge_ff_only_fast_forwards_and_makes_no_merge_commit(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     git = GitCli(repo=repo.path)
@@ -133,7 +108,7 @@ def test_merge_ff_only_refuses_rather_than_making_a_merge_commit(
 ) -> None:
     """The refusal is the feature. `git merge` does not fire the pre-commit hook, so a merge commit
     would put an unverified tree onto the integration branch — and the merge queue verified the
-    *rebased* tree, which is not the one a merge commit would land."""
+    *merged* tree, which is not the one a second merge commit would land."""
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
     subprocess.run(agent.argv(Behaviour.SUCCEED, "01"), cwd=wt.path, check=True, capture_output=True)

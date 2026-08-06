@@ -17,6 +17,7 @@ This file points at nothing: it is where the vocabulary bottoms out.
 | **Planner** | The actor that owns the shape of the work: the sub-issue graph and the first draft of every spec. | architect, decomposer |
 | **Editor** | The actor that rewrites a spec and its findings after an impasse, and returns a verdict. | reviewer, mentor, critic |
 | **Implementer** | The actor that writes all code and tests, working from a single spec. | worker, agent, coder |
+| **Integrator** | The actor the merge queue dispatches when a sub-issue's tree will not merge: it reconciles the conflict in the worktree and commits. | merger, resolver, reconciler, conflict agent, rebaser |
 
 ## Adapters and transports
 
@@ -117,20 +118,20 @@ state; the harness's word for everything the model cannot observe about itself.
 
 | Outcome | Detection | Routes to |
 | ------- | --------- | --------- |
-| `success` | Implementer: committed delivery ready for the merge queue. Editor: a verdict returned. | Merge queue / act on verdict |
+| `success` | Implementer: committed delivery ready for the merge queue. Editor: a verdict returned. Integrator: the merge is committed and no conflict remains. | Merge queue / act on verdict / the suite gate |
 | `impasse` | The Implementer did not deliver: the `<impasse>` sentinel or no commits. | Editor |
-| `integration-failed` | Prospective merge conflicts or goes red after rebase onto the integration head (merge queue, not a session) | Editor |
-| `infra-failed` | Setup failure, wall-clock timeout, rate limit, OOM (either actor) | Human — from either actor. Never the Editor. |
+| `integration-failed` | Prospective merge conflicts or goes red after the integration branch is merged in (merge queue, not a session) | Editor, or the Integrator on a conflict |
+| `infra-failed` | Setup failure, wall-clock timeout, rate limit, OOM (any actor) | Human — from any actor. Never the Editor. |
 
 `impasse` can only come from an Implementer session — an Editor cannot fail to deliver a spec
-it was never given. `infra-failed` can come from either actor. `integration-failed` is not a
+it was never given. `infra-failed` can come from any actor. `integration-failed` is not a
 session outcome at all: the Implementer committed work that reached the merge queue, and the merge
 queue raises it when that tree will not integrate with a sibling that landed first.
 
-It reaches the Editor by one of two paths, and counts as a **cycle** either way. A prospective merge
-that goes **red** routes to the Editor directly. A prospective merge that **conflicts** attempts
-**rebase-conflict recovery** first, and routes to the Editor only if that fails or the session is
-not resumable.
+The two ways to raise it are answered by different actors. A prospective merge that goes **red**
+routes to the **Editor**, and counts as a **cycle**. A prospective merge that **conflicts** is
+answered by **conflict reconciliation** inside the merge queue, spends no **cycle**, and never
+reaches the Editor: a conflict is not evidence that a spec is wrong.
 
 `infra-failed` routes to the human — **no retry, no cycle, never the Editor**.
 
@@ -141,7 +142,7 @@ not resumable.
 | **Sentinel** | A fixed marker string the model prints for the harness to grep, e.g. `<impasse>`. The channel for a model's word about its own state. | flag, marker, token |
 | **Impasse** | The outcome of an Implementer session that could not satisfy its spec — whether the model **declared** it via the `<impasse>` sentinel, or the harness **caught** it undeclared by observing no commits. | blocked, stuck, giving up, silent-red |
 | **Impasse report** | The Implementer's structured exit artifact, corroborated by harness-supplied facts. | blocker report, failure report |
-| **Rebase-conflict recovery** | The one exception to "no retry": on a merge-queue conflict, the harness rebases in the worktree and resumes **the same** Implementer session, once, to resolve it. No new spec, no revision, and it spends no **cycle**. | retry, re-run, second attempt |
+| **Conflict reconciliation** | What the merge queue does instead of giving up on a conflict: it merges the integration branch into the worktree, dispatches an **Integrator** to resolve and commit, and runs its suite gate on the result. No new spec, no revision, and it spends no **cycle**. | retry, re-run, second attempt, rebase-conflict recovery |
 | **Revision** | The Editor's rewrite of a spec (and its findings), recorded alongside the Planner's original rather than over it. | edit, fix, update |
 | **Verdict** | The Editor's decision when its session succeeds: `revise`, `planning-defect`, or `inconclusive`. | outcome, ruling, judgment |
 | **Run log** | An append-only file, one line per event, recording session states and Editor verdicts for a run — nothing heavier. | trace, audit log, journal |
@@ -176,7 +177,7 @@ native `blocked by` relation.
 | **Ready** | Stored: the Planner has authorised this sub-issue to run. | eligible, queued |
 | **Landed** | A sub-issue's terminal state: fast-forwarded into the integration branch. | done, merged, complete |
 | **Done** | A parent issue's terminal state: PR merged, CI green, human has read the diff. | landed, shipped, closed |
-| **Needs human** | A sub-issue's quarantine state, following `planning-defect` or `inconclusive`. Its worktree is preserved. | blocked, blocked-human, escalated |
+| **Needs human** | A sub-issue's quarantine state, following `planning-defect`, `inconclusive`, or a conflict the Integrator could not land. Its worktree is preserved. | blocked, blocked-human, escalated |
 
 There is no state for a sub-issue whose upstream escalated. It is unstarted, and it carries
 a `blocked by` relation to something that never landed. "I failed" and "I never got a turn"
@@ -189,7 +190,7 @@ are already distinguishable without inventing a state for the second one.
 | **Blast radius** | Everything an actor could have affected during its session: the working tree *and* uncommitted files, installed packages, environment, `.env`. | sandbox, scope |
 | **Honest** | Of a result: produced outside the blast radius of the actor that produced the code. | verified, trusted, green |
 | **Integration branch** | The branch sub-issues land on. Inside the blast radius. | trunk, main, base |
-| **Merge lock** | The mutex a worktree holds while it rebases, re-runs the suite, and fast-forwards. | integration lock, queue lock |
+| **Merge lock** | The mutex a worktree holds while it merges the integration branch in, reconciles a conflict if it has one, re-runs the suite, and fast-forwards. | integration lock, queue lock |
 
 The pre-commit hook and the merge queue's suite run **inside** the blast radius: they execute
 against the tree the actor just modified, on the actor's machine. **CI on the PR is the only honest
@@ -205,7 +206,9 @@ every green result is produced inside the blast radius of the thing being tested
 - An Implementer **Session** ends in a green delivery or an **Impasse**.
 - An **Impasse** produces the report that is the Editor's only sensor.
 - An Editor **Session** produces one **Revision** and one **Verdict**.
-- An `integration-failed` raised by a conflict may spend one **Rebase-conflict recovery** before it
-  reaches the **Editor**; a red one may not.
+- An `integration-failed` raised by a conflict is answered by **Conflict reconciliation** and never
+  reaches the **Editor**; a red one goes to the **Editor** and spends a **Cycle**.
+- A **Conflict reconciliation** ends in one of two ways: the sub-issue **Lands**, or it **Needs
+  human**. It never returns to the merge queue.
 - A **Sub-issue** becomes **Eligible** when every sub-issue it is blocked by has **Landed**.
 - A **Parent issue** is **Done** only after a check outside the blast radius has passed.

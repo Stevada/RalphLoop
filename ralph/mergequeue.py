@@ -1,16 +1,16 @@
 """The merge queue: sub-issues run in parallel, but they land one at a time.
 
 **This is the piece that makes parallelism honest**, and it is worth being precise about why.
-The suite is re-run *in the worktree*, *after* the rebase — on the **prospective merge result**.
-So the fast-forward that follows is only ever a fast-forward of an already-green tree, and the
-integration branch is **correct by construction**.
+The suite is re-run *in the worktree*, *after* the integration branch is merged in — on the
+**prospective merge result**. So the fast-forward that follows is only ever a fast-forward of an
+already-green tree, and the integration branch is **correct by construction**.
 
-Run the suite before the rebase and you have run it against a tree that is not the one you are
+Run the suite before the merge and you have run it against a tree that is not the one you are
 landing. Run it in the base checkout and you have run it against a tree that does not contain the
 work. Both mistakes produce a green integration branch that is broken, which is the exact failure
 the whole harness exists to make impossible.
 
-The merge lock is held for rebase → suite → fast-forward, and for nothing else. It is never held
+The merge lock is held for merge → suite → fast-forward, and for nothing else. It is never held
 while an Editor reasons: one sub-issue's integration failure must not stall the queue for its
 siblings.
 
@@ -31,9 +31,9 @@ from ralph.ports import Git, TestRunner, Worktree
 
 class LandResult(StrEnum):
     LANDED = "landed"
-    REBASE_CONFLICT = "rebase-conflict"  # ─┐
-    SUITE_RED = "suite-red"  #              ├─ all three become Outcome.INTEGRATION_FAILED
-    FF_REFUSED = "ff-refused"  # ───────────┘
+    MERGE_CONFLICT = "merge-conflict"  # ─┐
+    SUITE_RED = "suite-red"  #            ├─ all three become Outcome.INTEGRATION_FAILED
+    FF_REFUSED = "ff-refused"  # ─────────┘
     HEAD_MOVED = "head-moved"
 
 
@@ -67,10 +67,11 @@ class MergeQueue:
                 # Somebody moved the base repo out from under us. Fast-forwarding now would move
                 # a branch nobody asked us to move.
                 return Land(LandResult.HEAD_MOVED)
-            if not self._git.rebase(wt, self._integration):
-                # No retry, and no backoff. A rebase conflict is a signal about how the work was
-                # cut, not a transient hiccup that a second attempt would get past.
-                return Land(LandResult.REBASE_CONFLICT)
+            if not self._git.merge(wt, self._integration):
+                # No retry, and no backoff. A conflict is a signal about how the work was cut, not
+                # a transient hiccup that a second attempt would get past. The conflict is left in
+                # the worktree: it is what conflict resolution reads.
+                return Land(LandResult.MERGE_CONFLICT)
 
             suite = await self._runner.run(wt.path)
             if not suite.green:
@@ -78,8 +79,8 @@ class MergeQueue:
                 # Implementer could not have seen this about itself.
                 return Land(LandResult.SUITE_RED, suite)
             if not self._git.merge_ff_only(wt.branch):
-                # Unreachable: we just rebased onto integration, so integration is an ancestor of
-                # this branch by construction. If git refuses anyway, something we believe about
+                # Unreachable: we just merged integration into this branch, so integration is an
+                # ancestor of it by construction. If git refuses anyway, something we believe about
                 # the repository is false — say so rather than reaching for a merge commit.
                 return Land(LandResult.FF_REFUSED, suite)
 

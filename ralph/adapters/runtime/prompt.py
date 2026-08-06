@@ -104,7 +104,7 @@ Use /tdd where possible, at pre-agreed seams."""
 CONFLICT_RESOLUTION_ROLE = """\
 You are the **Implementer**, resuming your own prior session.
 
-The worktree now contains a git rebase conflict in your previous work. Do not re-derive the
+The worktree now contains a git merge conflict in your previous work. Do not re-derive the
 feature from the spec. Inspect the conflict markers, preserve the intended behavior from both
 sides where they are compatible, resolve the conflict, run the relevant checks, and commit the
 resolution."""

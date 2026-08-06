@@ -320,7 +320,7 @@ REAL = pytest.mark.skipif(
 
 
 @REAL
-async def test_a_real_copilot_resumed_session_resolves_a_real_rebase_conflict(
+async def test_a_real_copilot_resumed_session_resolves_a_real_merge_conflict(
     repo: TargetRepo,
 ) -> None:
     git = GitCli(repo=repo.path)
@@ -349,14 +349,14 @@ async def test_a_real_copilot_resumed_session_resolves_a_real_rebase_conflict(
     (repo.path / "shared.py").write_text('MARKER = "integration-side"\n')
     repo.git("add", "shared.py")
     repo.git("commit", "-m", "move integration marker")
-    rebase = subprocess.run(
-        ["git", "rebase", "integration"],
+    merge = subprocess.run(
+        ["git", "merge", "--no-edit", "integration"],
         cwd=wt.path,
         capture_output=True,
         text=True,
         check=False,
     )
-    assert rebase.returncode != 0
+    assert merge.returncode != 0
     assert "<<<<<<<" in (wt.path / "shared.py").read_text()
 
     resumed = await copilot_implementer().resolve_conflict(context, first.resumable_identifier)

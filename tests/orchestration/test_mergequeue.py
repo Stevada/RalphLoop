@@ -1,6 +1,6 @@
 """The merge queue, against real git.
 
-The one claim worth testing hardest: the suite is re-run **in the worktree, after the rebase**, on
+The one claim worth testing hardest: the suite is re-run **in the worktree, after the merge**, on
 the prospective merge result. Run it anywhere else and you have verified a tree you are not
 landing — a green integration branch that is broken, which is the failure the harness exists to
 make impossible.
@@ -28,7 +28,7 @@ class OverlapWatchingRunner:
     """A `TestRunner` that reports the high-water mark of suite runs happening at once.
 
     The merge queue runs the suite *inside* the merge lock, so this is a direct read on the lock: if
-    two lands ever overlap here, the lock leaked and the second rebased onto a branch that was about
+    two lands ever overlap here, the lock leaked and the second merged a branch that was about
     to move under it.
     """
 
@@ -70,7 +70,7 @@ async def test_a_green_sub_issue_lands_and_the_history_stays_linear(
     assert repo.git("log", "--merges", "--oneline", "integration") == ""
 
 
-async def test_a_conflicting_sibling_is_a_rebase_conflict(
+async def test_a_conflicting_sibling_is_a_merge_conflict(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     queue, git = real_queue(repo)
@@ -83,7 +83,7 @@ async def test_a_conflicting_sibling_is_a_rebase_conflict(
 
     land = await queue.land(right)
 
-    assert land.result is LandResult.REBASE_CONFLICT
+    assert land.result is LandResult.MERGE_CONFLICT
     assert land.suite is None  # it never got as far as running one, and does not pretend it did
     assert repo.git("rev-parse", "integration") == repo.git("rev-parse", "ralph/01")
 
@@ -92,7 +92,7 @@ async def test_the_suite_runs_on_the_prospective_merge_not_on_the_worktree_as_it
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """The semantic conflict. Each sub-issue is green in isolation; together they are red. Only a
-    suite run *after* the rebase can see it — and it is precisely what the Implementer could not
+    suite run *after* the merge can see it — and it is precisely what the Implementer could not
     have observed about itself.
     """
     queue, git = real_queue(repo)
@@ -143,12 +143,12 @@ async def test_the_land_aborts_if_the_base_repo_moved_out_from_under_it(
 
 
 async def test_a_refused_fast_forward_is_reported_never_papered_over() -> None:
-    """Unreachable by construction — we just rebased onto integration, so integration is an
+    """Unreachable by construction — we just merged integration in, so integration is an
     ancestor. If git refuses anyway, something we believe about the repository is false. The one
     thing the queue must not do is reach for a merge commit, which would put an unverified tree on
     the integration branch: `git merge` does not fire the pre-commit hook.
 
-    Driven with a fake git, because a real one cannot be made to refuse after a successful rebase —
+    Driven with a fake git, because a real one cannot be made to refuse after a successful merge —
     which is the point.
     """
     git = FakeGit(head="integration", ff_refuses={"ralph/01"})
@@ -157,13 +157,13 @@ async def test_a_refused_fast_forward_is_reported_never_papered_over() -> None:
 
     assert (await queue.land(wt)).result is LandResult.FF_REFUSED
 
-    assert git.merged == []
+    assert git.fast_forwarded == []
 
 
 async def test_the_merge_lock_serializes_two_concurrent_lands() -> None:
     """Sub-issues run in parallel; they land **one at a time**. Two `land()` calls launched at the
-    same instant must not interleave — the second's rebase has to happen after the first's
-    fast-forward, or it rebases onto a branch that is about to move.
+    same instant must not interleave — the second's merge has to happen after the first's
+    fast-forward, or it merges a branch that is about to move.
 
     A `TestRunner` that records the merge lock's own critical section is the only way to see this:
     if the lock leaked, two suite runs would overlap.
@@ -178,7 +178,7 @@ async def test_the_merge_lock_serializes_two_concurrent_lands() -> None:
 
     assert [r.result for r in results] == [LandResult.LANDED, LandResult.LANDED]
     assert runner.peak == 1, "two lands ran their suites at once — the merge lock did not hold"
-    assert git.merged == ["ralph/01", "ralph/02"]
+    assert git.fast_forwarded == ["ralph/01", "ralph/02"]
 
 
 def test_land_carries_no_suite_when_it_never_ran_one() -> None:

@@ -1,6 +1,6 @@
 """Real git, against a real repository.
 
-The one adapter with no plausible fake: a fake git that always says "rebase succeeded" tests
+The one adapter with no plausible fake: a fake git that always says "merge succeeded" tests
 nothing, and the merge queue is the trickiest code in the harness. Its tests run against a real
 temporary repo.
 """
@@ -31,7 +31,7 @@ def run_git(cwd: Path, *args: str) -> str:
 
 
 def _try_git(cwd: Path, *args: str) -> bool:
-    """For the three commands whose failure is a *result*, not an error: a rebase can conflict, a
+    """For the two commands whose failure is a *result*, not an error: a merge can conflict, a
     fast-forward can be refused. Everything else goes through `run_git` and raises."""
     proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=False)
     return proc.returncode == 0
@@ -67,17 +67,14 @@ class GitCli:
         run_git(self.repo, "worktree", "remove", "--force", str(wt.path))
         run_git(self.repo, "branch", "-D", wt.branch)
 
-    def rebase(self, wt: Worktree, onto: str) -> bool:
-        """False on conflict — and **no rebase left in progress**. A half-finished rebase in a
-        worktree the Editor is about to read would show it a tree neither actor ever produced."""
-        if _try_git(wt.path, "rebase", onto):
-            return True
-        _try_git(wt.path, "rebase", "--abort")
-        return False
+    def merge(self, wt: Worktree, onto: str) -> bool:
+        """False on conflict, leaving git's conflict state exactly as it produced it.
 
-    def rebase_for_conflict_resolution(self, wt: Worktree, onto: str) -> bool:
-        """False on conflict, leaving git's conflict state intact for the resolver to read."""
-        return _try_git(wt.path, "rebase", onto)
+        `--no-edit` because no session has a terminal: git opens an editor for the merge commit
+        message on the merges that want one, and a merge that blocked on `vi` would hold the merge
+        lock until the run was killed.
+        """
+        return _try_git(wt.path, "merge", "--no-edit", onto)
 
     def merge_ff_only(self, branch: str) -> bool:
         """False when git **refuses**, which is the point. `git merge` does not fire the pre-commit

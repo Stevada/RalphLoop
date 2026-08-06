@@ -2,15 +2,16 @@
 
 Harness engineering for autonomous issue execution via coding agents.
 
-Three actors. A **Planner** (human-invoked) cuts a parent issue into a graph of sub-issues. An
+Four actors. A **Planner** (human-invoked) cuts a parent issue into a graph of sub-issues. An
 **Implementer** (Codex or Copilot) writes the code and the tests, one sub-issue per session, in
 an isolated worktree. An **Editor** (Claude Code or Copilot, read-only) diagnoses the sessions
-that fail and returns a verdict.
+that fail and returns a verdict. An **Integrator** (Codex by default) reconciles the conflicts
+that parallel landing creates.
 
 The harness is the machinery between them: it dispatches sub-issues as their dependencies land,
 bounds every session, classifies every failure honestly, and lands work through a lock-guarded
-**merge queue** that rebases, re-runs the suite on the prospective merge, and fast-forwards — so
-the integration branch is correct by construction.
+**merge queue** that merges the integration branch in, re-runs the suite on the result, and
+fast-forwards — so the integration branch is correct by construction.
 
 > **Status: it runs.** All eleven sub-issues in `.scratch/build_harness/` have landed. What has
 > **not** happened: no run has yet been driven end-to-end by a real model. Every test in the suite
@@ -171,19 +172,24 @@ attached to the sub-issue.
 
 ## Failure taxonomy
 
-Three failure outcomes, and each one routes somewhere specific:
+Three failure outcomes, and each one routes somewhere specific — `integration-failed` by two paths,
+because a conflict and a red suite are different problems:
 
 | Outcome | Meaning | Goes to |
 |---|---|---|
 | `impasse` | The Implementer did not deliver — it said why, or committed nothing | Editor |
-| `integration-failed` | Committed work is red or conflicting on the prospective merge | Editor |
+| `integration-failed` | Committed work is **red** on the prospective merge | Editor |
+| `integration-failed` | Committed work **conflicts** on the prospective merge | Integrator |
 | `infra-failed` | The environment is broken, not the code | Human |
 
 **There is no retry destination in this system.** A failed sub-issue is quarantined — marked
 `needs-human`, worktree preserved, its dependents never become eligible — and everything
-unaffected still lands. The one narrow exception is mechanical rebase-conflict recovery: Ralph may
-resume the same Implementer session once, in the conflicted worktree, before it engages the Editor.
-The human is paged **once**, at the end. The run never stops early.
+unaffected still lands. The human is paged **once**, at the end. The run never stops early.
+
+A **merge conflict** is the one failure answered inside the merge queue rather than by the Editor.
+The queue keeps its lock and dispatches an
+**Integrator** to resolve the conflict and commit it. The result goes through the same suite gate as
+any other landing, and the sub-issue never returns to the queue: it lands, or it goes to the human.
 
 ## Run Options
 
@@ -197,6 +203,7 @@ The CLI defaults match Ralph's current common path:
 --issue-mode filesystem
 --implementer codex
 --editor claude
+--integrator codex
 --protected main
 --protected master
 ```
