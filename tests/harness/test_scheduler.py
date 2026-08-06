@@ -8,10 +8,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from ralph.harness import Actor, Outcome, TokenConsumption, Verdict
 from ralph.issues import SubIssueId, SubIssueState
 from ralph.mergequeue import MergeQueue
 from ralph.ports import Budget
+from ralph.runlog import EventKind
 from ralph.scheduler import Scheduler
 from tests.builders import graph_of, telemetry, verdict
 from tests.fakes import (
@@ -148,6 +151,57 @@ async def test_a_merge_conflict_is_reconciled_and_lands_without_reaching_the_edi
     ]
     integrator_record = store.consumption_records[1][1]
     assert integrator_record.consumption.consumed_tokens == 7_000
+
+
+async def test_a_reconciliation_that_succeeded_is_closed_in_the_log_like_any_other_session() -> None:
+    """A `session-started` with no `session-finished` is a session the log says never ended.
+
+    The failing reconciliation used to be the only one that got closed, so the log's account of the
+    Integrator depended on whether it had worked.
+    """
+    store = FakeIssueStore(
+        graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
+    )
+    git = FakeGit(head="integration", merge_conflicts={"ralph/01"})
+    run_log = FakeRunLog()
+
+    scheduler, _ = scheduler_over(
+        store,
+        FakeImplementer(scripted=[telemetry()]),
+        git,
+        run_log,
+        terminal_editor(),
+        FakeIntegrator(git=git, scripted=[telemetry()]),
+    )
+    await scheduler.run()
+
+    integrator = [e for e in run_log.events() if e.actor is Actor.INTEGRATOR]
+    assert [e.kind for e in integrator] == [EventKind.SESSION_STARTED, EventKind.SESSION_FINISHED]
+    assert integrator[1].details is Outcome.SUCCESS
+
+
+async def test_a_reconciliation_is_stamped_from_its_own_clock_not_from_when_it_was_written() -> None:
+    """The queue holds the merge lock for the whole reconciliation, so both events are written
+    after it is over. Stamped `now`, a two-minute Integrator reads as instantaneous — which in the
+    log is indistinguishable from one that died on startup."""
+    store = FakeIssueStore(
+        graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
+    )
+    git = FakeGit(head="integration", merge_conflicts={"ralph/01"})
+    run_log = FakeRunLog()
+
+    scheduler, _ = scheduler_over(
+        store,
+        FakeImplementer(scripted=[telemetry()]),
+        git,
+        run_log,
+        terminal_editor(),
+        FakeIntegrator(git=git, scripted=[telemetry(wall_clock_s=120.0)]),
+    )
+    await scheduler.run()
+
+    started, finished = (e for e in run_log.events() if e.actor is Actor.INTEGRATOR)
+    assert (finished.ts - started.ts).total_seconds() == pytest.approx(120.0, abs=1.0)
 
 
 async def test_an_unreconciled_conflict_goes_to_a_human_and_never_to_the_editor() -> None:

@@ -60,7 +60,7 @@ class Land:
     including the ones it succeeded at, because a session that cost tokens has to be billed whether
     or not it changed the outcome. `integrator_outcome` is the queue's classification of it, carried
     rather than recomputed: the scheduler cannot re-derive it without re-asking git a question whose
-    answer has since moved on.
+    answer has since moved on. The two travel together — either both are set or neither is.
     """
 
     result: LandResult
@@ -95,31 +95,32 @@ class MergeQueue:
                 return Land(LandResult.HEAD_MOVED)
 
             reconciliation: SessionTelemetry | None = None
+            reconciled: Outcome | None = None
             if not self._git.merge(wt, self._integration):
                 # Not a retry, and not a hiccup to back off from: a different actor, answering a
                 # question about landing order that the Implementer could not have seen. The
                 # conflict is left exactly as git made it — that is this session's input.
                 reconciliation = await self._integrator.reconcile(context)
-                outcome = classify_integrator(
+                reconciled = classify_integrator(
                     reconciliation, self._git.merge_finished(wt)
                 )
-                if outcome is not Outcome.SUCCESS:
+                if reconciled is not Outcome.SUCCESS:
                     return Land(
                         LandResult.CONFLICT_UNRESOLVED,
                         None,
                         reconciliation,
-                        outcome,
+                        reconciled,
                     )
 
             suite = await self._runner.run(wt.path)
             if not suite.green:
                 # Green in isolation, red on the prospective merge: the semantic conflict. The
                 # Implementer could not have seen this about itself.
-                return Land(LandResult.SUITE_RED, suite, reconciliation)
+                return Land(LandResult.SUITE_RED, suite, reconciliation, reconciled)
             if not self._git.merge_ff_only(wt.branch):
                 # Unreachable: we just merged integration into this branch, so integration is an
                 # ancestor of it by construction. If git refuses anyway, something we believe about
                 # the repository is false — say so rather than reaching for a merge commit.
-                return Land(LandResult.FF_REFUSED, suite, reconciliation)
+                return Land(LandResult.FF_REFUSED, suite, reconciliation, reconciled)
 
-            return Land(LandResult.LANDED, suite, reconciliation)
+            return Land(LandResult.LANDED, suite, reconciliation, reconciled)

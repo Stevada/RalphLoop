@@ -17,6 +17,7 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ralph.harness import (
@@ -265,9 +266,6 @@ class Scheduler:
                 # **Integrator's** outcome and telemetry, not the Implementer's: the Implementer
                 # delivered, and what a human needs to see is the reconciliation that failed.
                 assert land.integrator is not None and land.integrator_outcome is not None
-                await self._record(
-                    sub.id, Actor.INTEGRATOR, EventKind.SESSION_FINISHED, land.integrator_outcome
-                )
                 return await self._quarantine(
                     sub.id,
                     Actor.INTEGRATOR,
@@ -396,10 +394,21 @@ class Scheduler:
 
         Both events, in order, whatever the landing did next: a session that spent tokens is billed
         even when it succeeded and the sub-issue went on to land as if nothing had happened.
+
+        **Stamped from the session's own wall clock, not from the moment this runs.** The queue
+        holds the merge lock for the whole reconciliation, so the scheduler only hears about that
+        session once it is over and both events would otherwise carry the same instant — a
+        two-minute Integrator recorded as having started and finished in the same millisecond,
+        which is indistinguishable in the log from one that crashed on startup.
         """
         if land.integrator is None:
             return
-        await self._record(id, Actor.INTEGRATOR, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS)
+        assert land.integrator_outcome is not None
+        finished = datetime.now(UTC)
+        started = finished - timedelta(seconds=land.integrator.wall_clock_s)
+        await self._record(
+            id, Actor.INTEGRATOR, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS, started
+        )
         await self._store.record_consumption(
             id,
             SessionConsumption(
@@ -407,6 +416,9 @@ class Scheduler:
                 consumption=land.integrator.consumption,
                 auto_compactions=land.integrator.auto_compactions,
             ),
+        )
+        await self._record(
+            id, Actor.INTEGRATOR, EventKind.SESSION_FINISHED, land.integrator_outcome, finished
         )
 
     async def _quarantine(
@@ -428,13 +440,14 @@ class Scheduler:
         actor: Actor,
         kind: EventKind,
         details: Outcome | Verdict | SubIssueState,
+        at: datetime | None = None,
     ) -> None:
         """Two sinks, different durability. The run log is **authoritative** — failing to write it
         fails the run. The issue store is **best-effort**: it mirrors the transition back into the
         tracker for a human's benefit, and a run must not die because the tracker was unreachable
         (a read-only file today; Linear being down tomorrow).
         """
-        e = event(id, actor, kind, details)
+        e = event(id, actor, kind, details, at)
         await self._run_log.write(e)
         try:
             await self._store.write_event(e)
