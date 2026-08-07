@@ -32,8 +32,8 @@ same failure, because an Editor adjudicating an impasse declared by *itself* is 
 sensor the system could have.
 
 The Integrator is the one actor with no spec. It is not asked whether the work is right — that
-question was already answered when the sub-issue reached the merge queue. It is asked only to make
-two correct trees into one, which is why it is dispatched by the queue rather than the scheduler,
+question was already answered when the sub-issue reached the merge gate. It is asked only to make
+two correct trees into one, which is why it is dispatched by the gate rather than the scheduler,
 and why its failure pages a human instead of reaching an Editor.
 
 ### Transport per vendor
@@ -175,7 +175,7 @@ retry.
 
 It exits exactly one of two ways:
 
-- **Green**, with a commit, and it proceeds to the merge queue.
+- **Green**, with a commit, and it proceeds to the merge gate.
 - **`<impasse>`**, with a structured impasse report.
 
 "About three tries" is **guidance in the prompt**, not a harness-enforced counter. The
@@ -204,7 +204,7 @@ outcome is `infra-failed`.
 Token consumption is recorded as telemetry — it is what the session cost — but nothing is gated on
 it.
 
-### 4.5 The merge queue
+### 4.5 The merge gate
 
 This is the piece that makes parallelism honest.
 
@@ -223,7 +223,7 @@ trees that each satisfy their own spec, and adjudicating it is the Editor's job,
 actor that just failed to integrate should be trusted to fix by trying again.
 
 The lock is held for merge, reconciliation, suite, fast-forward, release — never while the Editor
-reasons. One sub-issue's *red* integration failure never stalls the queue for its siblings.
+reasons. One sub-issue's *red* integration failure never stalls the gate for its siblings.
 
 #### Reconciliation, when the merge conflicts
 
@@ -231,7 +231,7 @@ A textual conflict is a different animal, and it gets a different answer. It say
 whether either spec was right; it is an artefact of the order two siblings happened to land in.
 Sending it to an Editor would invite a spec rewrite for a problem no spec caused.
 
-So the queue answers it itself, without releasing the lock:
+So the gate answers it itself, without releasing the lock:
 
 1. **Dispatch the Integrator** into the conflicted worktree. It may change anything it needs to and
    it commits its resolution, exactly as the Implementer commits its work. Two commits result, in
@@ -240,7 +240,7 @@ So the queue answers it itself, without releasing the lock:
    waived — a conflict resolved perfectly can still leave a tree that does not build, and the
    Integrator's own opinion of its work is worth exactly what any actor's is.
 
-Two exits, and the sub-issue never re-enters the queue: it lands, or it goes to the human. Holding
+Two exits, and the sub-issue never re-enters the gate: it lands, or it goes to the human. Holding
 the lock across a model session costs throughput on the rare run where conflicts are frequent. It
 buys correct-by-construction: nothing can move the integration head between the reconciliation and
 the fast-forward that depends on it.
@@ -269,9 +269,9 @@ Because the suite runs on the *prospective* merge result, `git merge` in the har
 only ever a fast-forward of an already-verified tree. The integration branch is correct by
 construction.
 
-The merge queue is the only harness suite gate. The Implementer still runs whatever checks it needs
+The suite gate inside the merge gate is the harness's only suite run. The Implementer still runs whatever checks it needs
 inside its own session; that is its feedback loop and its completion signal. A second harness run
-immediately after the session would only repeat the Implementer's isolated view. The merge-queue run
+immediately after the session would only repeat the Implementer's isolated view. The merge-gate run
 is different: it runs on the prospective merged tree, so it catches two sub-issues that
 were each green alone but break when combined, which the Implementer cannot observe from its
 isolated worktree. It also catches a false green before landing, because the Editor fires only on
@@ -288,7 +288,7 @@ where semantic conflicts live:
 > No textual conflict. Both branches green. Merged tree: red.
 
 If bash performed the merge, the break would surface waves later — no worktree, no context,
-no attribution. Under the merge queue the failure is caught the moment it happens, on the
+no attribution. Under the merge gate the failure is caught the moment it happens, on the
 prospective merge against the exact sibling that landed first, and the **worktree is
 preserved** for the Editor. A live actor with the failing tree in front of it decides
 whether 105's spec should adapt to 104's rename or whether the two were badly cut — a
@@ -309,15 +309,15 @@ That trip through the Editor spends one of the sub-issue's three **cycles** — 
 `integration-failed` is counted exactly like an impasse, so a sub-issue that keeps failing
 to integrate is escalated at the third.
 
-The merge queue itself does no model work outside reconciliation: the merge and the suite run are
+The merge gate itself does no model work outside reconciliation: the merge and the suite run are
 mechanical, so a
 sub-issue spends no tokens to land work it has already finished. Only the Editor, on an
 integration failure, costs anything.
 
-#### The merge queue as an instrument
+#### The merge gate as an instrument
 
-A parent issue whose sub-issues sail through the queue was decomposed well. One whose
-sub-issues fail to integrate was not — and the merge queue turns that into `integration-failed`
+A parent issue whose sub-issues sail through the gate was decomposed well. One whose
+sub-issues fail to integrate was not — and the merge gate turns that into `integration-failed`
 routes and `planning-defect` verdicts from the Editor, rather than mysterious failures three
 waves later.
 
@@ -421,11 +421,11 @@ of harness logic.
 |---|---|---|
 | `impasse` | Session did not deliver: the `<impasse>` sentinel, or no commits | **Editor** |
 | `integration-failed` | The suite is red on the prospective merged tree | **Editor** |
-| `integration-failed` | The prospective merge conflicts | **Integrator**, inside the queue |
+| `integration-failed` | The prospective merge conflicts | **Integrator**, inside the gate |
 | `infra-failed` | Setup failure, wall-clock timeout (exit 124), rate limit, OOM | **Human — from any actor. Never the Editor.** |
 
 `integration-failed` is the one outcome that does not classify a *session*: the Implementer
-committed work that reached the merge queue. The merge queue raises it when that tree will not
+committed work that reached the merge gate. The merge gate raises it when that tree will not
 integrate with a sibling that landed first — precisely the kind of failure the Implementer cannot
 observe about itself, so it goes to another actor rather than back to the one that produced it.
 
@@ -482,7 +482,7 @@ protects the budget.** They are orthogonal.
 - **Zero commits is never a benign skip.** A session that produced nothing is an `impasse` (the
   model gave up, whether or not it said so) or `infra-failed`. Today's `no commits - skipping`
   silently treats it as success.
-- **A committed, impasse-free Implementer session reaches the merge queue.** The merge queue runs the
+- **A committed, impasse-free Implementer session reaches the merge gate.** The merge gate runs the
   suite on the prospective merge; that is where a false green becomes `integration-failed`.
 - Apply the wall-clock bound to the actor session; treat a killed session as `infra-failed`.
 - A non-zero exit **without** the sentinel means the process died — do not assume the model
@@ -524,7 +524,7 @@ which sub-issue* — and it is exactly what the write-through mirrors to Linear,
 
 ### The merge/write window
 
-The merge queue's last two steps — fast-forward, then write `landed` to Linear — are not
+The merge gate's last two steps — fast-forward, then write `landed` to Linear — are not
 atomic. **Merge first, then write.**
 
 This fails toward redundant work (a `landed` sub-issue looks pending; the next run
@@ -542,7 +542,7 @@ supervised.
 ### CI is the trust boundary
 
 Every check in this system runs **inside the actor's blast radius**: pre-commit hooks, the
-merge queue's suite, the Editor's reproduction. The actor has had `workspace-write` for the
+merge gate's suite, the Editor's reproduction. The actor has had `workspace-write` for the
 whole session with `--ask-for-approval never`. A model that adds a `conftest.py` fixture
 stubbing a dependency, edits `vitest.config.ts` to exclude a directory, hand-installs a
 package, or writes a `.env` the suite reads, has produced a suite that is green **only
@@ -641,7 +641,7 @@ reading.
 ### A note on "small sub-issues bound the risk"
 
 Small scope does bound the blast radius per Editor decision. But it moves risk rather than
-removing it: more sub-issues means more edges, more parallel branches, more merge-queue
+removing it: more sub-issues means more edges, more parallel branches, more merge-gate
 contention, more seams to mock across, and more Editor invocations in aggregate. Per-decision
 risk falls; the number of decisions rises. Drift is redistributed from a few large swerves
 into many small ones — harder to see in a PR, not easier.

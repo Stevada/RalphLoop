@@ -32,7 +32,7 @@ from ralph.harness import (
 )
 from ralph.issues import Findings, SessionConsumption, Spec, SubIssueId, SubIssueState
 from ralph.cli import render, run
-from ralph.mergequeue import MergeQueue
+from ralph.mergegate import MergeGate
 from ralph.ports import Budget, Editor
 from ralph.scheduler import RunReport, Scheduler
 from tests.builders import graph_of, impasse, telemetry, verdict
@@ -86,14 +86,14 @@ async def run_with(
         run_log=log,
         implementer=implementer,
         editor=editor,
-        merge_queue=MergeQueue(
+        merge_gate=MergeGate(
             git=git,
             runner=runner,
-            integration="integration",
+            integration_branch="integration",
             integrator=FakeIntegrator(git=git),
             budget=Budget(),
         ),
-        integration="integration",
+        integration_branch="integration",
         budget=Budget(),
     ).run()
 
@@ -150,7 +150,7 @@ async def test_integration_failed_spends_a_cycle_exactly_like_an_impasse() -> No
     report = await run_with(store, FakeImplementer(scripted=[SUCCESS]), editor, git=git)
 
     # Three Implementer sessions, three Editor sessions: the cap bit, and it bit on an outcome that
-    # only the merge queue can raise.
+    # only the merge gate can raise.
     assert [f.outcome for _, f, _ in editor.calls] == [Outcome.INTEGRATION_FAILED] * 3
     assert report.failed == {ONE: Outcome.INTEGRATION_FAILED}
 

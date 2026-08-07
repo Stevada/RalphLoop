@@ -10,7 +10,7 @@ that parallel landing creates.
 
 The harness is the machinery between them: it dispatches sub-issues as their dependencies land,
 bounds every session, classifies every failure honestly, and lands work through a lock-guarded
-**merge queue** that merges the integration branch in, re-runs the suite on the result, and
+**merge gate** that merges the integration branch in, re-runs the suite on the result, and
 fast-forwards — so the integration branch is correct by construction.
 
 > **Status: it runs.** All eleven sub-issues in `.scratch/build_harness/` have landed. What has
@@ -72,7 +72,7 @@ test = "uv run pytest -q"  # required
 install = "uv sync"        # optional
 ```
 
-`test` is the command the merge queue runs on the prospective merge. `install`, when present, runs
+`test` is the command the merge gate runs on the prospective merge. `install`, when present, runs
 once in the base checkout before any worktree is opened. Both command strings are split with shell
 quoting rules.
 
@@ -133,7 +133,7 @@ Four, and no others. `ready` is the Planner's authorisation to run — a sub-iss
 authorised does not belong in the graph yet, so there is no `not-started`.
 
 `landed` is a sub-issue's terminal state; `done` belongs to the parent issue and is never written
-to a sub-issue. The merge queue sets `landed` automatically, after the fast-forward. Do not set it
+to a sub-issue. The merge gate sets `landed` automatically, after the fast-forward. Do not set it
 by hand.
 
 **Dependencies:** list blockers under `## Blocked by` using `#N` references (matched to `N-*.md`)
@@ -187,10 +187,10 @@ because a conflict and a red suite are different problems:
 `needs-human`, worktree preserved, its dependents never become eligible — and everything
 unaffected still lands. The human is paged **once**, at the end. The run never stops early.
 
-A **merge conflict** is the one failure answered inside the merge queue rather than by the Editor.
-The queue keeps its lock and dispatches an
+A **merge conflict** is the one failure answered inside the merge gate rather than by the Editor.
+The gate keeps its lock and dispatches an
 **Integrator** to resolve the conflict and commit it. The result goes through the same suite gate as
-any other landing, and the sub-issue never returns to the queue: it lands, or it goes to the human.
+any other landing, and the sub-issue never returns to the gate: it lands, or it goes to the human.
 
 ## Run Options
 
@@ -230,7 +230,7 @@ Neither is a secret, so neither lives here.
 3. **Skills as references** — the prompt invokes `/tdd` by name. Skills are installed at user
    level, never bundled here.
 4. **Worktree isolation** — every session runs in its own worktree. Parallel sessions land one at
-   a time, through the merge queue.
-5. **The merge queue is the harness suite gate.** A model's exit code is its opinion; the suite is a
+   a time, through the merge gate.
+5. **The merge gate runs the harness's only suite gate.** A model's exit code is its opinion; the suite is a
    fact only when Ralph runs it on the prospective merge. A suite the harness runs is still inside
    the **blast radius** — only CI on a clean checkout is **honest**.

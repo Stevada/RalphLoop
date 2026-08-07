@@ -1,6 +1,6 @@
 """The failure taxonomy, executable. One test per row.
 
-Two outcomes need to know who is asking. SUCCESS, because an Implementer's goes to the merge queue,
+Two outcomes need to know who is asking. SUCCESS, because an Implementer's goes to the merge gate,
 an Editor's is a verdict to act on, and an Integrator's continues the landing it is already inside.
 INTEGRATION_FAILED, because the same words mean different things: raised against an Implementer it
 says two trees disagree and an Editor should look; raised against the Integrator it says the actor
@@ -16,7 +16,7 @@ from ralph.harness.model.session import Actor, Outcome
 
 
 class Destination(StrEnum):
-    MERGE_QUEUE = "merge-queue"
+    MERGE_GATE = "merge-gate"
     ACT_ON_VERDICT = "act-on-verdict"
     SUITE_GATE = "suite-gate"
     EDITOR = "editor"
@@ -36,12 +36,12 @@ def route(actor: Actor, outcome: Outcome) -> Destination:
         case Outcome.SUCCESS:
             match actor:
                 case Actor.IMPLEMENTER:
-                    return Destination.MERGE_QUEUE
+                    return Destination.MERGE_GATE
                 case Actor.EDITOR:
                     return Destination.ACT_ON_VERDICT
                 case Actor.INTEGRATOR:
-                    # Back to the suite gate it is already inside — the queue never released the
-                    # merge lock, so this is a continuation, not a second trip through the queue.
+                    # Back to the suite gate it is already inside — the merge gate never released
+                    # the merge lock, so this is a continuation, not a second trip through it.
                     return Destination.SUITE_GATE
                 case _:
                     assert_never(actor)

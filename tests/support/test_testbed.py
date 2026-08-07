@@ -82,7 +82,7 @@ def test_the_agent_is_a_real_subprocess_working_in_the_worktree(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """Not an in-process fake. It commits to the worktree's branch, and the integration branch
-    knows nothing about it until the merge queue says so."""
+    knows nothing about it until the merge gate says so."""
     wt = repo.add_worktree("01")
 
     proc = _run(agent, Behaviour.SUCCEED, "01", cwd=wt)
@@ -154,7 +154,7 @@ def test_conflict_really_conflicts_with_a_real_sibling_branch(
     """Two agents, two worktrees, one line. The first lands; the second cannot merge with it.
 
     This is the fixture behind `integration-failed`, and it is the one most worth distrusting:
-    a "conflict" mode that quietly merged clean would make the merge queue's hardest path
+    a "conflict" mode that quietly merged clean would make the merge gate's hardest path
     untested while every test stayed green.
     """
     left, right = repo.add_worktree("01"), repo.add_worktree("02")

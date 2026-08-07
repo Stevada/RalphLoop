@@ -46,7 +46,7 @@ def test_zero_commits_is_an_impasse_never_success() -> None:
 
 
 def test_a_committed_session_is_success_without_a_post_session_suite() -> None:
-    """A committed session with no sentinel reaches the merge queue. The scheduler no longer
+    """A committed session with no sentinel reaches the merge gate. The scheduler no longer
     re-runs the suite to turn it into an undeclared impasse."""
     t = telemetry(exit_code=0, commits=3)
     assert classify_implementer(t) is Outcome.SUCCESS
@@ -80,7 +80,7 @@ def test_a_non_zero_exit_without_a_sentinel_is_an_undeclared_impasse() -> None:
 
 
 def test_the_implementer_never_classifies_integration_failed() -> None:
-    """It does not classify a session at all. Only the merge queue raises it."""
+    """It does not classify a session at all. Only the merge gate raises it."""
     for t in [
         telemetry(),
         telemetry(commits=0),
@@ -141,8 +141,8 @@ def test_classify_editor_cannot_return_impasse_for_any_input() -> None:
 # --- route --------------------------------------------------------------------------------------
 
 
-def test_an_implementers_success_goes_to_the_merge_queue() -> None:
-    assert route(Actor.IMPLEMENTER, Outcome.SUCCESS) is Destination.MERGE_QUEUE
+def test_an_implementers_success_goes_to_the_merge_gate() -> None:
+    assert route(Actor.IMPLEMENTER, Outcome.SUCCESS) is Destination.MERGE_GATE
 
 
 def test_an_editors_success_is_a_verdict_to_act_on() -> None:
@@ -150,7 +150,7 @@ def test_an_editors_success_is_a_verdict_to_act_on() -> None:
 
 
 def test_an_integrators_success_continues_the_landing_it_is_inside() -> None:
-    """Not back to the merge queue: the queue never released the merge lock, so a reconciled
+    """Not back to the merge gate: it never released the merge lock, so a reconciled
     worktree carries on to the suite gate rather than making a second trip."""
     assert route(Actor.INTEGRATOR, Outcome.SUCCESS) is Destination.SUITE_GATE
 
@@ -322,7 +322,7 @@ def test_a_non_integration_report_carries_no_harness_suite_result() -> None:
     assert report.suite is None
 
 
-def test_an_integration_failure_report_carries_the_merge_queue_suite() -> None:
+def test_an_integration_failure_report_carries_the_merge_gate_suite() -> None:
     report = failure_report(
         Outcome.INTEGRATION_FAILED,
         telemetry(),
@@ -454,7 +454,7 @@ def test_blast_radius_breaks_the_tie_between_two_failures_of_the_same_kind() -> 
 
 
 def test_a_success_that_reached_the_notification_is_a_defect_and_says_so() -> None:
-    """It cannot happen — `route` sends a success to the merge queue. If it ever does, the scheduler
+    """It cannot happen — `route` sends a success to the merge gate. If it ever does, the scheduler
     quarantined something it had classified as fine, and silence would be the worst answer."""
     graph = graph_of({"01": []})
     states = {SubIssueId("01"): SubIssueState.NEEDS_HUMAN}

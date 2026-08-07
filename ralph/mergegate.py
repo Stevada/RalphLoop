@@ -1,4 +1,4 @@
-"""The merge queue: sub-issues run in parallel, but they land one at a time.
+"""The merge gate: sub-issues run in parallel, but they land one at a time.
 
 **This is the piece that makes parallelism honest**, and it is worth being precise about why.
 The suite is re-run *in the worktree*, *after* the integration branch is merged in — on the
@@ -12,7 +12,7 @@ the whole harness exists to make impossible.
 
 The merge lock is held for merge → reconciliation → suite → fast-forward, and for nothing else. It
 is never held while an *Editor* reasons: a red prospective merge releases it and goes away to be
-adjudicated, so one sub-issue's semantic failure does not stall the queue for its siblings.
+adjudicated, so one sub-issue's semantic failure does not stall the gate for its siblings.
 
 A **conflict** is the exception, and deliberately so. Reconciliation happens inside the lock,
 because its result is only valid against the integration head that produced the conflict; release
@@ -20,7 +20,7 @@ the lock to think and a sibling lands underneath, leaving a resolution against a
 exists. That costs throughput on a run where conflicts are frequent and buys the fast-forward below
 its correctness. The sub-issue never comes back here: it lands, or it goes to a human.
 
-It writes nothing anywhere — not even about the session it dispatches. The queue's whole job is to
+It writes nothing anywhere — not even about the session it dispatches. The gate's whole job is to
 decide whether this tree may become the integration branch, and to say so; recording *that* a
 sub-issue landed, or what a session cost, is a state transition, and state transitions belong to the
 scheduler. Two writers for one fact is one writer too many.
@@ -50,15 +50,15 @@ class LandResult(StrEnum):
 class Land:
     """The outcome, and the evidence for it.
 
-    `suite` is the run on the **prospective merge result** — present whenever the queue got far
+    `suite` is the run on the **prospective merge result** — present whenever the gate got far
     enough to do one. It is carried out of here because it is the only honest suite result for an
     `integration-failed` sub-issue: the worktree's own run was green (that is why it reached the
-    queue at all), and handing the Editor that green result alongside an integration failure would
+    gate at all), and handing the Editor that green result alongside an integration failure would
     be handing it a contradiction the harness manufactured.
 
     `integrator` is the reconciliation session, when there was one — present on **every** exit,
     including the ones it succeeded at, because a session that cost tokens has to be billed whether
-    or not it changed the outcome. `integrator_outcome` is the queue's classification of it, carried
+    or not it changed the outcome. `integrator_outcome` is the gate's classification of it, carried
     rather than recomputed: the scheduler cannot re-derive it without re-asking git a question whose
     answer has since moved on. The two travel together — either both are set or neither is.
     """
@@ -68,21 +68,20 @@ class Land:
     integrator: SessionTelemetry | None = None
     integrator_outcome: Outcome | None = None
 
-# TODO: as a Queue, why doesn't it even have a queue/list?
-class MergeQueue:
+class MergeGate:
     def __init__(
         self,
         git: Git,
         runner: TestRunner,
-        integration: str,
+        integration_branch: str,
         integrator: Integrator,
         budget: Budget,
     ) -> None:
         self._git = git
         self._runner = runner
-        self._integration = integration
+        self._integration_branch = integration_branch
         self._integrator = integrator
-        # Held because the queue admits a candidate but dispatches a *session*, and only a session
+        # Held because the gate admits a candidate but dispatches a *session*, and only a session
         # is bounded. The candidate carries no budget; that is what makes it not a session context.
         self._budget = budget
         self._merge_lock = asyncio.Lock()  # the merge lock. one process, so no flock, no PID files.
@@ -97,14 +96,14 @@ class MergeQueue:
         """
         wt = candidate.worktree
         async with self._merge_lock:
-            if self._git.head_branch() != self._integration:
+            if self._git.head_branch() != self._integration_branch:
                 # Somebody moved the base repo out from under us. Fast-forwarding now would move
                 # a branch nobody asked us to move.
                 return Land(LandResult.HEAD_MOVED)
 
             reconciliation: SessionTelemetry | None = None
             reconciled: Outcome | None = None
-            if not self._git.merge(wt, self._integration):
+            if not self._git.merge(wt, self._integration_branch):
                 # Not a retry, and not a hiccup to back off from: a different actor, answering a
                 # question about landing order that the Implementer could not have seen. The
                 # conflict is left exactly as git made it — that is this session's input.

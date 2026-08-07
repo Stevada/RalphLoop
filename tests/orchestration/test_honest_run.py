@@ -6,7 +6,7 @@ parallel, and one that integrates them:
     01 ──┬── 02 ──┬── 04
          └── 03 ──┘
 
-against a real git repository, with real worktrees, a real merge queue, a real suite, and a real
+against a real git repository, with real worktrees, a real merge gate, a real suite, and a real
 agent subprocess. Failure cases inject a scripted Editor so the test does not call a real model.
 
 This is not the moment the system first comes together — that was #04, and every ticket since has
@@ -73,7 +73,7 @@ async def test_every_sub_issue_lands_and_every_landing_is_a_fast_forward(
 
     # Four sub-issues, four commits on top of the base and its graph commit — plus one merge for
     # each worktree that had to catch up with a sibling that landed first. Every merge commit on the
-    # branch was made **inside a worktree**, before that worktree's suite ran; the queue's own
+    # branch was made **inside a worktree**, before that worktree's suite ran; the gate's own
     # fast-forward never synthesizes one, which is what makes the branch correct by construction.
     catch_ups = repo.git("log", "--merges", "--format=%s", "integration").splitlines()
     assert all(m.startswith("Merge branch 'integration' into ralph/") for m in catch_ups)
@@ -229,4 +229,4 @@ async def test_a_semantic_conflict_surfaces_on_the_second_to_land(
 
     loser = next(iter(report.failed))
     assert (repo.path / ".worktrees" / "failed" / PARENT_ISSUE_NAME / str(loser)).is_dir()
-    assert "the merge queue: suite-red" in render(report.notification)
+    assert "the merge gate: suite-red" in render(report.notification)

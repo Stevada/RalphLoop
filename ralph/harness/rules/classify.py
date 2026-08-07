@@ -7,8 +7,8 @@ structurally incapable of the others' answers.
 never given, and an Integrator is not given one at all.
 
 `INTEGRATION_FAILED` is unreachable from the Implementer's and the Editor's: it does not classify
-their sessions at all — the Implementer session already succeeded, and only the merge queue can
-raise it against one. It *is* reachable from the Integrator's, because there the merge queue is
+their sessions at all — the Implementer session already succeeded, and only the merge gate can
+raise it against one. It *is* reachable from the Integrator's, because there the merge gate is
 asking about a session it dispatched itself.
 """
 

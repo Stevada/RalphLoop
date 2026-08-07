@@ -62,15 +62,15 @@ load-bearing facts:
 - **Concrete adapters are named only in `cli.py`.** Nothing downstream knows whether the Implementer
   is Codex or Copilot, the Editor is Claude Code or Copilot, or the Integrator is either. Any of
   these CLIs can back any of the three unattended actors.
-- **The merge queue is the harness suite gate.** The harness runs the discovered test command on the
+- **The merge gate runs the harness's only suite gate.** The harness runs the discovered test command on the
   prospective merge; a model's exit code is only its opinion. A suite the harness runs is inside the
   **blast radius** — only CI on a clean checkout is **honest**.
 - **No retry destination.** A failed sub-issue is quarantined (`needs-human`, worktree preserved, its
   dependents never become eligible); everything unaffected still lands. The run never stops early;
   the human is paged **once**, at the end.
-- **A conflict is answered in the queue, not by the Editor.** On a merge conflict the merge queue
+- **A conflict is answered in the gate, not by the Editor.** On a merge conflict the merge gate
   holds its lock, merges the integration branch into the worktree, and dispatches an **Integrator**
-  to resolve and commit. The sub-issue does not re-enter the queue: it either passes the suite gate
+  to resolve and commit. The sub-issue does not re-enter the gate: it either passes the suite gate
   and lands, or it goes to the human. This is not a retry — it is a different actor answering a
   question the Implementer could not have seen.
 - **The Editor writes nothing but spec and findings,** enforced by a tool allowlist (not the
@@ -96,7 +96,7 @@ load-bearing facts:
 
 - Sub-issues are Markdown in `<repo>/.scratch/<phase>/issues/*.md`, matched by numeric prefix.
   `Status:` values are exactly `ready` → `in-progress` → `landed` | `needs-human` — anything else is
-  a loud, fatal parse error. `landed` is set by the merge queue; never by hand. A `PRD.md` one level
+  a loud, fatal parse error. `landed` is set by the merge gate; never by hand. A `PRD.md` one level
   above `issues/` is not injected into any prompt; it is discoverable directly, since sessions read
   the full repo checkout.
 - Worktrees live at `<repo>/.worktrees/active/`; failures preserved at `<repo>/.worktrees/failed/`.

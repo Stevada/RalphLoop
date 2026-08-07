@@ -34,7 +34,7 @@ class RepoCommands:
 
 @dataclass(frozen=True, slots=True)
 class Worktree:
-    """An isolated checkout. Where a session works, and where the merge queue re-runs the suite."""
+    """An isolated checkout. Where a session works, and where the merge gate re-runs the suite."""
 
     path: Path
     branch: str
@@ -43,7 +43,7 @@ class Worktree:
 
 @dataclass(frozen=True, slots=True)
 class Candidate:
-    """What travels: the Implementer holds it, the merge queue admits it, the Integrator
+    """What travels: the Implementer holds it, the merge gate admits it, the Integrator
     reconciles it, the Editor reads it, and a human opens what is left of it.
 
     Frozen, and it stays frozen. Every result a candidate provokes — telemetry, `Land`, a verdict —
@@ -66,7 +66,7 @@ class SessionContext:
     """One **Candidate**, bounded for one actor session.
 
     The budget is session-scoped and the candidate is not, which is the whole reason these are two
-    types: the merge queue takes the candidate alone, because it opens no session of its own.
+    types: the merge gate takes the candidate alone, because it opens no session of its own.
     """
 
     candidate: Candidate
@@ -80,10 +80,10 @@ class Implementer(Protocol):
 
 @runtime_checkable
 class Integrator(Protocol):
-    """Dispatched by the merge queue, into a worktree holding a conflict it just created.
+    """Dispatched by the merge gate, into a worktree holding a conflict it just created.
 
     It is never asked whether the work is *right* — that was settled before the sub-issue reached
-    the queue. It is asked only to make two correct trees into one, and it commits that the way an
+    the gate. It is asked only to make two correct trees into one, and it commits that the way an
     Implementer commits anything. It gets the spec because knowing what the work was *for* is how
     you choose between two intents; it has no authority to change what the spec asks.
     """
@@ -110,7 +110,7 @@ class Editor(Protocol):
 class RunLog(Protocol):
     """The harness's own append-only record of what happened, in order. Write-through, read-once.
 
-    A Protocol rather than a concrete JSONL writer because the merge queue and the scheduler both
+    A Protocol rather than a concrete JSONL writer because the merge gate and the scheduler both
     take one, and orchestration may not name a concrete adapter — that privilege belongs to
     `cli.py` alone.
     """

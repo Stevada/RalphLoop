@@ -1,7 +1,7 @@
 """**`ralph run` works.**
 
 The tracer bullet. Every test here goes through `ralph.cli.run` — the real CLI, the real
-filesystem store, real git, real worktrees, the real merge queue, a real suite, and a real agent
+filesystem store, real git, real worktrees, the real merge gate, a real suite, and a real agent
 subprocess. Failure cases inject a scripted Editor so the test does not call a real model.
 
 The only thing that is not real is the agent's intelligence, and that is the one thing the harness
@@ -123,11 +123,11 @@ async def test_every_run_log_event_is_narrated_to_the_terminal_as_it_happens(
         assert recorded["ts"][11:19] in line  # the record's own UTC clock, not a second one
 
 
-async def test_a_red_base_is_caught_by_the_merge_queue_gate(
+async def test_a_red_base_is_caught_by_the_suite_gate(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """The scheduler no longer owns a pre-session suite run. The first committed session reaches
-    the merge queue, and the merge queue is the gate that refuses the red tree."""
+    the merge gate, and its suite gate is what refuses the red tree."""
     (repo.path / "calculator.py").write_text("def add(a: int, b: int) -> int:\n    return a * b\n")
     repo.git("add", "-A")
     repo.git("commit", "-m", "break the base")
@@ -256,11 +256,11 @@ async def test_an_undeclared_impasse_session_does_not_land(
     assert "Status: ready" in (repo.issues_dir / "02-second.md").read_text()
 
 
-async def test_a_session_that_commits_a_red_suite_fails_at_the_merge_queue(
+async def test_a_session_that_commits_a_red_suite_fails_at_the_merge_gate(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """The dangerous one: it exits 0, it committed, and it is broken. The scheduler calls that a
-    success; the merge queue is the harness suite gate that refuses it."""
+    success; the merge gate's suite gate is what refuses it."""
     report = await run(
         repo.path,
         None,

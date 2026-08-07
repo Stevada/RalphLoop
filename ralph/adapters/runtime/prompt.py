@@ -21,7 +21,7 @@ from ralph.issues import Findings, Spec
 COMMIT = """\
 ## What the harness will do when you stop
 
-It will count your commits, then send committed work to the merge queue. Commit your work — an
+It will count your commits, then send committed work to the merge gate. Commit your work — an
 uncommitted change is indistinguishable, from out here, from work you never did, and it will be
 thrown away.
 
@@ -109,7 +109,7 @@ sides are correct; neither is a mistake to undo.
 Resolve it with /resolving-merge-conflicts.
 
 You are not being asked whether this work is right — that was settled before it reached the merge
-queue. The spec below is here to break ties when two sides cannot both be kept, and for nothing
+gate. The spec below is here to break ties when two sides cannot both be kept, and for nothing
 else."""
 
 FINAL_CYCLE = """\
@@ -160,7 +160,7 @@ def _facts(failure: FailureReport) -> str:
         + (f", and was killed on the {t.killed}" if t.killed else ""),
     ]
     if failure.integration_detail is not None:
-        lines.append(f"- the merge queue rejected it: {failure.integration_detail}")
+        lines.append(f"- the merge gate rejected it: {failure.integration_detail}")
     if t.diffstat.strip():
         lines += ["", "It changed:", "", "```", t.diffstat.strip(), "```"]
     if failure.suite is not None and not failure.suite.green and failure.suite.output.strip():

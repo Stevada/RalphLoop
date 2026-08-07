@@ -52,7 +52,7 @@ from ralph.issues.linear import (
     LinearStateMap,
 )
 from ralph.issues.store import IssueStore
-from ralph.mergequeue import MergeQueue
+from ralph.mergegate import MergeGate
 from ralph.notification import Notification
 from ralph.ports import (
     Budget,
@@ -549,7 +549,7 @@ async def run(
     commands = ready.commands
 
     git = GitCli(repo=repo)
-    integration = git.head_branch()
+    integration_branch = git.head_branch()
 
     # Install runs once in the base checkout, before anything is dispatched.
     runner = SubprocessTestRunner(cmd=commands.test)
@@ -575,14 +575,14 @@ async def run(
         run_log=NarratedRunLog(JsonlRunLog(path=scratch / "run.jsonl")),
         implementer=selected_implementer,
         editor=selected_editor,
-        merge_queue=MergeQueue(
+        merge_gate=MergeGate(
             git=git,
             runner=runner,
-            integration=integration,
+            integration_branch=integration_branch,
             integrator=selected_integrator,
             budget=session_budget,
         ),
-        integration=integration,
+        integration_branch=integration_branch,
         budget=session_budget,
         parent_issue_name=parent,
     )
@@ -685,7 +685,7 @@ def render(n: Notification, parent_issue_name: str | None = None) -> str:
             lines.append(f"    it says: {e.report.claim.unsatisfiable_criterion}")
             lines.append(f"    would need: {e.report.claim.what_would_satisfy}")
         if e.report.integration_detail is not None:
-            lines.append(f"    the merge queue: {e.report.integration_detail}")
+            lines.append(f"    the merge gate: {e.report.integration_detail}")
         commits = e.report.telemetry.commits
         worktree_dir = (
             f".worktrees/failed/{parent_issue_name}/{e.sub_issue}"

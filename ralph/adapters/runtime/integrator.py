@@ -3,7 +3,7 @@ concrete adapter.
 
 The third of the trio, and the thinnest. `implementer.py` collects the `<impasse>` sentinel and a
 commit count; `editor.py` parses a verdict and reports zero commits by construction. An Integrator
-declares nothing and is asked nothing: the merge queue reads the answer off git afterwards, so this
+declares nothing and is asked nothing: the merge gate reads the answer off git afterwards, so this
 module only has to carry the session's cost and its transcript.
 
 `commits` and `diffstat` are measured here anyway, against the worktree's base, because they are
@@ -37,7 +37,7 @@ def integrator_telemetry(
         consumption=bound.consumption,
         auto_compactions=auto_compactions,
         # Nothing resumes an Integrator: it is dispatched once, inside the merge lock, and the
-        # queue has released that lock by the time anyone could ask.
+        # gate has released that lock by the time anyone could ask.
         resumable_identifier=None,
         wall_clock_s=wall_clock_s,
         commits=int(run_git(worktree.path, "rev-list", "--count", f"{worktree.base}..HEAD")),

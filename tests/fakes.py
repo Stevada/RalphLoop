@@ -50,7 +50,7 @@ class FakeImplementer:
 class FakeIntegrator:
     """Returns scripted telemetry and records the conflicts it was asked to reconcile.
 
-    `resolves` decides what it does to the fake git it shares with the queue: reconciling for real
+    `resolves` decides what it does to the fake git it shares with the gate: reconciling for real
     means clearing the conflict, and a fake that returned success while leaving the merge open
     would hide the one failure this actor exists to make visible.
     """

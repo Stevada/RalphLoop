@@ -2,7 +2,7 @@
 
 **The harness never fabricates an impasse report.** A session killed by the clock authored nothing;
 an undeclared impasse authored nothing because the model did not believe it had failed; an
-`integration-failed` session authored nothing because it had already succeeded when the merge queue
+`integration-failed` session authored nothing because it had already succeeded when the merge gate
 rejected it. Synthesising a plausible-sounding narrative from a partial transcript would be the
 least honest artifact this system could produce — a story with no author, handed to the Editor as
 though a model had stood behind it.
@@ -28,7 +28,7 @@ def failure_report(
     """The model's story, checked against the harness's facts.
 
     `telemetry` is always present: commits, diffstat, wall-clock, and token consumption. `suite`
-    is present only when the merge queue got far enough to run the suite on the prospective merged
+    is present only when the merge gate got far enough to run the suite on the prospective merged
     tree.
     """
     return FailureReport(

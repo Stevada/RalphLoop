@@ -1,7 +1,7 @@
 """Real git, against a real repository.
 
 The one adapter with no plausible fake: a fake git that always says "merge succeeded" tests
-nothing, and the merge queue is the trickiest code in the harness. Its tests run against a real
+nothing, and the merge gate is the trickiest code in the harness. Its tests run against a real
 temporary repo.
 """
 
@@ -101,7 +101,7 @@ class GitCli:
     def merge_ff_only(self, branch: str) -> bool:
         """False when git **refuses**, which is the point. `git merge` does not fire the pre-commit
         hook, so a merge commit would put an unverified tree on the integration branch. The merge
-        queue already re-ran the suite on the prospective merge result; if that result is not a
+        gate already re-ran the suite on the prospective merge result; if that result is not a
         fast-forward, the thing we verified is not the thing we would be landing."""
         return _try_git(self.repo, "merge", "--ff-only", branch)
 
@@ -121,7 +121,7 @@ class GitCli:
         repo while it runs, and a pre-flight that refused its own run log would be unusable. Untracked
         files also do not stand in the way of a fast-forward, which is what this check is for.
 
-        Not on the `Git` port. The scheduler and the merge queue never ask this — only the
+        Not on the `Git` port. The scheduler and the merge gate never ask this — only the
         pre-flight does, and a Protocol is the list of what orchestration needs, not an inventory of
         what git can do.
         """

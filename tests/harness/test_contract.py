@@ -89,7 +89,7 @@ def test_the_outcome_taxonomy_is_exactly_four_failures_and_one_success() -> None
 def test_there_is_no_retry_destination() -> None:
     """There is no retry destination in this system."""
     assert {d.value for d in Destination} == {
-        "merge-queue",
+        "merge-gate",
         "act-on-verdict",
         "suite-gate",
         "editor",
@@ -183,7 +183,7 @@ def test_the_worktree_knows_where_it_came_from() -> None:
 
 def test_a_session_context_is_a_candidate_plus_the_bound_on_one_session() -> None:
     """The split is the point: everything that *travels* is on the candidate, and the only thing
-    the candidate does not carry is the wall clock — which is why the merge queue, which opens no
+    the candidate does not carry is the wall clock — which is why the merge gate, which opens no
     session of its own, can take a candidate and never a session context."""
     wt = Worktree(path=Path("/tmp/wt"), branch="ralph/01", base="integration")
     context = SessionContext(

@@ -106,7 +106,7 @@ def candidate(
     findings: str = "",
     id: str | None = None,
 ) -> Candidate:
-    """What travels, for the tests that are about something else. The merge queue takes one because
+    """What travels, for the tests that are about something else. The merge gate takes one because
     the Integrator it may dispatch needs a spec to break ties with; every other field is scenery.
 
     The id defaults to the worktree's branch suffix, so two candidates in one test are two

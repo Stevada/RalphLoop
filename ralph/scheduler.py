@@ -1,6 +1,6 @@
 """The run: read the graph, dispatch on eligibility, quarantine, drain, notify.
 
-Sub-issues run in parallel but land one at a time (the merge queue's lock).
+Sub-issues run in parallel but land one at a time (the merge gate's lock).
 There is no wave barrier: the dispatch loop re-derives eligibility on every completion, so a
 sub-issue starts the moment its blockers land. A failure is quarantined and drained around, never
 retried — the loop below is a *cycle* loop, not a retry loop, and that distinction, quarantine-and-
@@ -39,7 +39,7 @@ from ralph.harness import (
 from ralph.issues import SubIssue, SubIssueId, SubIssueState
 from ralph.issues.consumption import SessionConsumption
 from ralph.issues.store import IssueStore
-from ralph.mergequeue import Land, LandResult, MergeQueue
+from ralph.mergegate import Land, LandResult, MergeGate
 from ralph.notification import Notification, notify
 from ralph.ports import (
     Budget,
@@ -104,7 +104,7 @@ class _Closed:
 
 @dataclass(frozen=True, slots=True)
 class _FailedLanding:
-    """A merge-queue failure, normalized into the Editor's input shape."""
+    """A merge-gate failure, normalized into the Editor's input shape."""
 
     outcome: Outcome
     telemetry: SessionTelemetry
@@ -128,8 +128,8 @@ class Scheduler:
         store: IssueStore,
         run_log: RunLog,
         implementer: Implementer,
-        merge_queue: MergeQueue,
-        integration: str,
+        merge_gate: MergeGate,
+        integration_branch: str,
         budget: Budget,
         editor: Editor,
         parent_issue_name: str | None = None,
@@ -140,8 +140,8 @@ class Scheduler:
         self._run_log = run_log
         self._implementer = implementer
         self._editor = editor
-        self._merge_queue = merge_queue
-        self._integration = integration
+        self._merge_gate = merge_gate
+        self._integration_branch = integration_branch
         self._budget = budget
         self._ledger = CycleLedger()
         self._parent_issue_name = parent_issue_name
@@ -211,7 +211,7 @@ class Scheduler:
     async def _pipeline(self, sub: SubIssue) -> _Closed:
         """One sub-issue, to a terminal state — however many cycles that takes.
 
-        A sub-issue is not finished until it is on the integration branch. The merge queue, not the
+        A sub-issue is not finished until it is on the integration branch. The merge gate, not the
         scheduler, serializes the landing step.
         """
         while True:
@@ -234,7 +234,7 @@ class Scheduler:
         )
 
         wt = self._git.add_worktree(
-            self._branch(sub.id), self._worktree_dir(ACTIVE, sub.id), self._integration
+            self._branch(sub.id), self._worktree_dir(ACTIVE, sub.id), self._integration_branch
         )
         # The newest revision, or the Planner's original if the Editor has never touched this. On
         # cycle two this is the **rewritten** spec — which is what makes this a cycle, not a retry.
@@ -255,8 +255,8 @@ class Scheduler:
         suite = None
         detail: str | None = None
 
-        if route(Actor.IMPLEMENTER, outcome) is Destination.MERGE_QUEUE:
-            land = await self._merge_queue.land(candidate)
+        if route(Actor.IMPLEMENTER, outcome) is Destination.MERGE_GATE:
+            land = await self._merge_gate.land(candidate)
             await self._record_reconciliation(sub.id, land)
 
             if land.result is LandResult.LANDED:
@@ -279,8 +279,8 @@ class Scheduler:
                     ),
                 )
 
-            # The merge queue is the first harness suite gate. A red prospective merge goes to the
-            # Editor with that gate's evidence, and spends a cycle exactly like an impasse does.
+            # The suite gate is the harness's first run of the suite. A red prospective merge goes
+            # to the Editor with that gate's evidence, and spends a cycle exactly like an impasse.
             outcome, detail = Outcome.INTEGRATION_FAILED, land.result.value
             if land.suite is not None:
                 # The suite on the *prospective merge*. This is the only suite evidence the
@@ -392,12 +392,12 @@ class Scheduler:
         return None
 
     async def _record_reconciliation(self, id: SubIssueId, land: Land) -> None:
-        """The queue dispatched the Integrator; the scheduler writes down that it happened.
+        """The gate dispatched the Integrator; the scheduler writes down that it happened.
 
         Both events, in order, whatever the landing did next: a session that spent tokens is billed
         even when it succeeded and the sub-issue went on to land as if nothing had happened.
 
-        **Stamped from the session's own wall clock, not from the moment this runs.** The queue
+        **Stamped from the session's own wall clock, not from the moment this runs.** The gate
         holds the merge lock for the whole reconciliation, so the scheduler only hears about that
         session once it is over and both events would otherwise carry the same instant — a
         two-minute Integrator recorded as having started and finished in the same millisecond,

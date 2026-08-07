@@ -6,7 +6,7 @@ conflicts, a real suite that really goes red. The only thing the stand-in agent 
 intelligent.
 
 That is why every ticket after this one can be verified end-to-end **with no model at all**. A
-fake git that always says "merge succeeded" tests nothing; the merge queue is the trickiest code
+fake git that always says "merge succeeded" tests nothing; the merge gate is the trickiest code
 in the harness and it deserves an adversary.
 """
 
@@ -69,7 +69,7 @@ class Behaviour(StrEnum):
 
     This is the failure `CONFLICT` cannot express. A textual conflict is git's to notice; a semantic
     one is nobody's, unless the suite is re-run on the prospective merge — which is the merge
-    queue's entire reason for existing, and the thing these two exist to prove it does.
+    gate's entire reason for existing, and the thing these two exist to prove it does.
     """
 
     IMPASSE_ONCE = "impasse-once"
@@ -178,7 +178,7 @@ class TargetRepo:
         a quarantined sub-issue observable. Both need this.
 
         Committed, not just written: the base repo's working tree must be clean enough that the
-        merge queue's fast-forwards are not fighting stray edits in `.scratch/`.
+        merge gate's fast-forwards are not fighting stray edits in `.scratch/`.
         """
         for existing in self.issues_dir.glob("*.md"):
             existing.unlink()
@@ -408,8 +408,8 @@ def act(behaviour: str, tag: str, cwd: Path) -> int:
             "def test_broken() -> None:\\n    assert 1 == 2, 'the agent shipped this'\\n"
         )
         commit(f"feat({tag}): looks green to me")
-        # It says so, in as many words, and it is wrong. The merge queue is the harness gate that
-        # catches the red suite before this reaches integration.
+        # It says so, in as many words, and it is wrong. The merge gate's suite gate catches
+        # the red suite before this reaches integration.
         print(f"[{tag}] All tests pass. The implementation is complete.")
         return 0
 

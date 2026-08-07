@@ -45,7 +45,7 @@ def refusals(facts: RepoFacts) -> tuple[Refusal, ...]:
             Refusal(
                 Check.UNCOMMITTED_CHANGES,
                 f"the working tree has uncommitted changes: {_dirty_summary(facts.dirty)}. The "
-                "merge queue fast-forwards this checkout while the run is in flight; anything "
+                "merge gate fast-forwards this checkout while the run is in flight; anything "
                 "uncommitted in it is in the way of that, and may be lost. Commit or stash first.",
             )
         )

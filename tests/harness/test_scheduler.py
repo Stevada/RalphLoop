@@ -12,7 +12,7 @@ import pytest
 
 from ralph.harness import Actor, Outcome, TokenConsumption, Verdict
 from ralph.issues import SubIssueId, SubIssueState
-from ralph.mergequeue import MergeQueue
+from ralph.mergegate import MergeGate
 from ralph.ports import Budget
 from ralph.runlog import EventKind
 from ralph.scheduler import Scheduler
@@ -50,14 +50,14 @@ def scheduler_over(
         run_log=log,
         implementer=implementer,
         editor=editor or terminal_editor(),
-        merge_queue=MergeQueue(
+        merge_gate=MergeGate(
             git=git,
             runner=runner,
-            integration="integration",
+            integration_branch="integration",
             integrator=integrator or FakeIntegrator(git=git),
             budget=Budget(),
         ),
-        integration="integration",
+        integration_branch="integration",
         budget=Budget(),
     )
     return scheduler, runner
@@ -78,7 +78,7 @@ async def test_an_infra_failure_goes_straight_to_a_human_and_never_to_the_editor
     report = await scheduler.run()
 
     assert report.failed == {SubIssueId("01"): Outcome.INFRA_FAILED}
-    assert git.fast_forwarded == []  # it never reached the merge queue
+    assert git.fast_forwarded == []  # it never reached the merge gate
     assert runner.runs == []  # and the scheduler did not run a post-session suite
     assert len(implementer.calls) == 1  # and it was never run a second time
 
@@ -121,9 +121,9 @@ async def test_a_landed_sub_issue_leaves_its_worktree_where_it_was() -> None:
 
 
 async def test_a_merge_conflict_is_reconciled_and_lands_without_reaching_the_editor() -> None:
-    """The Integrator answers it inside the queue, and the sub-issue lands as if nothing happened.
+    """The Integrator answers it inside the gate, and the sub-issue lands as if nothing happened.
 
-    One merge, not two: the queue never releases the lock, so there is no second trip through it.
+    One merge, not two: the gate never releases the lock, so there is no second trip through it.
     """
     store = FakeIssueStore(
         graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
@@ -182,7 +182,7 @@ async def test_a_reconciliation_that_succeeded_is_closed_in_the_log_like_any_oth
 
 
 async def test_a_reconciliation_is_stamped_from_its_own_clock_not_from_when_it_was_written() -> None:
-    """The queue holds the merge lock for the whole reconciliation, so both events are written
+    """The gate holds the merge lock for the whole reconciliation, so both events are written
     after it is over. Stamped `now`, a two-minute Integrator reads as instantaneous — which in the
     log is indistinguishable from one that died on startup."""
     store = FakeIssueStore(
@@ -279,7 +279,7 @@ async def test_a_red_suite_after_reconciliation_still_reaches_the_editor() -> No
     ]
 
 
-async def test_a_merge_queue_failure_that_is_not_a_conflict_never_opens_an_integrator() -> None:
+async def test_a_merge_gate_failure_that_is_not_a_conflict_never_opens_an_integrator() -> None:
     store = FakeIssueStore(
         graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
     )

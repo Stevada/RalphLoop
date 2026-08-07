@@ -1,6 +1,6 @@
 """Real git, against a real repo. Zero mocks.
 
-Every assertion here is one the merge queue's correctness rests on, and a fake git would pass all
+Every assertion here is one the merge gate's correctness rests on, and a fake git would pass all
 of them while telling us nothing.
 """
 
@@ -72,7 +72,7 @@ def test_a_conflicting_merge_returns_false_and_leaves_the_conflict_in_place(
 def test_a_clean_merge_leaves_integration_an_ancestor_so_the_fast_forward_can_follow(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    """The invariant the merge queue's fast-forward rests on: after the merge, whatever the
+    """The invariant the merge gate's fast-forward rests on: after the merge, whatever the
     integration head was, it is behind this branch."""
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
@@ -107,7 +107,7 @@ def test_merge_ff_only_refuses_rather_than_making_a_merge_commit(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """The refusal is the feature. `git merge` does not fire the pre-commit hook, so a merge commit
-    would put an unverified tree onto the integration branch — and the merge queue verified the
+    would put an unverified tree onto the integration branch — and the merge gate verified the
     *merged* tree, which is not the one a second merge commit would land."""
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
