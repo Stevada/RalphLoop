@@ -68,7 +68,7 @@ class Land:
     integrator: SessionTelemetry | None = None
     integrator_outcome: Outcome | None = None
 
-
+# TODO: as a Queue, why doesn't it even have a queue/list?
 class MergeQueue:
     def __init__(
         self, git: Git, runner: TestRunner, integration: str, integrator: Integrator

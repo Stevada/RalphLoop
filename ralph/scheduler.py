@@ -296,6 +296,7 @@ class Scheduler:
             # Editor is involved.
             return await self._quarantine(sub.id, Actor.IMPLEMENTER, wt, report)
 
+        # Editor's half
         return await self._adjudicate(sub, context, report)
 
     async def _landed(self, id: SubIssueId, wt: Worktree) -> _Closed:
@@ -307,6 +308,7 @@ class Scheduler:
         self._git.discard_worktree(wt)
         return _Closed(id, None)
 
+    # TODO: Editor shall write 'Findings' in spec, which is specified in UL.
     async def _adjudicate(
         self,
         sub: SubIssue,

@@ -63,9 +63,11 @@ unknown rather than zero.
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
 | **Parent issue** | The unit of work that yields exactly one PR against exactly one repo. | epic, story, feature |
-| **Sub-issue** | An immutable node in the graph: one worktree, one Implementer, one merge. | task, ticket, issue |
+| **Sub-issue** | An immutable node in the graph: one **Candidate** at a time, one Implementer, one merge. | task, ticket, issue |
 | **Spec** | A sub-issue's mutable content: its full text — acceptance criteria, and everything else the Planner wrote, minus its `## Findings` section — as currently understood. | brief, description, sub-issue document |
 | **Findings** | A sub-issue's mutable record of repo facts the Editor discovered in a failed worktree, carried into the next Implementer session. | guidance, advice, hints, notes |
+| **Candidate** | A sub-issue's one live embodiment: the branch cut from the integration branch, the **Worktree** holding it, and the spec and findings it was cut against. | attempt, work item, submission |
+| **Worktree** | The isolated git checkout a **Candidate** occupies. | working copy, work dir |
 
 A **Sub-issue** is fixed for the life of a **Run**. Two fields on it are mutable, and only the
 **Editor** writes them:
@@ -78,6 +80,16 @@ A **Sub-issue** is fixed for the life of a **Run**. Two fields on it are mutable
   intent: a channel for adding information **without** lowering the bar, kept out of the spec
   so the spec stays a clean bar, not a running commentary.
 
+A **Candidate** is the material half of a sub-issue — the thing every unattended actor actually
+holds. It is identified by its sub-issue, and a sub-issue never has two at once, so it carries no
+identity of its own. Which cycle produced a given candidate is recorded on the failure report, not
+on the candidate.
+
+Its itinerary is fixed: cut from the **integration branch**, handed to the **Implementer**, and — if
+that session delivers — offered to the **merge queue**, which may hand it to an **Integrator**. It
+leaves in exactly one of three ways, and each of the three has a name: it **Lands**, it is
+**Superseded**, or it is **Quarantined**.
+
 The graph's shape carries everything the runtime needs: the node blocked by nothing is
 dispatched first, the node blocked by everything last. The **Planner** reasons about contract,
 implementation, and integration roles when it *builds* the graph, but once the graph exists
@@ -85,6 +97,18 @@ those roles are fully encoded in its `blocked by` edges — no runtime actor rea
 
 A **Run** reads the graph once, at start, and never re-reads it during its life. Human
 intervention *ends* a run; resumption is a new run against a freshly read graph.
+
+## Landing
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Merge queue** | The stage that serialises landing: one **Candidate** at a time takes the **merge lock**, merges the integration branch in, reconciles a conflict if it has one, runs the **suite gate**, and fast-forwards. | merge train, lander, gatekeeper |
+| **Delivery** | The commits a **Candidate** carries when its Implementer session ends — what the merge queue is asked to land. | changeset, submission |
+| **Prospective merge** | The tree a **Candidate** becomes once the integration branch is merged into its worktree. | merged tree, trial merge, speculative merge, premerge |
+| **Suite gate** | The merge queue's run of the repo's `test` command on the **prospective merge**. | pre-merge check, merge test, gate run |
+
+The **suite gate** is the only suite run that decides a landing, and it runs on the **prospective
+merge** — never on the candidate's own tree, never in the base checkout.
 
 ## Commands
 
@@ -143,6 +167,8 @@ reaches the Editor: a conflict is not evidence that a spec is wrong.
 | **Impasse** | The outcome of an Implementer session that could not satisfy its spec — whether the model **declared** it via the `<impasse>` sentinel, or the harness **caught** it undeclared by observing no commits. | blocked, stuck, giving up, silent-red |
 | **Impasse report** | The Implementer's structured exit artifact, corroborated by harness-supplied facts. | blocker report, failure report |
 | **Conflict reconciliation** | What the merge queue does instead of giving up on a conflict: it merges the integration branch into the worktree, dispatches an **Integrator** to resolve and commit, and runs its suite gate on the result. No new spec, no revision, and it spends no **cycle**. | retry, re-run, second attempt, rebase-conflict recovery |
+| **Quarantine** | What the harness does with a **Candidate** it cannot land: preserve its worktree, put the sub-issue in **needs human**, and page at the end of the run. | park, shelve, sideline |
+| **Superseded** | The end of a **Candidate** whose Editor returned `revise`: its worktree and branch are both destroyed, and the sub-issue is cut a fresh candidate against the rewritten spec. | retry, restart, rollback |
 | **Revision** | The Editor's rewrite of a spec (and its findings), recorded alongside the Planner's original rather than over it. | edit, fix, update |
 | **Verdict** | The Editor's decision when its session succeeds: `revise`, `planning-defect`, or `inconclusive`. | outcome, ruling, judgment |
 | **Run log** | An append-only file, one line per event, recording session states and Editor verdicts for a run — nothing heavier. | trace, audit log, journal |
@@ -201,9 +227,15 @@ every green result is produced inside the blast radius of the thing being tested
 
 - A **Parent issue** contains many **Sub-issues** and produces exactly one PR.
 - A **Sub-issue** has one **Spec** and one **Findings**.
+- A **Sub-issue** has at most one live **Candidate**, and at most three over a **Run**.
+- A **Candidate** occupies one **Worktree** and carries one **Delivery** into the **Merge queue**.
+- The **Merge queue** admits one **Candidate** at a time, and runs the **Suite gate** on its
+  **Prospective merge**.
+- A **Candidate** ends **Landed**, **Superseded**, or **Quarantined** — exactly one of the three,
+  and always one.
 - A **Cycle** is one Implementer **Session** plus one Editor **Session**; at most three.
 - Every **Session** is bounded by wall clock; the harness also bounds cycles at three.
-- An Implementer **Session** ends in a green delivery or an **Impasse**.
+- An Implementer **Session** ends in a green **Delivery** or an **Impasse**.
 - An **Impasse** produces the report that is the Editor's only sensor.
 - An Editor **Session** produces one **Revision** and one **Verdict**.
 - An `integration-failed` raised by a conflict is answered by **Conflict reconciliation** and never
