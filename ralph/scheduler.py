@@ -45,6 +45,7 @@ from ralph.ports import (
     Budget,
     Candidate,
     Editor,
+    FinishedSession,
     Git,
     Implementer,
     RunLog,
@@ -249,8 +250,11 @@ class Scheduler:
         candidate = Candidate(id=sub.id, spec=spec, findings=findings, worktree=wt)
         context = SessionContext(candidate=candidate, budget=self._budget)
         telemetry = await self._implementer.run(context)
-        await self._record_session(sub.id, attempt, Actor.IMPLEMENTER, telemetry)
+        # Classified before it is recorded, because the transcript's footer carries the conclusion
+        # beside the observations it was drawn from — and a conclusion cannot be written down
+        # before it is reached.
         outcome = classify_implementer(telemetry)
+        await self._record_session(sub.id, attempt, Actor.IMPLEMENTER, outcome, telemetry)
         suite = None
         detail: str | None = None
 
@@ -333,10 +337,10 @@ class Scheduler:
 
         await self._record(id, Actor.EDITOR, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS)
         telemetry, verdict = await self._editor.adjudicate(context, report, must_be_terminal)
+        outcome = classify_editor(telemetry, verdict)
         # The Editor session belongs to the cycle its Implementer failure opened, not to a cycle of
         # its own — which is what puts the two halves of one cycle side by side in the transcripts.
-        await self._record_session(id, report.cycles, Actor.EDITOR, telemetry)
-        outcome = classify_editor(telemetry, verdict)
+        await self._record_session(id, report.cycles, Actor.EDITOR, outcome, telemetry)
         await self._record(id, Actor.EDITOR, EventKind.SESSION_FINISHED, outcome)
 
         if route(Actor.EDITOR, outcome) is Destination.HUMAN or verdict is None:
@@ -405,7 +409,14 @@ class Scheduler:
         await self._record(
             id, Actor.INTEGRATOR, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS, started
         )
-        await self._record_session(id, cycle, Actor.INTEGRATOR, land.integrator)
+        await self._record_session(
+            id,
+            cycle,
+            Actor.INTEGRATOR,
+            land.integrator_outcome,
+            land.integrator,
+            merge_finished=land.merge_finished,
+        )
         await self._record(
             id, Actor.INTEGRATOR, EventKind.SESSION_FINISHED, land.integrator_outcome, finished
         )
@@ -425,7 +436,13 @@ class Scheduler:
         return _Closed(id, report)
 
     async def _record_session(
-        self, id: SubIssueId, cycle: int, actor: Actor, telemetry: SessionTelemetry
+        self,
+        id: SubIssueId,
+        cycle: int,
+        actor: Actor,
+        outcome: Outcome,
+        telemetry: SessionTelemetry,
+        merge_finished: bool | None = None,
     ) -> None:
         """What a finished session is billed for, and what it said — for all three actors alike.
 
@@ -442,7 +459,17 @@ class Scheduler:
                 auto_compactions=telemetry.auto_compactions,
             ),
         )
-        await self._transcripts.write(id, cycle, actor, telemetry.transcript)
+        await self._transcripts.write(
+            FinishedSession(
+                sub_issue=id,
+                cycle=cycle,
+                actor=actor,
+                outcome=outcome,
+                telemetry=telemetry,
+                budget=self._budget,
+                merge_finished=merge_finished,
+            )
+        )
 
     async def _record(
         self,

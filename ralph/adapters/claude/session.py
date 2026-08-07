@@ -24,6 +24,7 @@ from ralph.adapters.runtime.turn_stream import (
     TurnStreamSession,
 )
 from ralph.harness import NOTHING, TokenConsumption
+from ralph.ports import HARNESS_LINE
 
 MODEL = "claude-opus-5"
 """The Editor is the expensive one on purpose. It runs at most three times per sub-issue and it is
@@ -69,6 +70,14 @@ class _SdkSession:
                 can_use_tool=can_use_tool,
                 cwd=str(self._ask.cwd),
             )
+            # The launch, at the top of the session's own record — an SDK actor has no argv to
+            # print, so the harness prints what it would have said.
+            self._record(
+                f"{HARNESS_LINE}launched: claude-agent-sdk model={MODEL} cwd={self._ask.cwd} "
+                f"tools={','.join(sorted(READ_ONLY_TOOLS))}"
+            )
+            self._record(f"{HARNESS_LINE}prompt follows, then the session's own output")
+            self._record(self._ask.prompt)
             # The SDK bills per message, and a `Turn` is a running total — so the accumulating
             # happens here, where it is known that these are increments.
             consumed = NOTHING
@@ -87,7 +96,7 @@ class _SdkSession:
             # Recorded, not just returned as a code: an Editor session that ends with no verdict is
             # `infra-failed`, and this is where the human reads *why*.
             self._code = 1
-            self._record(f"the Claude SDK session failed: {failure!r}")
+            self._record(f"{HARNESS_LINE}the Claude SDK session failed: {failure!r}")
         finally:
             self._turns.put_nowait(None)
 

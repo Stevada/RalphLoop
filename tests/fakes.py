@@ -27,7 +27,7 @@ from ralph.issues import (
     SubIssueId,
     SubIssueState,
 )
-from ralph.ports import RepoCommands, SessionContext, Worktree
+from ralph.ports import FinishedSession, RepoCommands, SessionContext, Worktree
 from ralph.runlog import Event
 from tests.builders import telemetry
 
@@ -153,10 +153,15 @@ class FakeTranscripts:
     notice.
     """
 
-    written: dict[tuple[SubIssueId, int, Actor], str] = field(default_factory=dict)
+    written: dict[tuple[SubIssueId, int, Actor], FinishedSession] = field(default_factory=dict)
 
-    async def write(self, sub_issue: SubIssueId, cycle: int, actor: Actor, body: str) -> None:
-        self.written[(sub_issue, cycle, actor)] = body
+    async def write(self, session: FinishedSession) -> None:
+        self.written[(session.sub_issue, session.cycle, session.actor)] = session
+
+    def bodies(self) -> dict[tuple[SubIssueId, int, Actor], str]:
+        """What each session said, without the harness's footer — which `FileTranscripts` renders
+        and this fake deliberately does not, so a test asserting on one is testing the renderer."""
+        return {key: s.telemetry.transcript for key, s in self.written.items()}
 
 
 @dataclass(slots=True)

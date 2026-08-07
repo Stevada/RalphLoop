@@ -122,6 +122,7 @@ async def test_consumption_comes_from_the_completed_turn_usage() -> None:
             '{"type": "turn.completed", "usage": {"total_tokens": 123}}\n'
             '{"type": "turn.completed", "usage": {"total_tokens": 456}}\n'
         ),
+        transcript="",  # `end_of_turn_consumption` reads `output`; this is not its input
         wall_clock_s=1.0,
     )
 
@@ -151,6 +152,7 @@ async def test_consumption_splits_a_usage_that_carries_no_total() -> None:
             '"cached_input_tokens":2269184,"output_tokens":28769,'
             '"reasoning_output_tokens":9838}}\n'
         ),
+        transcript="",  # `end_of_turn_consumption` reads `output`; this is not its input
         wall_clock_s=1.0,
     )
 
@@ -165,6 +167,7 @@ async def test_a_completed_turn_without_usage_is_loud() -> None:
         bound=Bound(killed=None, consumption=NOTHING),
         exit_code=0,
         output='{"type": "turn.completed", "usage": {}}\n',
+        transcript="",  # `end_of_turn_consumption` reads `output`; this is not its input
         wall_clock_s=1.0,
     )
 
@@ -273,6 +276,28 @@ async def test_a_schema_the_parser_does_not_know_still_reaches_the_transcript() 
     assert completed.output == ""
     assert "take both sides and commit" in completed.transcript
     assert "codex-thread-999" in completed.transcript
+
+
+async def test_a_transcript_opens_with_what_the_harness_launched() -> None:
+    """The other half of a session a human cannot explain: what it was *told*.
+
+    An Integrator that stopped short of committing is a different problem depending on whether its
+    prompt asked it to commit, and the prompt is assembled far from the artifact. The argv carries
+    the model, the sandbox, every writable directory and the prompt itself, so the question is
+    answered by opening the file rather than by reading `prompt.py` and inferring.
+    """
+    session = CodexJsonSession(
+        TurnStreamAsk(prompt="reconcile it and commit", cwd=Path("/tmp")),
+        sandbox=IMPLEMENTER_SANDBOX,
+        build_argv=lambda _ask, _sandbox: (sys.executable, "-c", "pass"),
+    )
+
+    completed = await run_turn_stream(session, GENEROUS)
+
+    # A session that said nothing at all, and the record still answers what ran.
+    assert completed.output == ""
+    assert completed.transcript.startswith("ralph| launched: ")
+    assert "-c pass" in completed.transcript
 
 
 async def test_kill_stops_the_codex_turn_stream_without_raising() -> None:

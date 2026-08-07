@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 import signal
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from functools import partial
@@ -20,7 +21,7 @@ from ralph.adapters.runtime.turn_stream import (
 )
 from ralph.harness import TokenConsumption
 from ralph.issues import Findings, Spec
-from ralph.ports import Worktree
+from ralph.ports import HARNESS_LINE, Worktree
 
 MODEL = "gpt-5.5"
 IMPLEMENTER_SANDBOX = "workspace-write"
@@ -303,8 +304,13 @@ class CodexJsonSession(TurnStreamSession):
 
     async def _run(self) -> None:
         try:
+            argv = self._build_argv(self._ask, self._sandbox)
+            # The launch, at the top of the session's own record. The argv carries the model, the
+            # sandbox, every writable directory and the whole prompt, so a prompt this actor was
+            # never given is legible from the artifact rather than only from reading `prompt.py`.
+            self._transcript.append(f"{HARNESS_LINE}launched: {shlex.join(argv)}\n")
             self._proc = await asyncio.create_subprocess_exec(
-                *self._build_argv(self._ask, self._sandbox),
+                *argv,
                 cwd=self._ask.cwd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,

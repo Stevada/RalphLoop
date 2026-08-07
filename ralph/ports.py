@@ -12,7 +12,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ralph.harness import Actor, EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
+from ralph.harness import (
+    Actor,
+    EditorVerdict,
+    FailureReport,
+    Outcome,
+    SessionTelemetry,
+    SuiteResult,
+)
 from ralph.issues import Findings, Spec, SubIssueId
 from ralph.runlog import Event
 
@@ -120,6 +127,37 @@ class RunLog(Protocol):
     def events(self) -> tuple[Event, ...]: ...
 
 
+HARNESS_LINE = "ralph| "
+"""Prefix on every line of a transcript the harness wrote rather than the session.
+
+Here, beside the port, because both ends of the artifact need the same one: each session adapter
+opens its transcript with the launch, and whatever implements `Transcripts` closes it with the
+footer. Nothing parses it — the port is write-only. It is for the human's eye, so that the two
+accounts in one file are never mistaken for each other.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class FinishedSession:
+    """One session, everything the harness observed about it, and what it concluded.
+
+    Carried whole rather than as a body plus a filename because a conclusion is only readable
+    beside the observations it was drawn from. `success` on its own is a claim; `success` printed
+    under `commits: 0` is a claim a human can check.
+    """
+
+    sub_issue: SubIssueId
+    cycle: int
+    actor: Actor
+    outcome: Outcome
+    telemetry: SessionTelemetry
+    budget: Budget
+    merge_finished: bool | None = None
+    """The merge gate's observation of the worktree — the one input to a classification that is
+    not telemetry, and the whole of what `classify_integrator` asks about the work. Absent for the
+    two actors nobody asks it about."""
+
+
 @runtime_checkable
 class Transcripts(Protocol):
     """Where a session's whole output is kept, keyed by sub-issue, cycle and actor.
@@ -130,7 +168,7 @@ class Transcripts(Protocol):
     back, and a port that offered to would be inviting a decision to be made from a model's prose.
     """
 
-    async def write(self, sub_issue: SubIssueId, cycle: int, actor: Actor, body: str) -> None: ...
+    async def write(self, session: FinishedSession) -> None: ...
 
 
 @runtime_checkable

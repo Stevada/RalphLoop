@@ -332,7 +332,7 @@ async def test_every_session_of_every_actor_leaves_a_transcript_under_its_own_cy
     report = await scheduler.run()
 
     assert report.landed == (SubIssueId("01"),)
-    assert transcripts.written == {
+    assert transcripts.bodies() == {
         (SubIssueId("01"), 1, Actor.IMPLEMENTER): "I cannot see how",
         (SubIssueId("01"), 1, Actor.EDITOR): "the spec was wrong",
         (SubIssueId("01"), 2, Actor.IMPLEMENTER): "done, and it merges",
@@ -363,7 +363,7 @@ async def test_a_quarantined_session_is_kept_too() -> None:
     report = await scheduler.run()
 
     assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
-    assert transcripts.written == {
+    assert transcripts.bodies() == {
         (SubIssueId("01"), 1, Actor.IMPLEMENTER): "stuck",
         (SubIssueId("01"), 1, Actor.EDITOR): "unanswerable",
     }

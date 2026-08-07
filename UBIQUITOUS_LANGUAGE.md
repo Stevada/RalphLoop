@@ -169,7 +169,7 @@ is not evidence that a spec is wrong.
 | **Revision** | The Editor's rewrite of a spec (and its findings), recorded alongside the Planner's original rather than over it. | edit, fix, update |
 | **Verdict** | The Editor's decision when its session succeeds: `revise`, `planning-defect`, or `inconclusive`. | outcome, ruling, judgment |
 | **Run log** | An append-only file, one line per event, recording session states and Editor verdicts for a run — nothing heavier. | trace, audit log, journal |
-| **Transcript** | Everything one **Session** said, kept whole in a file of its own under that session's **Sub-issue**, **Cycle** and **Actor** — the body the **Run log** deliberately does not carry. | session log, stdout dump, transcript file |
+| **Transcript** | Everything one **Session** said, kept whole in a file of its own under that session's **Sub-issue**, **Cycle** and **Actor**, between the harness's record of what it launched and what it concluded — the body the **Run log** deliberately does not carry. | session log, stdout dump, transcript file |
 
 **Blocked** is reserved for Linear's native `blocked by` issue relation, and means only
 "has an unsatisfied dependency edge." It never describes an actor's or a session's state.

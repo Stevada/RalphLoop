@@ -125,10 +125,8 @@ async def run_subprocess_implementer(
     return implementer_telemetry(
         bound=Bound(killed=session.bound.killed, consumption=consumption),
         exit_code=session.exit_code,
-        # The same string twice, and correctly: this transport reads the process's bytes and hands
-        # them on whole, so there is no interpretation here for a transcript to be robust against.
         output=session.output,
-        transcript=session.output,
+        transcript=session.transcript,
         wall_clock_s=session.wall_clock_s,
         worktree=wt,
     )

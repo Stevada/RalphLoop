@@ -390,12 +390,19 @@ a transcript back, and one that could would be inviting a decision to be made ou
 The Integrator's is written here too, not by the merge gate: the gate writes nothing, and
 `Land.integrator` is how its telemetry reaches a writer.
 
-What the scheduler writes is `SessionTelemetry.transcript`, and each `TurnStreamSession` fills it
-at the point it reads its transport — the decoded line in `CodexJsonSession._run`, the SDK message
-in `_SdkSession._converse`, the SDK event in `CopilotSdkSession._observe` — always on the line
-*before* the interpreting one. `session_output` is the separate, parsed string the sentinels come
-out of. Keeping the two apart is a design commitment, not a convenience; see
-[design.md](design.md#the-transcripts).
+What the scheduler writes is a `FinishedSession` — the key, the telemetry, the `Outcome`, the
+budget, and the merge gate's `merge_finished` when there was a reconciliation. Classification
+therefore happens *before* the record at every call site, since a conclusion cannot be written down
+before it is reached, and `Land` carries the gate's observation out for the same reason it carries
+`integrator_outcome`.
+
+The body of that record is `SessionTelemetry.transcript`, which each session fills at the point it
+reads its transport — the decoded line in `CodexJsonSession._run`, the SDK message in
+`_SdkSession._converse`, the SDK event in `CopilotSdkSession._observe`, the pumped stdout in
+`run_session` — always on the line *before* the interpreting one, under a launch line the same
+adapter wrote. `session_output` is the separate, parsed string the sentinels come out of.
+`FileTranscripts` renders the footer. Keeping all of this apart is a design commitment, not a
+convenience; see [design.md](design.md#the-transcripts).
 
 ### The pre-flight — [preflight.py](../ralph/harness/rules/preflight.py), gathered in `cli.py`
 

@@ -537,6 +537,20 @@ carries two strings and not one. `session_output` is the reading, and the sentin
 of it; `transcript` is the stream, and nothing is allowed between it and the disk. A parser may fall
 behind a vendor. What a human is owed when a session goes wrong may not.
 
+Around it, the harness writes its own account, prefixed so the two are never confused: the launch
+above, the outcome below. Both exist because a session's own words are only half of what went
+wrong. Above it is what the session was *told* — the argv or the SDK options, prompt included — so
+a prompt that never asked an actor to commit is legible from the artifact rather than inferred by
+reading `prompt.py`. Below it is what the harness *observed* and what it concluded from that:
+exit code, wall clock against the bound it was given, commits, and — for a reconciliation — whether
+git still had a merge open, which is the whole of what `classify_integrator` rests on.
+
+Every line of that footer is an **input** to the classification, printed beside its result, and
+never a restatement of the rule that combined them. Restating it would put a second copy of the
+taxonomy in a renderer, free to drift from the one that decides. Printing the inputs is also the
+more useful of the two: it shows the facts a classifier deliberately ignored, and `success` sitting
+above `commits: 0` is exactly the bug worth catching.
+
 The two artifacts index each other without either referencing the other: a `session-finished` line
 already names the sub-issue and the actor, and the cycle is the only thing a reader brings to the
 filename. That is also why the key is three parts rather than one — a sub-issue can produce an

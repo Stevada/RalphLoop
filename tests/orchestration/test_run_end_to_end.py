@@ -386,9 +386,13 @@ async def test_each_session_leaves_its_transcript_beside_the_run_log(
         Path("01/1-implementer.log"),
         Path("02/1-implementer.log"),
     ]
-    # Empty, and correctly so: the `succeed` stand-in commits without narrating. The file is the
-    # claim that the session ran and said nothing — which is not what an absent file would say.
-    assert (transcripts / "01" / "1-implementer.log").read_text() == ""
+    # The `succeed` stand-in commits without narrating, so the session's own half is empty — the
+    # claim that it ran and said nothing, which is not what an absent file would say. The harness's
+    # half is there regardless, and on a silent session it is the only account there is.
+    written = (transcripts / "01" / "1-implementer.log").read_text()
+    assert written.startswith("ralph| launched: ")
+    assert "ralph| outcome:        success" in written
+    assert "ralph| commits:        1" in written
 
 
 async def test_a_transcript_holds_what_the_session_actually_said(

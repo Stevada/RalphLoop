@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
 from ralph.harness import NOTHING, TokenConsumption
+from ralph.ports import HARNESS_LINE
 from ralph.adapters.runtime.turn_stream import (
     AutoCompaction,
     Permit,
@@ -141,6 +142,14 @@ class CopilotSdkSession(TurnStreamSession):
 
     async def _converse(self) -> None:
         try:
+            # The launch, at the top of the session's own record — an SDK actor has no argv to
+            # print, so the harness prints what it would have said.
+            self._transcript.append(
+                f"{HARNESS_LINE}launched: copilot-sdk model={MODEL} cwd={self._ask.cwd} "
+                f"session={self._resumable_identifier}\n"
+                f"{HARNESS_LINE}prompt follows, then the session's own output\n"
+                f"{self._ask.prompt}\n"
+            )
             self._running_session = await self._create_session(
                 self._ask,
                 self._resumable_identifier,
