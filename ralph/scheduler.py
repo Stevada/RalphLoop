@@ -207,6 +207,9 @@ class Scheduler:
                 task.cancel()
             if running:
                 await asyncio.gather(*running, return_exceptions=True)
+            # A cancelled pipeline stops waiting for its landing; it does not stop the landing.
+            # Returning here would let the loop close on a task holding the merge lock, mid-merge.
+            await self._merge_gate.drain()
 
     async def _pipeline(self, sub: SubIssue) -> _Closed:
         """One sub-issue, to a terminal state — however many cycles that takes.

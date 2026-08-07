@@ -14,6 +14,8 @@ from pathlib import Path
 
 from dataclasses import dataclass, field
 
+import pytest
+
 from ralph.adapters.git import GitCli
 from ralph.adapters.suite import SubprocessTestRunner
 from ralph.harness import Outcome, SuiteResult
@@ -50,6 +52,24 @@ class OverlapWatchingRunner:
         await asyncio.sleep(0.05)  # a real suspension point, inside the lock
         self.inside -= 1
         return SuiteResult(green=True, output="1 passed", duration_s=0.05)
+
+
+@dataclass(slots=True)
+class BlockingRunner:
+    """A `TestRunner` that parks inside the merge lock until it is let go.
+
+    The suite run is the longest await in a landing, so it is where a cancellation would land in
+    practice — and an `Event` makes "the landing is mid-flight" a fact the test waits on rather
+    than a sleep it hopes is long enough.
+    """
+
+    entered: asyncio.Event = field(default_factory=asyncio.Event)
+    release: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def run(self, dir: Path) -> SuiteResult:
+        self.entered.set()
+        await self.release.wait()
+        return SuiteResult(green=True, output="1 passed", duration_s=0.0)
 
 
 def real_gate(
@@ -241,6 +261,38 @@ async def test_the_merge_lock_serializes_two_concurrent_lands() -> None:
     assert [r.result for r in results] == [LandResult.LANDED, LandResult.LANDED]
     assert runner.peak == 1, "two lands ran their suites at once — the merge lock did not hold"
     assert git.fast_forwarded == ["ralph/01", "ralph/02"]
+
+
+async def test_cancelling_a_pipeline_does_not_interrupt_the_landing_it_was_waiting_on() -> None:
+    """The scheduler cancels every in-flight task when one of them raises. A landing cancelled in
+    place would take `CancelledError` inside the merge lock, leaving a half-merged worktree and a
+    released lock — and the next candidate would merge onto a tree nobody verified.
+
+    So the caller is cancellable and the landing is not. It finishes; only its answer is lost.
+    """
+    runner = BlockingRunner()
+    git = FakeGit(head="integration")
+    gate = MergeGate(
+        git=git,
+        runner=runner,
+        integration_branch="integration",
+        integrator=FakeIntegrator(),
+        budget=Budget(),
+    )
+    wt = git.add_worktree("ralph/01", Path("/nowhere"), "integration")
+
+    waiting = asyncio.create_task(gate.land(candidate(wt)))
+    await runner.entered.wait()  # deterministically inside the lock, mid-landing
+
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    assert git.fast_forwarded == [], "the landing was still in flight when its caller left"
+
+    runner.release.set()
+    await gate.drain()
+
+    assert git.fast_forwarded == ["ralph/01"], "the landing was cancelled along with its caller"
 
 
 def test_land_carries_no_suite_when_it_never_ran_one() -> None:

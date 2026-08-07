@@ -85,8 +85,34 @@ class MergeGate:
         # is bounded. The candidate carries no budget; that is what makes it not a session context.
         self._budget = budget
         self._merge_lock = asyncio.Lock()  # the merge lock. one process, so no flock, no PID files.
+        self._landings: set[asyncio.Task[Land]] = set()
 
     async def land(self, candidate: Candidate) -> Land:
+        """Take the merge lock when it comes free, and land or don't.
+
+        **The landing is not cancellable by its caller.** It runs as its own task behind a shield,
+        so a pipeline cancelled mid-flight — which the scheduler does to every in-flight task when
+        another one raises — stops waiting without stopping the merge. Cancelled in place, a
+        landing would take `CancelledError` at an await *inside* the lock, leave a half-merged
+        worktree, and release the lock; the next candidate would then merge onto a tree nobody
+        verified. Losing the answer is fine. Losing it halfway through `git merge` is not.
+        """
+        landing = asyncio.ensure_future(self._land(candidate))
+        self._landings.add(landing)
+        landing.add_done_callback(self._landings.discard)
+        return await asyncio.shield(landing)
+
+    async def drain(self) -> None:
+        """Wait out any landing whose caller has already gone away.
+
+        The shield above means a cancelled pipeline leaves a live task behind, and the run must not
+        exit from under it: the loop shutting down would cancel it exactly where cancelling it was
+        the thing worth preventing.
+        """
+        if self._landings:
+            await asyncio.gather(*self._landings, return_exceptions=True)
+
+    async def _land(self, candidate: Candidate) -> Land:
         """The whole landing, start to finish, under one hold of the lock.
 
         A conflict is answered here rather than returned, because the answer depends on the
