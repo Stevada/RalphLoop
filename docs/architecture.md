@@ -390,6 +390,13 @@ a transcript back, and one that could would be inviting a decision to be made ou
 The Integrator's is written here too, not by the merge gate: the gate writes nothing, and
 `Land.integrator` is how its telemetry reaches a writer.
 
+What the scheduler writes is `SessionTelemetry.transcript`, and each `TurnStreamSession` fills it
+at the point it reads its transport — the decoded line in `CodexJsonSession._run`, the SDK message
+in `_SdkSession._converse`, the SDK event in `CopilotSdkSession._observe` — always on the line
+*before* the interpreting one. `session_output` is the separate, parsed string the sentinels come
+out of. Keeping the two apart is a design commitment, not a convenience; see
+[design.md](design.md#the-transcripts).
+
 ### The pre-flight — [preflight.py](../ralph/harness/rules/preflight.py), gathered in `cli.py`
 
 **It refuses; it does not warn.** Seven checks, each describing a run the harness would otherwise

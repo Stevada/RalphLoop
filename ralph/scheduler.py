@@ -442,7 +442,7 @@ class Scheduler:
                 auto_compactions=telemetry.auto_compactions,
             ),
         )
-        await self._transcripts.write(id, cycle, actor, telemetry.session_output)
+        await self._transcripts.write(id, cycle, actor, telemetry.transcript)
 
     async def _record(
         self,

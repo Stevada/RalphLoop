@@ -528,6 +528,15 @@ What the run log leaves out has to go somewhere, or a run's only surviving accou
 the handful of facts the harness chose to classify. Each session's full output is kept in a file of
 its own, at `<repo>/.scratch/<phase>/transcripts/<sub-issue>/<cycle>-<actor>.log`.
 
+It is taken off the stream **before** the adapter reads anything out of it, and this is the whole
+bet. Every adapter also parses that stream into turns — text, usage, compaction — and every parser
+is only as current as the shapes it was taught. Assemble the transcript out of those turns and it
+inverts the moment a vendor moves a key: what survives is what *failed* to parse, which is the
+banners and the noise, while the model's own words go silently missing. So `SessionTelemetry`
+carries two strings and not one. `session_output` is the reading, and the sentinels are parsed out
+of it; `transcript` is the stream, and nothing is allowed between it and the disk. A parser may fall
+behind a vendor. What a human is owed when a session goes wrong may not.
+
 The two artifacts index each other without either referencing the other: a `session-finished` line
 already names the sub-issue and the actor, and the cycle is the only thing a reader brings to the
 filename. That is also why the key is three parts rather than one — a sub-issue can produce an

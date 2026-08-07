@@ -30,7 +30,12 @@ from ralph.adapters.runtime.bounding import Bound
 from ralph.adapters.git import GitCli, git_metadata
 from ralph.adapters.runtime.prompt import integrator_prompt
 from ralph.adapters.runtime.session import Session
-from ralph.adapters.runtime.turn_stream import AutoCompaction, Turn, TurnStreamAsk
+from ralph.adapters.runtime.turn_stream import (
+    AutoCompaction,
+    Turn,
+    TurnStreamAsk,
+    run_turn_stream,
+)
 from ralph.harness import (
     NOTHING,
     Outcome,
@@ -228,6 +233,46 @@ async def test_the_codex_json_session_streams_text_usage_and_compaction() -> Non
             tokens_removed=127_000,
         ),
     )
+    # The turns above are what the parser recovered. The transcript is the stream itself, events
+    # and all — including the two the parser consumed for usage and compaction and emitted no text
+    # for, which are the two a human debugging a budget or a context blowout wants to see.
+    assert '"type": "turn.completed"' in session.transcript
+    assert '"type": "context_compacted"' in session.transcript
+
+
+STUB_CODEX_UNKNOWN_SCHEMA = """\
+import json, sys
+
+print(json.dumps({"type": "thread.started", "thread_id": "codex-thread-999"}), flush=True)
+# Well-formed JSON whose text sits under a key `_text_of` does not navigate.
+print(json.dumps({"type": "item.completed", "item": {
+    "type": "agent_message", "text": "take both sides and commit"}}), flush=True)
+"""
+
+
+async def test_a_schema_the_parser_does_not_know_still_reaches_the_transcript() -> None:
+    """The defect that made a real failed reconciliation unreadable.
+
+    `turns()` is a *reading* of the stream, and a reading is only ever as current as the shapes it
+    was taught. Move the text under a key it does not probe and it recovers nothing — while the
+    lines that survive are the ones that survive *because* they failed to parse, which is to say
+    the banners and the noise. A transcript assembled from turns inverts itself exactly when the
+    vendor moves, and it does so silently.
+
+    Recording before interpreting is what makes that impossible, so this test asserts the two
+    halves are independent: the parser recovers nothing here, and the human still gets everything.
+    """
+    session = CodexJsonSession(
+        TurnStreamAsk(prompt="resolve it", cwd=Path("/tmp")),
+        sandbox=IMPLEMENTER_SANDBOX,
+        build_argv=lambda _ask, _sandbox: (sys.executable, "-c", STUB_CODEX_UNKNOWN_SCHEMA),
+    )
+
+    completed = await run_turn_stream(session, GENEROUS)
+
+    assert completed.output == ""
+    assert "take both sides and commit" in completed.transcript
+    assert "codex-thread-999" in completed.transcript
 
 
 async def test_kill_stops_the_codex_turn_stream_without_raising() -> None:

@@ -43,8 +43,15 @@ class SessionTelemetry:
     wall_clock_s: float
     commits: int
     diffstat: str
-    session_output: str  # the session's own transcript. NOT the suite's — that is SuiteResult.output
+    session_output: str  # what the model said, as the adapter read it. NOT the suite's output.
     impasse_report: ImpasseReport | None  # parsed from the <impasse> sentinel, out of the above
+    transcript: str
+    """Everything the session emitted, before the adapter read anything out of it.
+
+    Separate from `session_output` because the two answer to different masters: `session_output` is
+    only as complete as the adapter's parser, and a parser is allowed to be behind a vendor's
+    schema. What a human is owed cannot be.
+    """
 
 
 @dataclass(frozen=True, slots=True)

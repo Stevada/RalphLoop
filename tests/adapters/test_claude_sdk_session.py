@@ -44,7 +44,7 @@ async def test_a_conversation_that_cannot_start_ends_the_stream_instead_of_hangi
     assert completed.exit_code != 0
     # And it said why, in the transcript — the only place a human reads an Editor's account of
     # itself. A verdict is absent, so the scheduler will call this `infra-failed` and page them.
-    assert "claude_agent_sdk" in completed.output
+    assert "claude_agent_sdk" in completed.transcript
 
 
 async def test_killing_a_dead_conversation_still_ends_its_stream(

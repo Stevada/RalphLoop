@@ -38,6 +38,7 @@ class _SdkSession:
     def __init__(self, ask: TurnStreamAsk) -> None:
         self._ask = ask
         self._turns: asyncio.Queue[Turn | None] = asyncio.Queue()
+        self._transcript: list[str] = []
         self._code: int | None = None
         self._running = asyncio.create_task(self._converse())
 
@@ -72,6 +73,7 @@ class _SdkSession:
             # happens here, where it is known that these are increments.
             consumed = NOTHING
             async for message in query(prompt=self._ask.prompt, options=options):
+                self._record(repr(message))  # before `_turns_of`, which keeps only text and usage
                 for turn in _turns_of(message):
                     if isinstance(turn, TokenConsumption):
                         consumed += turn
@@ -82,12 +84,15 @@ class _SdkSession:
         except asyncio.CancelledError:
             self._code = -9
         except Exception as failure:
-            # Into the transcript, not just into a return code: an Editor session that ends with no
-            # verdict is `infra-failed`, and the transcript is where the human reads *why*.
+            # Recorded, not just returned as a code: an Editor session that ends with no verdict is
+            # `infra-failed`, and this is where the human reads *why*.
             self._code = 1
-            self._turns.put_nowait(f"\nthe Claude SDK session failed: {failure!r}\n")
+            self._record(f"the Claude SDK session failed: {failure!r}")
         finally:
             self._turns.put_nowait(None)
+
+    def _record(self, line: str) -> None:
+        self._transcript.append(f"{line}\n")
 
     @property
     def returncode(self) -> int | None:
@@ -100,6 +105,10 @@ class _SdkSession:
     @property
     def resumable_identifier(self) -> str | None:
         return None
+
+    @property
+    def transcript(self) -> str:
+        return "".join(self._transcript)
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         while (turn := await self._turns.get()) is not None:

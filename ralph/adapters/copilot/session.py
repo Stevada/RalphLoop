@@ -91,6 +91,7 @@ class CopilotSdkSession(TurnStreamSession):
         self._resumable_identifier = ask.resumable_identifier or _new_session_identifier()
         self._create_session = create_session
         self._turns: asyncio.Queue[Turn | None] = asyncio.Queue()
+        self._transcript: list[str] = []
         self._idle = asyncio.Event()
         self._auto_compactions: list[AutoCompaction] = []
         self._code: int | None = None
@@ -114,6 +115,10 @@ class CopilotSdkSession(TurnStreamSession):
     @property
     def resumable_identifier(self) -> str | None:
         return self._resumable_identifier
+
+    @property
+    def transcript(self) -> str:
+        return "".join(self._transcript)
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         while (turn := await self._turns.get()) is not None:
@@ -157,6 +162,7 @@ class CopilotSdkSession(TurnStreamSession):
     def _observe(self, event: SdkEvent) -> None:
         kind = _event_type(event)
         data = event.data
+        self._transcript.append(f"{kind} {data!r}\n")  # recorded before any branch below reads it
 
         if kind == ASSISTANT_MESSAGE_DELTA:
             self._saw_message_delta = True

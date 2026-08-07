@@ -315,15 +315,15 @@ async def test_every_session_of_every_actor_leaves_a_transcript_under_its_own_cy
     )
     implementer = FakeImplementer(
         scripted=[
-            telemetry(commits=0, session_output="I cannot see how"),
-            telemetry(session_output="done, and it merges"),
+            telemetry(commits=0, transcript="I cannot see how"),
+            telemetry(transcript="done, and it merges"),
         ]
     )
     editor = FakeEditor(
-        scripted=[(telemetry(session_output="the spec was wrong"), verdict(Verdict.REVISE))]
+        scripted=[(telemetry(transcript="the spec was wrong"), verdict(Verdict.REVISE))]
     )
     git = FakeGit(head="integration", merge_conflicts={"ralph/01"})
-    integrator = FakeIntegrator(git=git, scripted=[telemetry(session_output="took both sides")])
+    integrator = FakeIntegrator(git=git, scripted=[telemetry(transcript="took both sides")])
     transcripts = FakeTranscripts()
 
     scheduler, _ = scheduler_over(
@@ -346,9 +346,9 @@ async def test_a_quarantined_session_is_kept_too() -> None:
     store = FakeIssueStore(
         graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
     )
-    implementer = FakeImplementer(scripted=[telemetry(commits=0, session_output="stuck")])
+    implementer = FakeImplementer(scripted=[telemetry(commits=0, transcript="stuck")])
     editor = FakeEditor(
-        scripted=[(telemetry(session_output="unanswerable"), verdict(Verdict.PLANNING_DEFECT))]
+        scripted=[(telemetry(transcript="unanswerable"), verdict(Verdict.PLANNING_DEFECT))]
     )
     transcripts = FakeTranscripts()
 

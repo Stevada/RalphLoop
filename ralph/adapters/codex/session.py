@@ -253,6 +253,7 @@ class CodexJsonSession(TurnStreamSession):
         self._sandbox = sandbox
         self._build_argv = build_argv or partial(_session_argv, writable=writable)
         self._turns: asyncio.Queue[Turn | None] = asyncio.Queue()
+        self._transcript: list[str] = []
         self._auto_compactions: list[AutoCompaction] = []
         self._resumable_identifier = ask.resumable_identifier
         self._proc: asyncio.subprocess.Process | None = None
@@ -273,6 +274,10 @@ class CodexJsonSession(TurnStreamSession):
     @property
     def resumable_identifier(self) -> str | None:
         return self._resumable_identifier
+
+    @property
+    def transcript(self) -> str:
+        return "".join(self._transcript)
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         while (turn := await self._turns.get()) is not None:
@@ -308,7 +313,9 @@ class CodexJsonSession(TurnStreamSession):
             if self._proc.stdout is None:  # pragma: no cover — PIPE was asked for above
                 raise RuntimeError("the Codex session has no stdout to read")
             async for raw in self._proc.stdout:
-                self._observe(raw.decode(errors="replace"))
+                line = raw.decode(errors="replace")
+                self._transcript.append(line)  # recorded first. `_observe` only ever reads it.
+                self._observe(line)
             code = await self._proc.wait()
             if self._code is None:
                 self._code = code

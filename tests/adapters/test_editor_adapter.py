@@ -241,9 +241,12 @@ def test_a_verdict_outside_the_three_is_not_a_verdict() -> None:
 class StubSession:
     """A scripted Editor session. Emits its turns, then ends — unless it is killed first."""
 
-    def __init__(self, turns: Sequence[Turn], *, pause: float = 0.0) -> None:
+    def __init__(
+        self, turns: Sequence[Turn], *, pause: float = 0.0, transcript: str = ""
+    ) -> None:
         self._scripted = turns
         self._pause = pause
+        self._transcript = transcript
         self.returncode: int | None = None
         self.killed = False
 
@@ -254,6 +257,12 @@ class StubSession:
     @property
     def resumable_identifier(self) -> str | None:
         return None
+
+    @property
+    def transcript(self) -> str:
+        # Scripted independently of the turns, because that is the relationship a real session has:
+        # the turns are what a parser recovered, and the transcript is what actually arrived.
+        return self._transcript
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         for turn in self._scripted:

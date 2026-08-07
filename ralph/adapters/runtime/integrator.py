@@ -26,6 +26,7 @@ def integrator_telemetry(
     bound: Bound,
     exit_code: int,
     output: str,
+    transcript: str,
     wall_clock_s: float,
     worktree: Worktree,
     auto_compactions: int = 0,
@@ -44,6 +45,7 @@ def integrator_telemetry(
         diffstat=run_git(worktree.path, "diff", "--stat", f"{worktree.base}..HEAD"),
         session_output=output,
         impasse_report=None,  # an Integrator is not asked to satisfy a spec, so it cannot fail to.
+        transcript=transcript,
     )
 
 
@@ -56,6 +58,7 @@ async def run_turn_stream_integrator(
         bound=completed.bound,
         exit_code=completed.exit_code,
         output=completed.output,
+        transcript=completed.transcript,
         wall_clock_s=completed.wall_clock_s,
         worktree=context.candidate.worktree,
         auto_compactions=completed.auto_compactions,

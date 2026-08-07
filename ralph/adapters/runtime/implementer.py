@@ -86,6 +86,7 @@ def implementer_telemetry(
     bound: Bound,
     exit_code: int,
     output: str,
+    transcript: str,
     wall_clock_s: float,
     worktree: Worktree,
     auto_compactions: int = 0,
@@ -103,6 +104,7 @@ def implementer_telemetry(
         diffstat=run_git(worktree.path, "diff", "--stat", f"{worktree.base}..HEAD"),
         session_output=output,
         impasse_report=parse_impasse(output),
+        transcript=transcript,
     )
 
 
@@ -123,7 +125,10 @@ async def run_subprocess_implementer(
     return implementer_telemetry(
         bound=Bound(killed=session.bound.killed, consumption=consumption),
         exit_code=session.exit_code,
+        # The same string twice, and correctly: this transport reads the process's bytes and hands
+        # them on whole, so there is no interpretation here for a transcript to be robust against.
         output=session.output,
+        transcript=session.output,
         wall_clock_s=session.wall_clock_s,
         worktree=wt,
     )
@@ -138,6 +143,7 @@ async def run_turn_stream_implementer(
         bound=completed.bound,
         exit_code=completed.exit_code,
         output=completed.output,
+        transcript=completed.transcript,
         wall_clock_s=completed.wall_clock_s,
         worktree=context.candidate.worktree,
         auto_compactions=completed.auto_compactions,
@@ -184,10 +190,12 @@ class SubprocessImplementer:
 
 
 def _resume_unavailable(wt: Worktree, resumable_identifier: str) -> SessionTelemetry:
+    said = f"cannot resume subprocess Implementer session {resumable_identifier}"
     return implementer_telemetry(
         bound=Bound(killed=None, consumption=NOTHING),
         exit_code=124,
-        output=f"cannot resume subprocess Implementer session {resumable_identifier}",
+        output=said,
+        transcript=said,  # no session ran, so the harness's own sentence is the whole account
         wall_clock_s=0.0,
         worktree=wt,
         resumable_identifier=resumable_identifier,

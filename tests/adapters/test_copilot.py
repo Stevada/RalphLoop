@@ -86,10 +86,12 @@ class StubTurnStreamSession:
         resumable_identifier: str | None = None,
         on_start: Callable[[], None] | None = None,
         block_after_turns: bool = False,
+        transcript: str = "",
     ) -> None:
         self._turns = turns
         self._auto_compactions = tuple(auto_compactions)
         self._resumable_identifier = resumable_identifier
+        self._transcript = transcript
         self._on_start = on_start
         self._block_after_turns = block_after_turns
         self._released = asyncio.Event()
@@ -103,6 +105,12 @@ class StubTurnStreamSession:
     @property
     def resumable_identifier(self) -> str | None:
         return self._resumable_identifier
+
+    @property
+    def transcript(self) -> str:
+        # Scripted independently of the turns, because that is the relationship a real session has:
+        # the turns are what a parser recovered, and the transcript is what actually arrived.
+        return self._transcript
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         if self._on_start is not None:

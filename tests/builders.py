@@ -39,6 +39,7 @@ def telemetry(
     diffstat: str = " 1 file changed, 1 insertion(+)",
     session_output: str = "all green, boss",
     impasse_report: ImpasseReport | None = None,
+    transcript: str = "everything it said, verbatim",
 ) -> SessionTelemetry:
     """A green Implementer session, unless you say otherwise."""
     return SessionTelemetry(
@@ -52,6 +53,7 @@ def telemetry(
         diffstat=diffstat,
         session_output=session_output,
         impasse_report=impasse_report,
+        transcript=transcript,
     )
 
 

@@ -88,6 +88,18 @@ class TurnStreamSession(Protocol):
     @property
     def resumable_identifier(self) -> str | None: ...
 
+    @property
+    def transcript(self) -> str:
+        """Taken off the stream **before** anything interprets it, and never assembled from
+        `turns()`.
+
+        Every reading of a vendor stream has shapes it does not recognise, and it drops them
+        silently. A record assembled downstream of that reading therefore goes blank at exactly the
+        moment the vendor changes its schema — which is the moment a human most needs to read one.
+        Recording first costs nothing and cannot fail that way.
+        """
+        ...
+
     def turns(self) -> AsyncGenerator[Turn, None]: ...
 
     def kill(self) -> None: ...
@@ -102,6 +114,9 @@ class TurnStreamRun:
     bound: Bound
     exit_code: int
     output: str
+    """What the harness reads sentinels out of: the turns, joined. Interpreted, and lossy by
+    design — `transcript` is what a human reads."""
+    transcript: str
     wall_clock_s: float
     auto_compactions: int
     resumable_identifier: str | None
@@ -126,9 +141,9 @@ async def run_turn_stream(session: TurnStreamSession, budget: Budget) -> TurnStr
     if reading.done():
         await reading  # whatever the pump raised is this function's failure too. Loudly.
     else:
-        # The bound has fired and the session was killed, yet its turns never ended. Everything it
-        # emitted before now is still in `said`, and that transcript is the only account a human
-        # will get of a session that would not stop.
+        # The bound has fired and the session was killed, yet its turns never ended. Everything the
+        # session recorded before now is still on it, and that is the only account a human will get
+        # of a session that would not stop.
         reading.cancel()
         await asyncio.gather(reading, return_exceptions=True)
 
@@ -136,6 +151,7 @@ async def run_turn_stream(session: TurnStreamSession, budget: Budget) -> TurnStr
         bound=Bound(killed=bound.killed, consumption=consumption),
         exit_code=session.returncode if session.returncode is not None else -1,
         output="".join(said),
+        transcript=session.transcript,
         wall_clock_s=time.monotonic() - started,
         auto_compactions=_completed_auto_compactions(session.auto_compactions),
         resumable_identifier=session.resumable_identifier,
