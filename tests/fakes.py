@@ -63,7 +63,7 @@ class FakeIntegrator:
     async def reconcile(self, context: SessionContext) -> SessionTelemetry:
         self.calls.append(context)
         if self.git is not None and self.resolves:
-            self.git.open_merges.discard(context.worktree.branch)
+            self.git.open_merges.discard(context.candidate.worktree.branch)
         if not self.scripted:
             return telemetry()
         return self.scripted[min(len(self.calls) - 1, len(self.scripted) - 1)]

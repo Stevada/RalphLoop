@@ -43,12 +43,12 @@ from ralph.mergequeue import Land, LandResult, MergeQueue
 from ralph.notification import Notification, notify
 from ralph.ports import (
     Budget,
+    Candidate,
     Editor,
     Git,
     Implementer,
     RunLog,
     SessionContext,
-    Worktree,
 )
 from ralph.runlog import EventKind, event
 
@@ -240,7 +240,8 @@ class Scheduler:
         # cycle two this is the **rewritten** spec — which is what makes this a cycle, not a retry.
         spec, findings = self._store.content(sub.id)
 
-        context = SessionContext(spec=spec, findings=findings, worktree=wt, budget=self._budget)
+        candidate = Candidate(id=sub.id, spec=spec, findings=findings, worktree=wt)
+        context = SessionContext(candidate=candidate, budget=self._budget)
         telemetry = await self._implementer.run(context)
         await self._store.record_consumption(
             sub.id,
@@ -255,11 +256,11 @@ class Scheduler:
         detail: str | None = None
 
         if route(Actor.IMPLEMENTER, outcome) is Destination.MERGE_QUEUE:
-            land = await self._merge_queue.land(context)
+            land = await self._merge_queue.land(candidate)
             await self._record_reconciliation(sub.id, land)
 
             if land.result is LandResult.LANDED:
-                return await self._landed(sub.id, wt)
+                return await self._landed(candidate)
 
             if land.result is LandResult.CONFLICT_UNRESOLVED:
                 # The Integrator was dispatched and the merge is still open. This escalates on the
@@ -267,9 +268,8 @@ class Scheduler:
                 # delivered, and what a human needs to see is the reconciliation that failed.
                 assert land.integrator is not None and land.integrator_outcome is not None
                 return await self._quarantine(
-                    sub.id,
+                    candidate,
                     Actor.INTEGRATOR,
-                    wt,
                     failure_report(
                         land.integrator_outcome,
                         land.integrator,
@@ -294,24 +294,24 @@ class Scheduler:
             # `infra-failed`: the outcome no Editor can help with. It goes straight to the human
             # and spends no cycle: a cycle is an Implementer session plus an Editor session, and no
             # Editor is involved.
-            return await self._quarantine(sub.id, Actor.IMPLEMENTER, wt, report)
+            return await self._quarantine(candidate, Actor.IMPLEMENTER, report)
 
         # Editor's half
-        return await self._adjudicate(sub, context, report)
+        return await self._adjudicate(context, report)
 
-    async def _landed(self, id: SubIssueId, wt: Worktree) -> _Closed:
+    async def _landed(self, candidate: Candidate) -> _Closed:
+        id = candidate.id
         await self._record(id, Actor.IMPLEMENTER, EventKind.SESSION_FINISHED, Outcome.SUCCESS)
         # After the fast-forward, never before. Fail toward redundant work, never toward
         # missing code.
         await self._record(id, Actor.IMPLEMENTER, EventKind.SUB_ISSUE_CLOSED, SubIssueState.LANDED)
         # Nothing is thrown away here: the fast-forward put these commits on the integration branch.
-        self._git.discard_worktree(wt)
+        self._git.discard_worktree(candidate.worktree)
         return _Closed(id, None)
 
     # TODO: Editor shall write 'Findings' in spec, which is specified in UL.
     async def _adjudicate(
         self,
-        sub: SubIssue,
         context: SessionContext,
         report: FailureReport,
     ) -> _Closed | None:
@@ -323,19 +323,19 @@ class Scheduler:
         here, in the scheduler, and nowhere else. The port takes no `RunLog` and no `IssueStore` on
         purpose.
         """
+        candidate = context.candidate
+        id = candidate.id
         # A cycle is spent the moment an Implementer failure routes to the Editor: that is when the
         # Editor half begins. Spent *before* the session, so that a killed Editor still costs one —
         # otherwise an Editor that reliably times out would buy a sub-issue infinite Implementers,
         # and the cap would hold only along the paths that were working anyway.
-        self._ledger.spend(sub.id)
-        must_be_terminal = self._ledger.must_be_terminal(sub.id)
+        self._ledger.spend(id)
+        must_be_terminal = self._ledger.must_be_terminal(id)
 
-        await self._record(
-            sub.id, Actor.EDITOR, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS
-        )
+        await self._record(id, Actor.EDITOR, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS)
         telemetry, verdict = await self._editor.adjudicate(context, report, must_be_terminal)
         await self._store.record_consumption(
-            sub.id,
+            id,
             SessionConsumption(
                 actor=Actor.EDITOR,
                 consumption=telemetry.consumption,
@@ -343,7 +343,7 @@ class Scheduler:
             ),
         )
         outcome = classify_editor(telemetry, verdict)
-        await self._record(sub.id, Actor.EDITOR, EventKind.SESSION_FINISHED, outcome)
+        await self._record(id, Actor.EDITOR, EventKind.SESSION_FINISHED, outcome)
 
         if route(Actor.EDITOR, outcome) is Destination.HUMAN or verdict is None:
             # The Editor itself was killed, or came back with nothing. Escalate on the **Editor's**
@@ -355,15 +355,15 @@ class Scheduler:
             # verdictless Editor `infra-failed`, which routes to the human. It is restated only
             # because the type-checker cannot read the taxonomy.)
             failed = failure_report(outcome, telemetry, report.suite, None, report.cycles)
-            return await self._quarantine(sub.id, Actor.EDITOR, context.worktree, failed)
+            return await self._quarantine(candidate, Actor.EDITOR, failed)
 
-        await self._record(sub.id, Actor.EDITOR, EventKind.VERDICT_RECORDED, verdict.verdict)
+        await self._record(id, Actor.EDITOR, EventKind.VERDICT_RECORDED, verdict.verdict)
 
         if verdict.verdict.is_terminal:
             # `planning-defect` — the spec cannot be satisfied as written, and rewriting it is a
             # Planner's call, not an Editor's. `inconclusive` — the Editor could not tell. Both are
             # terminal: another Implementer session would be a coin flip we have already paid for.
-            return await self._quarantine(sub.id, Actor.EDITOR, context.worktree, report)
+            return await self._quarantine(candidate, Actor.EDITOR, report)
 
         if must_be_terminal:
             # **The scheduler rejects it, and only the scheduler.** The Editor was told this was the
@@ -374,9 +374,9 @@ class Scheduler:
             log.warning(
                 "%s: the Editor returned `revise` on its final cycle; refusing a fourth "
                 "Implementer session. Escalating to a human.",
-                sub.id,
+                id,
             )
-            return await self._quarantine(sub.id, Actor.EDITOR, context.worktree, report)
+            return await self._quarantine(candidate, Actor.EDITOR, report)
 
         revised_spec, revised_findings = verdict.revision
         # Knowledge survives **only** through the findings. Nothing else crosses: the diff is
@@ -384,11 +384,11 @@ class Scheduler:
         # next session gets. That choice is the Editor's judgment, unmandated — and keeping it out
         # of the spec is what lets a session be *helped* without the bar being *lowered*.
         await self._store.record_revision(
-            sub.id,
+            id,
             revised_spec,
-            revised_findings if revised_findings is not None else context.findings,
+            revised_findings if revised_findings is not None else candidate.findings,
         )
-        self._git.discard_worktree(context.worktree)
+        self._git.discard_worktree(candidate.worktree)
         return None
 
     async def _record_reconciliation(self, id: SubIssueId, land: Land) -> None:
@@ -424,7 +424,7 @@ class Scheduler:
         )
 
     async def _quarantine(
-        self, id: SubIssueId, actor: Actor, wt: Worktree, report: FailureReport
+        self, candidate: Candidate, actor: Actor, report: FailureReport
     ) -> _Closed:
         """The worktree is the evidence, and evidence is only preserved if it can be found.
 
@@ -432,7 +432,8 @@ class Scheduler:
         sub-issue is still sitting there un-triaged, and the sub-issue was authorised `ready` again
         anyway. That is worth stopping for; quietly clobbering it is not.
         """
-        self._git.move_worktree(wt, self._worktree_dir(QUARANTINE, id))
+        id = candidate.id
+        self._git.move_worktree(candidate.worktree, self._worktree_dir(QUARANTINE, id))
         await self._record(id, actor, EventKind.SUB_ISSUE_CLOSED, SubIssueState.NEEDS_HUMAN)
         return _Closed(id, report)
 

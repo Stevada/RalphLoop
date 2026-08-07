@@ -30,8 +30,8 @@ class CodexImplementer:
     async def run(self, context: SessionContext) -> SessionTelemetry:
         session = self.open_session(
             TurnStreamAsk(
-                prompt=implementer_prompt(context.spec, context.findings),
-                cwd=context.worktree.path,
+                prompt=implementer_prompt(context.candidate.spec, context.candidate.findings),
+                cwd=context.candidate.worktree.path,
             )
         )
         return await run_turn_stream_implementer(session, context)
@@ -47,8 +47,8 @@ class CodexIntegrator:
     async def reconcile(self, context: SessionContext) -> SessionTelemetry:
         session = self.open_session(
             TurnStreamAsk(
-                prompt=integrator_prompt(context.spec, context.findings),
-                cwd=context.worktree.path,
+                prompt=integrator_prompt(context.candidate.spec, context.candidate.findings),
+                cwd=context.candidate.worktree.path,
             )
         )
         return await run_turn_stream_integrator(session, context)
@@ -71,9 +71,9 @@ class CodexEditor:
         session = self.open_session(
             TurnStreamAsk(
                 prompt=editor_prompt(
-                    context.spec, context.findings, failure, must_be_terminal
+                    context.candidate.spec, context.candidate.findings, failure, must_be_terminal
                 ),
-                cwd=context.worktree.path,
+                cwd=context.candidate.worktree.path,
             )
         )
         return await run_editor(session, context.budget)

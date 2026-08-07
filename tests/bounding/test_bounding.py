@@ -11,8 +11,8 @@ from ralph.adapters.runtime.bounding import Bound, run_bounded
 from ralph.adapters.git import GitCli
 from ralph.adapters.runtime.implementer import SubprocessImplementer
 from ralph.harness import NOTHING, Outcome, classify_implementer
-from ralph.issues import Findings, Spec
-from ralph.ports import Budget, SessionContext
+from ralph.issues import Findings, Spec, SubIssueId
+from ralph.ports import Budget, Candidate, SessionContext
 from tests.testbed import TargetRepo
 
 SHORT_CLOCK = Budget(wall_clock_s=0.3)
@@ -93,9 +93,12 @@ async def test_real_session_telemetry_has_no_context_peak(repo: TargetRepo) -> N
 
     t = await implementer.run(
         SessionContext(
-            spec=Spec(body="build it"),
-            findings=Findings(body=""),
-            worktree=wt,
+            candidate=Candidate(
+                id=SubIssueId("01"),
+                spec=Spec(body="build it"),
+                findings=Findings(body=""),
+                worktree=wt,
+            ),
             budget=GENEROUS_CLOCK,
         )
     )

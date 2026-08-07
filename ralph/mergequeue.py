@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from ralph.harness import Outcome, SessionTelemetry, SuiteResult, classify_integrator
-from ralph.ports import Git, Integrator, SessionContext, TestRunner
+from ralph.ports import Budget, Candidate, Git, Integrator, SessionContext, TestRunner
 
 
 class LandResult(StrEnum):
@@ -71,15 +71,23 @@ class Land:
 # TODO: as a Queue, why doesn't it even have a queue/list?
 class MergeQueue:
     def __init__(
-        self, git: Git, runner: TestRunner, integration: str, integrator: Integrator
+        self,
+        git: Git,
+        runner: TestRunner,
+        integration: str,
+        integrator: Integrator,
+        budget: Budget,
     ) -> None:
         self._git = git
         self._runner = runner
         self._integration = integration
         self._integrator = integrator
+        # Held because the queue admits a candidate but dispatches a *session*, and only a session
+        # is bounded. The candidate carries no budget; that is what makes it not a session context.
+        self._budget = budget
         self._merge_lock = asyncio.Lock()  # the merge lock. one process, so no flock, no PID files.
 
-    async def land(self, context: SessionContext) -> Land:
+    async def land(self, candidate: Candidate) -> Land:
         """The whole landing, start to finish, under one hold of the lock.
 
         A conflict is answered here rather than returned, because the answer depends on the
@@ -87,7 +95,7 @@ class MergeQueue:
         about it and a sibling can land underneath, leaving a reconciliation against a branch that
         no longer exists as anyone's tip.
         """
-        wt = context.worktree
+        wt = candidate.worktree
         async with self._merge_lock:
             if self._git.head_branch() != self._integration:
                 # Somebody moved the base repo out from under us. Fast-forwarding now would move
@@ -100,7 +108,9 @@ class MergeQueue:
                 # Not a retry, and not a hiccup to back off from: a different actor, answering a
                 # question about landing order that the Implementer could not have seen. The
                 # conflict is left exactly as git made it — that is this session's input.
-                reconciliation = await self._integrator.reconcile(context)
+                reconciliation = await self._integrator.reconcile(
+                    SessionContext(candidate=candidate, budget=self._budget)
+                )
                 reconciled = classify_integrator(
                     reconciliation, self._git.merge_finished(wt)
                 )

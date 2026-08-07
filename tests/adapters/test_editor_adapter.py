@@ -36,8 +36,8 @@ from ralph.harness import (
     classify_editor,
     failure_report,
 )
-from ralph.issues import Findings, Spec
-from ralph.ports import Budget, SessionContext, Worktree
+from ralph.issues import Findings, Spec, SubIssueId
+from ralph.ports import Budget, Candidate, SessionContext, Worktree
 from tests.builders import impasse, telemetry
 
 SUITE: Sequence[str] = ("python", "-m", "pytest", "-q")
@@ -48,7 +48,7 @@ GENEROUS = Budget(wall_clock_s=10.0)
 
 
 def session_context(budget: Budget = GENEROUS) -> SessionContext:
-    return SessionContext(spec=SPEC, findings=FINDINGS, worktree=WORKTREE, budget=budget)
+    return SessionContext(candidate=Candidate(id=SubIssueId("01"), spec=SPEC, findings=FINDINGS, worktree=WORKTREE), budget=budget)
 
 FAILURE = failure_report(
     Outcome.IMPASSE,

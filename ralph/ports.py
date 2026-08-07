@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
-from ralph.issues import Findings, Spec
+from ralph.issues import Findings, Spec, SubIssueId
 from ralph.runlog import Event
 
 
@@ -42,12 +42,34 @@ class Worktree:
 
 
 @dataclass(frozen=True, slots=True)
-class SessionContext:
-    """The shared inputs for one bounded actor session."""
+class Candidate:
+    """What travels: the Implementer holds it, the merge queue admits it, the Integrator
+    reconciles it, the Editor reads it, and a human opens what is left of it.
 
+    Frozen, and it stays frozen. Every result a candidate provokes — telemetry, `Land`, a verdict —
+    is returned to the scheduler rather than accumulated here; a value that gathered its own outcomes
+    would be the one mutable object threading the whole pipeline, and the rules that decide anything
+    about it are pure.
+
+    `id` is the whole identity: a sub-issue never has two candidates at once, so there is nothing
+    finer to name. Which cycle produced this one is on `FailureReport.cycles`, not here.
+    """
+
+    id: SubIssueId
     spec: Spec
     findings: Findings
     worktree: Worktree
+
+
+@dataclass(frozen=True, slots=True)
+class SessionContext:
+    """One **Candidate**, bounded for one actor session.
+
+    The budget is session-scoped and the candidate is not, which is the whole reason these are two
+    types: the merge queue takes the candidate alone, because it opens no session of its own.
+    """
+
+    candidate: Candidate
     budget: Budget
 
 

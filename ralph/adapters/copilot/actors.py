@@ -47,8 +47,8 @@ class CopilotImplementer:
     async def run(self, context: SessionContext) -> SessionTelemetry:
         session = self.open_session(
             TurnStreamAsk(
-                prompt=implementer_prompt(context.spec, context.findings),
-                cwd=context.worktree.path,
+                prompt=implementer_prompt(context.candidate.spec, context.candidate.findings),
+                cwd=context.candidate.worktree.path,
                 permit=allow_all,
             )
         )
@@ -69,8 +69,8 @@ class CopilotIntegrator:
     async def reconcile(self, context: SessionContext) -> SessionTelemetry:
         session = self.open_session(
             TurnStreamAsk(
-                prompt=integrator_prompt(context.spec, context.findings),
-                cwd=context.worktree.path,
+                prompt=integrator_prompt(context.candidate.spec, context.candidate.findings),
+                cwd=context.candidate.worktree.path,
                 permit=allow_all,
             )
         )
@@ -97,9 +97,9 @@ class CopilotEditor:
         session = self.open_session(
             TurnStreamAsk(
                 prompt=editor_prompt(
-                    context.spec, context.findings, failure, must_be_terminal
+                    context.candidate.spec, context.candidate.findings, failure, must_be_terminal
                 ),
-                cwd=context.worktree.path,
+                cwd=context.candidate.worktree.path,
                 permit=lambda tool, input: read_only(tool, input, self.suite),
             )
         )

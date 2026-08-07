@@ -91,6 +91,7 @@ async def run_with(
             runner=runner,
             integration="integration",
             integrator=FakeIntegrator(git=git),
+            budget=Budget(),
         ),
         integration="integration",
         budget=Budget(),
@@ -131,8 +132,8 @@ async def test_an_implementer_failure_is_handed_to_the_editor(
 
     assert len(editor.calls) == 1
     context, failure, must_be_terminal = editor.calls[0]
-    assert context.spec.body == "the original spec"
-    assert context.findings.body == "what we knew"
+    assert context.candidate.spec.body == "the original spec"
+    assert context.candidate.findings.body == "what we knew"
     assert failure.outcome is expected
     assert must_be_terminal is False  # first cycle of three
 
@@ -191,7 +192,7 @@ async def test_a_revise_discards_the_work_and_restarts_clean_against_the_revised
 
     # The second session read the Editor's spec. This is the assertion that separates a cycle from
     # a retry: a retry would show "the original spec" twice.
-    assert [context.spec.body for context in implementer.calls] == [
+    assert [context.candidate.spec.body for context in implementer.calls] == [
         "the original spec",
         "build it with the API that exists",
     ]
@@ -225,8 +226,8 @@ async def test_knowledge_survives_only_through_the_findings() -> None:
     await run_with(store, implementer, editor)
 
     second = implementer.calls[1]
-    assert second.spec.body == "the bar"  # the bar did not move
-    assert second.findings.body == "the client's retry logic swallows the expected error"
+    assert second.candidate.spec.body == "the bar"  # the bar did not move
+    assert second.candidate.findings.body == "the client's retry logic swallows the expected error"
 
 
 async def test_each_session_consumption_is_persisted_for_the_sub_issue() -> None:

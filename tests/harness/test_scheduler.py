@@ -55,6 +55,7 @@ def scheduler_over(
             runner=runner,
             integration="integration",
             integrator=integrator or FakeIntegrator(git=git),
+            budget=Budget(),
         ),
         integration="integration",
         budget=Budget(),

@@ -57,6 +57,6 @@ async def run_turn_stream_integrator(
         exit_code=completed.exit_code,
         output=completed.output,
         wall_clock_s=completed.wall_clock_s,
-        worktree=context.worktree,
+        worktree=context.candidate.worktree,
         auto_compactions=completed.auto_compactions,
     )

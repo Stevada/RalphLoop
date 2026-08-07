@@ -567,6 +567,7 @@ async def run(
     )
     parent = parent_issue_name(repo, issue_source, options)
     scratch = repo / ".scratch" / parent if parent is not None else repo / ".scratch"
+    session_budget = budget or Budget()
     scheduler = Scheduler(
         repo=repo,
         git=git,
@@ -575,10 +576,14 @@ async def run(
         implementer=selected_implementer,
         editor=selected_editor,
         merge_queue=MergeQueue(
-            git=git, runner=runner, integration=integration, integrator=selected_integrator
+            git=git,
+            runner=runner,
+            integration=integration,
+            integrator=selected_integrator,
+            budget=session_budget,
         ),
         integration=integration,
-        budget=budget or Budget(),
+        budget=session_budget,
         parent_issue_name=parent,
     )
     report = await scheduler.run()

@@ -40,8 +40,8 @@ from ralph.harness import (
     classify_implementer,
     failure_report,
 )
-from ralph.issues import Findings, Spec
-from ralph.ports import Budget, SessionContext, Worktree
+from ralph.issues import Findings, Spec, SubIssueId
+from ralph.ports import Budget, Candidate, SessionContext, Worktree
 from tests.builders import impasse, telemetry
 from tests.testbed import TargetRepo
 
@@ -53,7 +53,7 @@ GENEROUS = Budget(wall_clock_s=30.0)
 def session_context(
     wt: Worktree, spec: Spec = SPEC, findings: Findings = FINDINGS, budget: Budget = GENEROUS
 ) -> SessionContext:
-    return SessionContext(spec=spec, findings=findings, worktree=wt, budget=budget)
+    return SessionContext(candidate=Candidate(id=SubIssueId("01"), spec=spec, findings=findings, worktree=wt), budget=budget)
 
 
 # ── the argv ─────────────────────────────────────────────────────────────────────────────────
@@ -362,7 +362,7 @@ async def test_the_codex_integrator_opens_a_fresh_session_in_the_conflicted_work
     assert "--cd" in argv and str(wt.path) in argv
     assert "--add-dir" in argv and str(git_metadata(repo.path)) in argv, "it must be able to commit"
     assert "resume" not in argv, "a fresh session: the conflict is in the repo, not in a transcript"
-    assert argv[-1] == integrator_prompt(context.spec, context.findings)
+    assert argv[-1] == integrator_prompt(context.candidate.spec, context.candidate.findings)
     assert t.killed is None
     assert t.resumable_identifier is None
     assert t.consumption.consumed_tokens == 770
@@ -393,9 +393,12 @@ async def test_the_codex_editor_reuses_the_editor_core_under_read_only_sandbox(
     editor = CodexEditor(open_session=open_session, suite=("uv", "run", "pytest", "-q"))
     t, verdict = await editor.adjudicate(
         SessionContext(
-            spec=Spec(body="build it"),
-            findings=Findings(body=""),
-            worktree=Worktree(path=tmp_path, branch="ralph/01", base="integration"),
+            candidate=Candidate(
+                id=SubIssueId("01"),
+                spec=Spec(body="build it"),
+                findings=Findings(body=""),
+                worktree=Worktree(path=tmp_path, branch="ralph/01", base="integration"),
+            ),
             budget=Budget(wall_clock_s=10.0),
         ),
         FAILURE,

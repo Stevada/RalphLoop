@@ -40,7 +40,7 @@ from ralph.issues import Findings, SessionConsumption, Spec, SubIssueId, SubIssu
 from ralph.issues.filesystem import FilesystemIssueStore
 from ralph.issues.linear import LinearIssueStore
 from ralph.notification import notify
-from ralph.ports import Budget, SessionContext, Worktree
+from ralph.ports import Budget, Candidate, SessionContext, Worktree
 from tests.builders import graph_of, impasse, telemetry
 from tests.issues.test_linear_issue_store import FakeLinearClient, parent_with, sub_issue
 from tests.testbed import TargetRepo
@@ -183,7 +183,7 @@ async def test_the_integrator_opens_a_fresh_session_in_the_conflicted_worktree(
     t = await CopilotIntegrator(open_session=open_session).reconcile(context)
 
     assert seen[0].cwd == wt.path
-    assert seen[0].prompt == integrator_prompt(context.spec, context.findings)
+    assert seen[0].prompt == integrator_prompt(context.candidate.spec, context.candidate.findings)
     assert seen[0].resumable_identifier is None, "a fresh session, not a resumed one"
     assert seen[0].permit is not None
     assert seen[0].permit("Write", {"file_path": "copilot.txt"}).allowed
@@ -313,7 +313,7 @@ async def test_the_implementer_is_killed_through_the_sdk_session(repo: TargetRep
 
 
 def _context(wt: Worktree, budget: Budget = Budget(wall_clock_s=20.0)) -> SessionContext:
-    return SessionContext(spec=SPEC, findings=FINDINGS, worktree=wt, budget=budget)
+    return SessionContext(candidate=Candidate(id=SubIssueId("01"), spec=SPEC, findings=FINDINGS, worktree=wt), budget=budget)
 
 
 REAL = pytest.mark.skipif(
@@ -339,9 +339,12 @@ async def test_a_real_copilot_integrator_resolves_a_real_merge_conflict(
             """)
     )
     context = SessionContext(
-        spec=spec,
-        findings=Findings(body=""),
-        worktree=wt,
+        candidate=Candidate(
+            id=SubIssueId("01"),
+            spec=spec,
+            findings=Findings(body=""),
+            worktree=wt,
+        ),
         budget=Budget(wall_clock_s=900.0),
     )
 
@@ -432,9 +435,12 @@ async def test_the_editor_denies_mutating_tools_through_the_shared_permit(tmp_pa
 
     await CopilotEditor(open_session=open_session, suite=SUITE).adjudicate(
         SessionContext(
-            spec=Spec(body="build it"),
-            findings=Findings(body=""),
-            worktree=_worktree(tmp_path),
+            candidate=Candidate(
+                id=SubIssueId("01"),
+                spec=Spec(body="build it"),
+                findings=Findings(body=""),
+                worktree=_worktree(tmp_path),
+            ),
             budget=Budget(wall_clock_s=20.0),
         ),
         FAILURE,
@@ -475,9 +481,12 @@ async def _adjudicate(
 
     return await CopilotEditor(open_session=open_session, suite=SUITE).adjudicate(
         SessionContext(
-            spec=Spec(body="build it"),
-            findings=Findings(body=""),
-            worktree=_worktree(tmp_path),
+            candidate=Candidate(
+                id=SubIssueId("01"),
+                spec=Spec(body="build it"),
+                findings=Findings(body=""),
+                worktree=_worktree(tmp_path),
+            ),
             budget=Budget(wall_clock_s=20.0),
         ),
         FAILURE,

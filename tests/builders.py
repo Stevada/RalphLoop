@@ -21,7 +21,7 @@ from ralph.harness import (
     Verdict,
 )
 from ralph.issues import Findings, IssueGraph, Spec, SubIssue, SubIssueId
-from ralph.ports import Budget, SessionContext, Worktree
+from ralph.ports import Budget, Candidate, SessionContext, Worktree
 
 DEFAULT_CONSUMPTION = TokenConsumption.split(input=30_000, cache_read=15_000, output=5_000)
 """50,000 tokens, split the way a real session's are: mostly prompt, much of it cached."""
@@ -100,16 +100,29 @@ def verdict(
     )
 
 
-def context(worktree: Worktree, spec: str = "build it", findings: str = "") -> SessionContext:
-    """A session's inputs, for the tests that are about something else. The merge queue takes one
-    because the Integrator it may dispatch needs a spec to break ties with; every other field is
-    scenery."""
-    return SessionContext(
+def candidate(
+    worktree: Worktree,
+    spec: str = "build it",
+    findings: str = "",
+    id: str | None = None,
+) -> Candidate:
+    """What travels, for the tests that are about something else. The merge queue takes one because
+    the Integrator it may dispatch needs a spec to break ties with; every other field is scenery.
+
+    The id defaults to the worktree's branch suffix, so two candidates in one test are two
+    candidates rather than the same one twice.
+    """
+    return Candidate(
+        id=SubIssueId(id if id is not None else worktree.branch.rsplit("/", 1)[-1]),
         spec=Spec(body=spec),
         findings=Findings(body=findings),
         worktree=worktree,
-        budget=Budget(),
     )
+
+
+def context(worktree: Worktree, spec: str = "build it", findings: str = "") -> SessionContext:
+    """One candidate, bounded for a session."""
+    return SessionContext(candidate=candidate(worktree, spec, findings), budget=Budget())
 
 
 def graph_of(edges: Mapping[str, Iterable[str]]) -> IssueGraph:

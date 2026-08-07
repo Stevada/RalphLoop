@@ -253,7 +253,7 @@ class StandInIntegrator:
         self.calls.append(context)
         if not self.resolves:
             return telemetry()
-        path = context.worktree.path
+        path = context.candidate.worktree.path
         for conflicted in path.rglob("*.py"):
             text = conflicted.read_text()
             if "<<<<<<<" not in text:

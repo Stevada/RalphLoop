@@ -139,7 +139,7 @@ async def run_turn_stream_implementer(
         exit_code=completed.exit_code,
         output=completed.output,
         wall_clock_s=completed.wall_clock_s,
-        worktree=context.worktree,
+        worktree=context.candidate.worktree,
         auto_compactions=completed.auto_compactions,
         resumable_identifier=completed.resumable_identifier,
     )
@@ -159,9 +159,9 @@ class SubprocessImplementer:
     build_resolve_argv: BuildResolveArgv | None = None
 
     async def run(self, context: SessionContext) -> SessionTelemetry:
-        worktree = context.worktree
+        worktree = context.candidate.worktree
         return await run_subprocess_implementer(
-            self.build_argv(context.spec, context.findings, worktree),
+            self.build_argv(context.candidate.spec, context.candidate.findings, worktree),
             worktree,
             context.budget,
             self.final_consumption,
@@ -171,13 +171,13 @@ class SubprocessImplementer:
         self, context: SessionContext, resumable_identifier: str
     ) -> SessionTelemetry:
         if self.build_resolve_argv is None:
-            return _resume_unavailable(context.worktree, resumable_identifier)
+            return _resume_unavailable(context.candidate.worktree, resumable_identifier)
         argv = self.build_resolve_argv(context, resumable_identifier)
         if argv is None:
-            return _resume_unavailable(context.worktree, resumable_identifier)
+            return _resume_unavailable(context.candidate.worktree, resumable_identifier)
         return await run_subprocess_implementer(
             argv,
-            context.worktree,
+            context.candidate.worktree,
             context.budget,
             self.final_consumption,
         )
