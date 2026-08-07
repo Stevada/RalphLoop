@@ -522,6 +522,23 @@ per-sub-issue consumption on the issue record; diffstats and failing-test output
 impasse report, not here. The run log answers one question — *what happened, in what order, to
 which sub-issue* — and it is exactly what the write-through mirrors to Linear, best-effort.
 
+### The transcripts
+
+What the run log leaves out has to go somewhere, or a run's only surviving account of a session is
+the handful of facts the harness chose to classify. Each session's full output is kept in a file of
+its own, at `<repo>/.scratch/<phase>/transcripts/<sub-issue>/<cycle>-<actor>.log`.
+
+The two artifacts index each other without either referencing the other: a `session-finished` line
+already names the sub-issue and the actor, and the cycle is the only thing a reader brings to the
+filename. That is also why the key is three parts rather than one — a sub-issue can produce an
+Implementer, an Editor and an Integrator session per cycle, three cycles over, and a coarser key
+would quietly keep one of nine.
+
+Nothing in the harness reads them back. They exist for the human who opens a quarantined worktree
+and wants to know what the session was thinking — the one question the notification cannot answer
+and the diff can only partly. A file that is empty is a session that said nothing, which is a
+different claim from a file that is not there.
+
 ### The merge/write window
 
 The merge gate's last two steps — fast-forward, then write `landed` to Linear — are not

@@ -37,6 +37,7 @@ from ralph.ports import (
     RunLog,
     SessionContext,
     TestRunner,
+    Transcripts,
     Worktree,
 )
 from tests.builders import graph_of, telemetry
@@ -49,6 +50,7 @@ from tests.fakes import (
     FakeIssueStore,
     FakeRunLog,
     FakeTestRunner,
+    FakeTranscripts,
 )
 
 FROZEN = [
@@ -157,6 +159,7 @@ def test_every_port_has_a_fake_that_satisfies_it() -> None:
     editor: Editor = FakeEditor()
     store: IssueStore = FakeIssueStore(graph=graph_of({"01": []}))
     log: RunLog = FakeRunLog()
+    transcripts: Transcripts = FakeTranscripts()
     runner: TestRunner = FakeTestRunner()
     git: Git = FakeGit()
     commands: CommandSource = FakeCommandSource(
@@ -168,6 +171,7 @@ def test_every_port_has_a_fake_that_satisfies_it() -> None:
     assert isinstance(editor, Editor)
     assert isinstance(store, IssueStore)
     assert isinstance(log, RunLog)
+    assert isinstance(transcripts, Transcripts)
     assert isinstance(runner, TestRunner)
     assert isinstance(git, Git)
     assert isinstance(commands, CommandSource)

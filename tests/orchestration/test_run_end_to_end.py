@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -362,3 +363,48 @@ async def test_a_landed_sub_issue_leaves_no_worktree_and_no_branch(
 
     # The commits survived their branch: they are on integration, which is where they landed.
     assert GitCli(repo=repo.path).commits_between("main", "integration") >= 2
+
+
+async def test_each_session_leaves_its_transcript_beside_the_run_log(
+    repo: TargetRepo, agent: StandInAgent
+) -> None:
+    """The run log says a session happened; the transcript says what it said.
+
+    Asserted here rather than only against the fake because the filename is the whole design — a
+    store wired to the wrong root, or handed a cycle it computed itself, fails nowhere else.
+    """
+    await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
+        options=make_options(),
+    )
+
+    transcripts = repo.path / ".scratch" / PARENT_ISSUE_NAME / "transcripts"
+    assert sorted(p.relative_to(transcripts) for p in transcripts.rglob("*.log")) == [
+        Path("01/1-implementer.log"),
+        Path("02/1-implementer.log"),
+    ]
+    # Empty, and correctly so: the `succeed` stand-in commits without narrating. The file is the
+    # claim that the session ran and said nothing — which is not what an absent file would say.
+    assert (transcripts / "01" / "1-implementer.log").read_text() == ""
+
+
+async def test_a_transcript_holds_what_the_session_actually_said(
+    repo: TargetRepo, agent: StandInAgent
+) -> None:
+    """The Implementer's own words, kept whole — including the sentinel the harness parsed out of
+    them. This is the artifact a human opens next to the preserved worktree."""
+    await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.IMPASSE),
+        editor=terminal_editor(),
+        options=make_options(),
+    )
+
+    body = (
+        repo.path / ".scratch" / PARENT_ISSUE_NAME / "transcripts" / "01" / "1-implementer.log"
+    ).read_text()
+    assert "the second acceptance criterion of 01" in body

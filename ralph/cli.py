@@ -65,6 +65,7 @@ from ralph.ports import (
 )
 from ralph.runlog import Event, JsonlRunLog
 from ralph.scheduler import RunReport, Scheduler
+from ralph.transcripts import FileTranscripts
 
 log = logging.getLogger("ralph")
 
@@ -573,6 +574,7 @@ async def run(
         git=git,
         store=store,
         run_log=NarratedRunLog(JsonlRunLog(path=scratch / "run.jsonl")),
+        transcripts=FileTranscripts(root=scratch / "transcripts"),
         implementer=selected_implementer,
         editor=selected_editor,
         merge_gate=MergeGate(

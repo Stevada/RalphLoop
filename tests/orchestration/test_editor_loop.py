@@ -44,6 +44,7 @@ from tests.fakes import (
     FakeIssueStore,
     FakeRunLog,
     FakeTestRunner,
+    FakeTranscripts,
 )
 from tests.testbed import (
     LEDGER_ENV,
@@ -84,6 +85,7 @@ async def run_with(
         git=git,
         store=store,
         run_log=log,
+        transcripts=FakeTranscripts(),
         implementer=implementer,
         editor=editor,
         merge_gate=MergeGate(

@@ -382,6 +382,14 @@ cycle's worth reads as a story with two characters:
 01  implementer  sub-issue-closed   landed
 ```
 
+`Transcripts` is the second sink for a finished session, alongside consumption: the scheduler writes
+both together in `_record_session`, for all three actors, so no call site can record half of a
+session. `FileTranscripts` in [transcripts.py](../ralph/transcripts.py) puts each one at
+`<sub-issue>/<cycle>-<actor>.log`. The port is write-only by construction — the harness never reads
+a transcript back, and one that could would be inviting a decision to be made out of model prose.
+The Integrator's is written here too, not by the merge gate: the gate writes nothing, and
+`Land.integrator` is how its telemetry reaches a writer.
+
 ### The pre-flight — [preflight.py](../ralph/harness/rules/preflight.py), gathered in `cli.py`
 
 **It refuses; it does not warn.** Seven checks, each describing a run the harness would otherwise

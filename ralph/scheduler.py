@@ -49,6 +49,7 @@ from ralph.ports import (
     Implementer,
     RunLog,
     SessionContext,
+    Transcripts,
 )
 from ralph.runlog import EventKind, event
 
@@ -127,6 +128,7 @@ class Scheduler:
         git: Git,
         store: IssueStore,
         run_log: RunLog,
+        transcripts: Transcripts,
         implementer: Implementer,
         merge_gate: MergeGate,
         integration_branch: str,
@@ -138,6 +140,7 @@ class Scheduler:
         self._git = git
         self._store = store
         self._run_log = run_log
+        self._transcripts = transcripts
         self._implementer = implementer
         self._editor = editor
         self._merge_gate = merge_gate
@@ -246,21 +249,14 @@ class Scheduler:
         candidate = Candidate(id=sub.id, spec=spec, findings=findings, worktree=wt)
         context = SessionContext(candidate=candidate, budget=self._budget)
         telemetry = await self._implementer.run(context)
-        await self._store.record_consumption(
-            sub.id,
-            SessionConsumption(
-                actor=Actor.IMPLEMENTER,
-                consumption=telemetry.consumption,
-                auto_compactions=telemetry.auto_compactions,
-            ),
-        )
+        await self._record_session(sub.id, attempt, Actor.IMPLEMENTER, telemetry)
         outcome = classify_implementer(telemetry)
         suite = None
         detail: str | None = None
 
         if route(Actor.IMPLEMENTER, outcome) is Destination.MERGE_GATE:
             land = await self._merge_gate.land(candidate)
-            await self._record_reconciliation(sub.id, land)
+            await self._record_reconciliation(sub.id, attempt, land)
 
             if land.result is LandResult.LANDED:
                 return await self._landed(candidate)
@@ -337,14 +333,9 @@ class Scheduler:
 
         await self._record(id, Actor.EDITOR, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS)
         telemetry, verdict = await self._editor.adjudicate(context, report, must_be_terminal)
-        await self._store.record_consumption(
-            id,
-            SessionConsumption(
-                actor=Actor.EDITOR,
-                consumption=telemetry.consumption,
-                auto_compactions=telemetry.auto_compactions,
-            ),
-        )
+        # The Editor session belongs to the cycle its Implementer failure opened, not to a cycle of
+        # its own — which is what puts the two halves of one cycle side by side in the transcripts.
+        await self._record_session(id, report.cycles, Actor.EDITOR, telemetry)
         outcome = classify_editor(telemetry, verdict)
         await self._record(id, Actor.EDITOR, EventKind.SESSION_FINISHED, outcome)
 
@@ -394,7 +385,7 @@ class Scheduler:
         self._git.discard_worktree(candidate.worktree)
         return None
 
-    async def _record_reconciliation(self, id: SubIssueId, land: Land) -> None:
+    async def _record_reconciliation(self, id: SubIssueId, cycle: int, land: Land) -> None:
         """The gate dispatched the Integrator; the scheduler writes down that it happened.
 
         Both events, in order, whatever the landing did next: a session that spent tokens is billed
@@ -414,14 +405,7 @@ class Scheduler:
         await self._record(
             id, Actor.INTEGRATOR, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS, started
         )
-        await self._store.record_consumption(
-            id,
-            SessionConsumption(
-                actor=Actor.INTEGRATOR,
-                consumption=land.integrator.consumption,
-                auto_compactions=land.integrator.auto_compactions,
-            ),
-        )
+        await self._record_session(id, cycle, Actor.INTEGRATOR, land.integrator)
         await self._record(
             id, Actor.INTEGRATOR, EventKind.SESSION_FINISHED, land.integrator_outcome, finished
         )
@@ -439,6 +423,26 @@ class Scheduler:
         self._git.move_worktree(candidate.worktree, self._worktree_dir(QUARANTINE, id))
         await self._record(id, actor, EventKind.SUB_ISSUE_CLOSED, SubIssueState.NEEDS_HUMAN)
         return _Closed(id, report)
+
+    async def _record_session(
+        self, id: SubIssueId, cycle: int, actor: Actor, telemetry: SessionTelemetry
+    ) -> None:
+        """What a finished session is billed for, and what it said — for all three actors alike.
+
+        The two travel together because they are one fact: this session happened, here is what it
+        cost and here is what it produced. Recorded from the scheduler even for the Integrator,
+        whose session the merge gate dispatched: the gate writes nothing, deliberately, and
+        `Land.integrator` is how its telemetry reaches a writer.
+        """
+        await self._store.record_consumption(
+            id,
+            SessionConsumption(
+                actor=actor,
+                consumption=telemetry.consumption,
+                auto_compactions=telemetry.auto_compactions,
+            ),
+        )
+        await self._transcripts.write(id, cycle, actor, telemetry.session_output)
 
     async def _record(
         self,

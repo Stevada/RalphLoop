@@ -25,6 +25,7 @@ from tests.fakes import (
     FakeIssueStore,
     FakeRunLog,
     FakeTestRunner,
+    FakeTranscripts,
 )
 
 REPO = Path("/repo")
@@ -41,6 +42,7 @@ def scheduler_over(
     log: FakeRunLog,
     editor: FakeEditor | None = None,
     integrator: FakeIntegrator | None = None,
+    transcripts: FakeTranscripts | None = None,
 ) -> tuple[Scheduler, FakeTestRunner]:
     runner = FakeTestRunner()
     scheduler = Scheduler(
@@ -48,6 +50,7 @@ def scheduler_over(
         git=git,
         store=store,
         run_log=log,
+        transcripts=transcripts or FakeTranscripts(),
         implementer=implementer,
         editor=editor or terminal_editor(),
         merge_gate=MergeGate(
@@ -293,3 +296,74 @@ async def test_a_merge_gate_failure_that_is_not_a_conflict_never_opens_an_integr
 
     assert report.failed == {SubIssueId("01"): Outcome.INTEGRATION_FAILED}
     assert integrator.calls == []
+
+
+# --- transcripts ----------------------------------------------------------------------------------
+
+
+async def test_every_session_of_every_actor_leaves_a_transcript_under_its_own_cycle() -> None:
+    """Two cycles, all three actors, and no two of them landing on the same key.
+
+    Cycle one is an impasse the Editor answers with `revise`; cycle two delivers, conflicts, and
+    the Integrator the merge gate dispatches gets it onto the integration branch. That is every
+    session a sub-issue can produce short of the cap, and the point is that the four are four
+    separate transcripts — an Editor session filed under a cycle of its own, or an Integrator filed
+    without one, would silently overwrite a sibling.
+    """
+    store = FakeIssueStore(
+        graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
+    )
+    implementer = FakeImplementer(
+        scripted=[
+            telemetry(commits=0, session_output="I cannot see how"),
+            telemetry(session_output="done, and it merges"),
+        ]
+    )
+    editor = FakeEditor(
+        scripted=[(telemetry(session_output="the spec was wrong"), verdict(Verdict.REVISE))]
+    )
+    git = FakeGit(head="integration", merge_conflicts={"ralph/01"})
+    integrator = FakeIntegrator(git=git, scripted=[telemetry(session_output="took both sides")])
+    transcripts = FakeTranscripts()
+
+    scheduler, _ = scheduler_over(
+        store, implementer, git, FakeRunLog(), editor, integrator, transcripts
+    )
+    report = await scheduler.run()
+
+    assert report.landed == (SubIssueId("01"),)
+    assert transcripts.written == {
+        (SubIssueId("01"), 1, Actor.IMPLEMENTER): "I cannot see how",
+        (SubIssueId("01"), 1, Actor.EDITOR): "the spec was wrong",
+        (SubIssueId("01"), 2, Actor.IMPLEMENTER): "done, and it merges",
+        (SubIssueId("01"), 2, Actor.INTEGRATOR): "took both sides",
+    }
+
+
+async def test_a_quarantined_session_is_kept_too() -> None:
+    """The transcript matters most for the sub-issue nobody could land — it is what the human who
+    opens the preserved worktree reads to find out what the session was thinking."""
+    store = FakeIssueStore(
+        graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
+    )
+    implementer = FakeImplementer(scripted=[telemetry(commits=0, session_output="stuck")])
+    editor = FakeEditor(
+        scripted=[(telemetry(session_output="unanswerable"), verdict(Verdict.PLANNING_DEFECT))]
+    )
+    transcripts = FakeTranscripts()
+
+    scheduler, _ = scheduler_over(
+        store,
+        implementer,
+        FakeGit(head="integration"),
+        FakeRunLog(),
+        editor,
+        transcripts=transcripts,
+    )
+    report = await scheduler.run()
+
+    assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
+    assert transcripts.written == {
+        (SubIssueId("01"), 1, Actor.IMPLEMENTER): "stuck",
+        (SubIssueId("01"), 1, Actor.EDITOR): "unanswerable",
+    }

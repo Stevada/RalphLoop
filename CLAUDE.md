@@ -100,6 +100,9 @@ load-bearing facts:
   above `issues/` is not injected into any prompt; it is discoverable directly, since sessions read
   the full repo checkout.
 - Worktrees live at `<repo>/.worktrees/active/`; failures preserved at `<repo>/.worktrees/failed/`.
+- A run writes two artifacts under `<repo>/.scratch/<phase>/`: `run.jsonl`, the authoritative
+  ordered record and nothing heavier, and `transcripts/<sub-issue>/<cycle>-<actor>.log`, one file
+  per session holding everything it said. Nothing reads the transcripts back.
 - Target repos stay agnostic — Ralph reads `.scratch/`, a repo-level context file (`CLAUDE.md` for
   Copilot; `AGENTS.md` then `CLAUDE.md` for Codex), and `.env` at the repo root, and modifies
   nothing else.

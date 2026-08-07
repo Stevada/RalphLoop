@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
+from ralph.harness import Actor, EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
 from ralph.issues import (
     Findings,
     IssueGraph,
@@ -142,6 +142,21 @@ class FakeRunLog:
 
     def events(self) -> tuple[Event, ...]:
         return tuple(self.written)
+
+
+@dataclass(slots=True)
+class FakeTranscripts:
+    """In-memory transcripts, keyed exactly as the files would be named.
+
+    A dict rather than a list because the key is the claim worth asserting: two sessions that
+    collided on one filename would be one entry here, and a test that counted appends would not
+    notice.
+    """
+
+    written: dict[tuple[SubIssueId, int, Actor], str] = field(default_factory=dict)
+
+    async def write(self, sub_issue: SubIssueId, cycle: int, actor: Actor, body: str) -> None:
+        self.written[(sub_issue, cycle, actor)] = body
 
 
 @dataclass(slots=True)

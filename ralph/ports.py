@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
+from ralph.harness import Actor, EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
 from ralph.issues import Findings, Spec, SubIssueId
 from ralph.runlog import Event
 
@@ -118,6 +118,19 @@ class RunLog(Protocol):
     async def write(self, e: Event) -> None: ...
 
     def events(self) -> tuple[Event, ...]: ...
+
+
+@runtime_checkable
+class Transcripts(Protocol):
+    """Where a session's whole output is kept, keyed by sub-issue, cycle and actor.
+
+    A separate port from `RunLog` because the two artifacts have different readers: the run log is
+    skimmed in order by someone asking what happened, and a transcript is opened once, deliberately,
+    by someone who already knows which session they want. Write-only — the harness never reads one
+    back, and a port that offered to would be inviting a decision to be made from a model's prose.
+    """
+
+    async def write(self, sub_issue: SubIssueId, cycle: int, actor: Actor, body: str) -> None: ...
 
 
 @runtime_checkable

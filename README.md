@@ -54,6 +54,8 @@ it dispatches anything.
 
 A run narrates itself while it goes: every event appended to `<repo>/.scratch/<phase>/run.jsonl` is
 printed as it is written, so a run in flight is watchable rather than silent until its notification.
+The lines stay skimmable because the bodies are kept elsewhere — each session's full output goes to
+`<repo>/.scratch/<phase>/transcripts/<sub-issue>/<cycle>-<actor>.log`.
 
 ```
 16:42:22  VIR-80     implementer  session-started   in-progress
