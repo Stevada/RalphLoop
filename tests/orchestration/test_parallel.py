@@ -76,6 +76,36 @@ async def test_all_currently_eligible_sub_issues_run_concurrently(
     assert peak_concurrency(ledger) == 4
 
 
+async def test_sequential_runs_one_sub_issue_at_a_time_and_still_lands_them_all(
+    repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same four independent sub-issues, with `--sequential`.
+
+    `peak == 1` is the whole claim: nothing else can tell a serialized run from a parallel one that
+    happened to interleave politely. They all still land, in graph order, because narrowing the
+    dispatch does not touch the merge gate.
+    """
+    repo.write_graph({"01": [], "02": [], "03": [], "04": []})
+    ledger = with_ledger(monkeypatch, repo)
+
+    report = await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SLOW),
+        editor=unengaged_editor(),
+        options=make_options(),
+        sequential=True,
+    )
+
+    assert report.landed == (
+        SubIssueId("01"),
+        SubIssueId("02"),
+        SubIssueId("03"),
+        SubIssueId("04"),
+    )
+    assert peak_concurrency(ledger) == 1
+
+
 async def test_a_fast_sub_issue_lands_without_waiting_for_a_slower_sibling(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:

@@ -214,6 +214,12 @@ The CLI defaults match Ralph's current common path:
 How `codex`/`copilot` is driven, and the four Linear state names, are hardcoded in the adapter that
 owns them.
 
+`--sequential` runs one sub-issue at a time instead of every eligible one at once. It narrows what
+the scheduler dispatches and nothing else: the merge gate, the suite gate, and the fast-forward are
+the same on either setting, so the run is slower and strictly no safer. Reach for it when the
+constraint is outside the harness — a rate limit, a machine that cannot host N checkouts, or a
+session you want to watch one at a time.
+
 ### `.env` — the one secret
 
 | Variable | Description |

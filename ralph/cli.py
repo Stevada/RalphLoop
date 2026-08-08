@@ -530,6 +530,7 @@ async def run(
     integrator: Integrator | None = None,
     options: RunOptions | None = None,
     command_source: CommandSource | None = None,
+    sequential: bool = False,
 ) -> RunReport:
     """Explicit `implementer`/`editor` override the ones the resolved options name — those are the seams
     the tests inject the scripted stand-in and a stub Editor through, and the reason no test in the
@@ -587,6 +588,7 @@ async def run(
         integration_branch=integration_branch,
         budget=session_budget,
         parent_issue_name=parent,
+        sequential=sequential,
     )
     report = await scheduler.run()
     notification = render(report.notification, parent)
@@ -736,6 +738,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="read the graph and print the build order. No session is opened.",
     )
     runner.add_argument(
+        "--sequential",
+        action="store_true",
+        help="run one sub-issue at a time instead of every eligible one at once.",
+    )
+    runner.add_argument(
         "--log-level",
         default=DEFAULT_LOG_LEVEL,
         help="the harness's diagnostic verbosity: DEBUG / INFO / WARNING / ERROR.",
@@ -787,12 +794,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(render_plan(args.repo, args.issue_source, options))
         return 0
 
-    print(f"options: {options.loggable()} log_level={level}")
+    print(f"options: {options.loggable()} sequential={args.sequential} log_level={level}")
     report = asyncio.run(
         run(
             args.repo,
             args.issue_source,
             options=options,
+            sequential=args.sequential,
         )
     )
     print(render(report.notification, parent_issue_name(args.repo, args.issue_source, options)))

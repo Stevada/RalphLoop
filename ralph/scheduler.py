@@ -1,6 +1,8 @@
 """The run: read the graph, dispatch on eligibility, quarantine, drain, notify.
 
-Sub-issues run in parallel but land one at a time (the merge gate's lock).
+Sub-issues run in parallel but land one at a time (the merge gate's lock). `sequential` narrows
+that to one sub-issue in flight at a time; it changes what is dispatched and nothing else, because
+everything that makes a landing correct lives in the merge gate.
 There is no wave barrier: the dispatch loop re-derives eligibility on every completion, so a
 sub-issue starts the moment its blockers land. A failure is quarantined and drained around, never
 retried — the loop below is a *cycle* loop, not a retry loop, and that distinction, quarantine-and-
@@ -136,6 +138,7 @@ class Scheduler:
         budget: Budget,
         editor: Editor,
         parent_issue_name: str | None = None,
+        sequential: bool = False,
     ) -> None:
         self._repo = repo
         self._git = git
@@ -149,6 +152,7 @@ class Scheduler:
         self._budget = budget
         self._ledger = CycleLedger()
         self._parent_issue_name = parent_issue_name
+        self._sequential = sequential
 
     def _worktree_dir(self, base: Path, id: SubIssueId) -> Path:
         """Nested under the parent issue's name when known, so two phases sharing a repo never
@@ -175,6 +179,11 @@ class Scheduler:
         try:
             while True:
                 for id in sorted(eligible(graph, states)):
+                    if self._sequential and running:
+                        # One in flight at a time. The rest stay `ready` and are re-derived on the
+                        # next completion, so a sub-issue whose blockers landed meanwhile is still
+                        # picked up in the same order it would have been.
+                        break
                     # Claimed synchronously, before this coroutine can yield. The state map is the
                     # only thing standing between a sub-issue and being dispatched twice, so it is
                     # updated in the same breath as the dispatch — not inside the task, which does
