@@ -119,9 +119,9 @@ class _FailedLanding:
 class Scheduler:
     """The run.
 
-    Every run has an Editor. The composition root resolves the concrete adapter before the
-    scheduler starts, so a failed Implementer session that routes to adjudication always reaches
-    the Editor loop.
+    The composition root resolves the concrete adapter before the scheduler starts, so a failed
+    Implementer session that routes to adjudication reaches the Editor loop. `editor=None` is a run
+    with the role unfilled: those failures go to the human unadjudicated, and no cycle is spent.
     """
 
     def __init__(
@@ -136,7 +136,7 @@ class Scheduler:
         merge_gate: MergeGate,
         integration_branch: str,
         budget: Budget,
-        editor: Editor,
+        editor: Editor | None,
         parent_issue_name: str | None = None,
         sequential: bool = False,
     ) -> None:
@@ -275,10 +275,25 @@ class Scheduler:
                 return await self._landed(candidate)
 
             if land.result is LandResult.CONFLICT_UNRESOLVED:
+                if land.integrator is None:
+                    # This run has no Integrator, so nothing was dispatched and there is no
+                    # reconciliation to show. The escalation carries the Implementer's own
+                    # session — it is the only one there was — and still never reaches the Editor.
+                    return await self._quarantine(
+                        candidate,
+                        Actor.IMPLEMENTER,
+                        failure_report(
+                            Outcome.INTEGRATION_FAILED,
+                            telemetry,
+                            None,
+                            land.result.value,
+                            attempt,
+                        ),
+                    )
                 # The Integrator was dispatched and the merge is still open. This escalates on the
                 # **Integrator's** outcome and telemetry, not the Implementer's: the Implementer
                 # delivered, and what a human needs to see is the reconciliation that failed.
-                assert land.integrator is not None and land.integrator_outcome is not None
+                assert land.integrator_outcome is not None
                 return await self._quarantine(
                     candidate,
                     Actor.INTEGRATOR,
@@ -308,8 +323,14 @@ class Scheduler:
             # Editor is involved.
             return await self._quarantine(candidate, Actor.IMPLEMENTER, report)
 
+        if self._editor is None:
+            # No Editor on this run. What would have been adjudicated goes to the human as it
+            # stands, on the Implementer's own report, and spends no cycle — a cycle is an
+            # Implementer session plus an Editor session, and there is no second half here.
+            return await self._quarantine(candidate, Actor.IMPLEMENTER, report)
+
         # Editor's half
-        return await self._adjudicate(context, report)
+        return await self._adjudicate(self._editor, context, report)
 
     async def _landed(self, candidate: Candidate) -> _Closed:
         id = candidate.id
@@ -324,6 +345,7 @@ class Scheduler:
     # TODO: Editor shall write 'Findings' in spec, which is specified in UL.
     async def _adjudicate(
         self,
+        editor: Editor,
         context: SessionContext,
         report: FailureReport,
     ) -> _Closed | None:
@@ -345,7 +367,7 @@ class Scheduler:
         must_be_terminal = self._ledger.must_be_terminal(id)
 
         await self._record(id, Actor.EDITOR, EventKind.SESSION_STARTED, SubIssueState.IN_PROGRESS)
-        telemetry, verdict = await self._editor.adjudicate(context, report, must_be_terminal)
+        telemetry, verdict = await editor.adjudicate(context, report, must_be_terminal)
         outcome = classify_editor(telemetry, verdict)
         # The Editor session belongs to the cycle its Implementer failure opened, not to a cycle of
         # its own — which is what puts the two halves of one cycle side by side in the transcripts.

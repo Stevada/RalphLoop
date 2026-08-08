@@ -42,8 +42,9 @@ class LandResult(StrEnum):
     FF_REFUSED = "ff-refused"  # ├─ both become Outcome.INTEGRATION_FAILED, and go to the Editor
     HEAD_MOVED = "head-moved"  # ┘
     CONFLICT_UNRESOLVED = "conflict-unresolved"
-    """The Integrator was dispatched and the merge is still open. Straight to a human: there is no
-    Editor move here, because no spec was wrong."""
+    """The merge is still open — the Integrator was dispatched and could not close it, or the run
+    has no Integrator to dispatch. Straight to a human either way: there is no Editor move here,
+    because no spec was wrong."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +79,7 @@ class MergeGate:
         git: Git,
         runner: TestRunner,
         integration_branch: str,
-        integrator: Integrator,
+        integrator: Integrator | None,
         budget: Budget,
     ) -> None:
         self._git = git
@@ -135,6 +136,11 @@ class MergeGate:
             reconciled: Outcome | None = None
             finished: bool | None = None
             if not self._git.merge(wt, self._integration_branch):
+                if self._integrator is None:
+                    # No Integrator on this run. The conflict is left exactly as git made it and
+                    # handed to a human — the same exit an Integrator that could not close the
+                    # merge takes, reached without spending a session to learn it.
+                    return Land(LandResult.CONFLICT_UNRESOLVED)
                 # Not a retry, and not a hiccup to back off from: a different actor, answering a
                 # question about landing order that the Implementer could not have seen. The
                 # conflict is left exactly as git made it — that is this session's input.

@@ -275,7 +275,9 @@ def test_an_actor_whose_runtime_is_not_installed_is_refused(
     has already failed and a wave of tokens has already been spent."""
     monkeypatch.setattr("ralph.cli._installed", lambda runtime: runtime.name != "claude_agent_sdk")
 
-    (refused,) = validate(repo.path, None, None, None, unengaged_implementer(), None)
+    (refused,) = validate(
+        repo.path, None, make_options(editor="claude"), None, unengaged_implementer(), None
+    )
 
     assert refused.check is Check.MISSING_ACTOR_RUNTIME
     assert "editor 'claude'" in refused.reason
@@ -290,6 +292,17 @@ def test_an_actor_handed_in_is_not_checked_for_a_runtime_it_will_not_use(
     monkeypatch.setattr("ralph.cli._installed", lambda runtime: False)
 
     assert validate_repo(repo) == ()
+
+
+def test_a_role_switched_off_is_not_checked_for_a_runtime_it_will_not_use(
+    repo: TargetRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--editor none` with no Claude SDK on the machine is a fine run: nothing will be constructed
+    for a role nobody fills. Refusing it would make the off switch unreachable on exactly the
+    machine that needs it."""
+    monkeypatch.setattr("ralph.cli._installed", lambda runtime: runtime.name != "claude_agent_sdk")
+
+    assert validate(repo.path, options=make_options(editor="none")) == ()
 
 
 def test_the_fixture_repo_is_ready_to_run(repo: TargetRepo) -> None:
@@ -310,9 +323,11 @@ def test_validate_prints_the_discovered_commands(
     assert "install:" not in out
 
 
-def test_validate_rejects_editor_none(repo: TargetRepo) -> None:
-    with pytest.raises(NoActor, match="Known: claude, codex, copilot"):
-        validate(repo.path, options=make_options(editor="none"))
+def test_validate_rejects_an_editor_the_harness_does_not_know(repo: TargetRepo) -> None:
+    """The harness will not invent an actor. (`none` is not this case — it is a real choice, and
+    means the role is unfilled.)"""
+    with pytest.raises(NoActor, match="Known: claude, codex, copilot, none"):
+        validate(repo.path, options=make_options(editor="gemini"))
 
 
 # ── and the run runs them too ────────────────────────────────────────────────────────────────

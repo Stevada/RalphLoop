@@ -228,6 +228,7 @@ async def test_the_editor_allowlist_uses_the_discovered_test_command(
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
         command_source=commands,
+        options=make_options(editor="claude"),
     )
 
     assert report.clean

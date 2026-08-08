@@ -5,8 +5,9 @@ Harness engineering for autonomous issue execution via coding agents.
 Four actors. A **Planner** (human-invoked) cuts a parent issue into a graph of sub-issues. An
 **Implementer** (Codex or Copilot) writes the code and the tests, one sub-issue per session, in
 an isolated worktree. An **Editor** (Claude Code or Copilot, read-only) diagnoses the sessions
-that fail and returns a verdict. An **Integrator** (Codex by default) reconciles the conflicts
-that parallel landing creates.
+that fail and returns a verdict. An **Integrator** (Codex or Copilot) reconciles the conflicts
+that parallel landing creates. The last two are opt-in: a run that names neither pages a human
+where they would have been.
 
 The harness is the machinery between them: it dispatches sub-issues as their dependencies land,
 bounds every session, classifies every failure honestly, and lands work through a lock-guarded
@@ -205,14 +206,31 @@ The CLI defaults match Ralph's current common path:
 ```bash
 --issue-mode filesystem
 --implementer codex
---editor claude
---integrator codex
+--editor none
+--integrator none
 --protected main
 --protected master
 ```
 
+**The two roles that answer a failure are unfilled by default.** A default run opens Implementer
+sessions and nothing else: a failure pages a human, a conflict pages a human. Naming an Editor or
+an Integrator is how a run asks to spend tokens on one.
+
 How `codex`/`copilot` is driven, and the four Linear state names, are hardcoded in the adapter that
 owns them.
+
+`--editor none` and `--integrator none` leave a role unfilled. Only these two can be: they are the
+roles that answer a *failure*, and a run can answer one by paging a human instead.
+
+- `--editor none` — every failure that would have been adjudicated goes to the human on the
+  Implementer's own report. No cycle is spent, so a sub-issue gets exactly one Implementer session
+  and no spec is ever revised.
+- `--integrator none` — a merge conflict goes to the human with git's conflict state left exactly
+  as it was made. The conflict was never an Editor's question and still isn't.
+
+Neither weakens a landing: the suite gate and the fast-forward are unchanged, and an unfilled role
+only ever *shortens* the path to a human. A run with no runtime installed for a role it has
+switched off is not refused — there is nothing to construct.
 
 `--sequential` runs one sub-issue at a time instead of every eligible one at once. It narrows what
 the scheduler dispatches and nothing else: the merge gate, the suite gate, and the fast-forward are

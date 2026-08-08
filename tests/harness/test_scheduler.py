@@ -16,7 +16,7 @@ from ralph.mergegate import MergeGate
 from ralph.ports import Budget
 from ralph.runlog import EventKind
 from ralph.scheduler import Scheduler
-from tests.builders import graph_of, telemetry, verdict
+from tests.builders import graph_of, impasse, telemetry, verdict
 from tests.fakes import (
     FakeEditor,
     FakeGit,
@@ -43,7 +43,12 @@ def scheduler_over(
     editor: FakeEditor | None = None,
     integrator: FakeIntegrator | None = None,
     transcripts: FakeTranscripts | None = None,
+    without_editor: bool = False,
+    without_integrator: bool = False,
 ) -> tuple[Scheduler, FakeTestRunner]:
+    """`without_editor` / `without_integrator` are the roles left unfilled — what `--editor none`
+    and `--integrator none` resolve to. They are separate from passing no fake, which means
+    *default fake*."""
     runner = FakeTestRunner()
     scheduler = Scheduler(
         repo=REPO,
@@ -52,12 +57,12 @@ def scheduler_over(
         run_log=log,
         transcripts=transcripts or FakeTranscripts(),
         implementer=implementer,
-        editor=editor or terminal_editor(),
+        editor=None if without_editor else editor or terminal_editor(),
         merge_gate=MergeGate(
             git=git,
             runner=runner,
             integration_branch="integration",
-            integrator=integrator or FakeIntegrator(git=git),
+            integrator=None if without_integrator else integrator or FakeIntegrator(git=git),
             budget=Budget(),
         ),
         integration_branch="integration",
@@ -226,6 +231,44 @@ async def test_an_unreconciled_conflict_goes_to_a_human_and_never_to_the_editor(
     assert len(integrator.calls) == 1
     assert editor.calls == []
     assert runner.runs == [], "the suite gate is downstream of a merge that never finished"
+    assert git.moved == [("ralph/01", REPO / ".worktrees" / "failed" / "01")]
+
+
+async def test_a_conflict_goes_to_a_human_unreconciled_when_the_run_has_no_integrator() -> None:
+    """`--integrator none`. No session is opened to learn what the gate already knows, and the
+    escalation carries the Implementer's own — the only session there was."""
+    store = FakeIssueStore(
+        graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
+    )
+    implementer = FakeImplementer(scripted=[telemetry()])
+    editor = terminal_editor()
+    git = FakeGit(head="integration", merge_conflicts={"ralph/01"})
+
+    scheduler, runner = scheduler_over(
+        store, implementer, git, FakeRunLog(), editor, without_integrator=True
+    )
+    report = await scheduler.run()
+
+    assert report.failed == {SubIssueId("01"): Outcome.INTEGRATION_FAILED}
+    assert editor.calls == [], "a conflict is never an Editor's question"
+    assert runner.runs == [], "the suite gate is downstream of a merge that never finished"
+    assert git.moved == [("ralph/01", REPO / ".worktrees" / "failed" / "01")]
+
+
+async def test_a_failure_goes_to_a_human_unadjudicated_when_the_run_has_no_editor() -> None:
+    """`--editor none`. An impasse would have gone to the Editor; with none, the human gets the
+    Implementer's report as it stands, and the sub-issue never gets a second Implementer session."""
+    store = FakeIssueStore(
+        graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
+    )
+    implementer = FakeImplementer(scripted=[telemetry(commits=0, impasse_report=impasse())])
+    git = FakeGit(head="integration")
+
+    scheduler, _ = scheduler_over(store, implementer, git, FakeRunLog(), without_editor=True)
+    report = await scheduler.run()
+
+    assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
+    assert len(implementer.calls) == 1, "no cycle was spent, so no second session was opened"
     assert git.moved == [("ralph/01", REPO / ".worktrees" / "failed" / "01")]
 
 

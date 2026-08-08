@@ -5,8 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Ralph is a **harness** for autonomous issue execution. Four actors: a **Planner** (human) cuts a
 parent issue into a graph of sub-issues; an **Implementer** (Codex or Copilot) writes code + tests,
 one sub-issue per session in an isolated worktree; an **Editor** (Claude Code or Copilot, read-only)
-diagnoses failed sessions and returns a verdict; an **Integrator** (Codex by default) reconciles the
-merge conflicts that parallel landing creates. The harness is the machinery between them.
+diagnoses failed sessions and returns a verdict; an **Integrator** (Codex or Copilot) reconciles the
+merge conflicts that parallel landing creates. The harness is the machinery between them. The
+Editor and the Integrator are **opt-in** (`--editor`, `--integrator`); unnamed, their failures go
+straight to the human.
 
 ## Status
 

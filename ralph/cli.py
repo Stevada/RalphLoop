@@ -72,6 +72,13 @@ log = logging.getLogger("ralph")
 CODEX = "codex"
 CLAUDE = "claude"
 COPILOT = "copilot"
+NONE = "none"
+"""The role is unfilled on this run. Only the two roles that answer a *failure* may be switched off
+— an Implementer is the run, and a run without one has nothing to do."""
+
+IMPLEMENTERS = (CODEX, COPILOT)
+EDITORS = (CLAUDE, CODEX, COPILOT, NONE)
+INTEGRATORS = (CODEX, COPILOT, NONE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,8 +105,8 @@ LINEAR = "linear"
 
 DEFAULT_ISSUE_MODE = FILESYSTEM
 DEFAULT_IMPLEMENTER = CODEX
-DEFAULT_EDITOR = CLAUDE
-DEFAULT_INTEGRATOR = CODEX
+DEFAULT_EDITOR = NONE
+DEFAULT_INTEGRATOR = NONE
 DEFAULT_PROTECTED = ("main", "master")
 
 LINEAR_API_KEY = "LINEAR_API_KEY"
@@ -184,21 +191,27 @@ def _add_option_flags(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--implementer",
-        choices=(CODEX, COPILOT),
+        choices=IMPLEMENTERS,
         default=DEFAULT_IMPLEMENTER,
         help=f"the CLI that writes code. Defaults to {DEFAULT_IMPLEMENTER}.",
     )
     parser.add_argument(
         "--editor",
-        choices=(CLAUDE, CODEX, COPILOT),
+        choices=EDITORS,
         default=DEFAULT_EDITOR,
-        help=f"the CLI that diagnoses failures. Defaults to {DEFAULT_EDITOR}.",
+        help=(
+            f"the CLI that diagnoses failures. Defaults to {DEFAULT_EDITOR}. "
+            f"{NONE} sends every failure it would have adjudicated to the human instead."
+        ),
     )
     parser.add_argument(
         "--integrator",
-        choices=(CODEX, COPILOT),
+        choices=INTEGRATORS,
         default=DEFAULT_INTEGRATOR,
-        help=f"the CLI that reconciles merge conflicts. Defaults to {DEFAULT_INTEGRATOR}.",
+        help=(
+            f"the CLI that reconciles merge conflicts. Defaults to {DEFAULT_INTEGRATOR}. "
+            f"{NONE} sends every merge conflict to the human instead."
+        ),
     )
     parser.add_argument(
         "--protected",
@@ -211,17 +224,19 @@ def _add_option_flags(parser: argparse.ArgumentParser) -> None:
 
 def validate_actors(options: RunOptions) -> None:
     """The CLI must name actors this harness knows, without constructing their adapters."""
-    if options.implementer not in {CODEX, COPILOT}:
+    if options.implementer not in IMPLEMENTERS:
         raise NoActor(
-            f"implementer: {options.implementer!r} names no Implementer. Known: {CODEX}, {COPILOT}."
+            f"implementer: {options.implementer!r} names no Implementer. "
+            f"Known: {', '.join(IMPLEMENTERS)}."
         )
-    if options.editor not in {CLAUDE, CODEX, COPILOT}:
+    if options.editor not in EDITORS:
         raise NoActor(
-            f"editor: {options.editor!r} names no Editor. Known: {CLAUDE}, {CODEX}, {COPILOT}."
+            f"editor: {options.editor!r} names no Editor. Known: {', '.join(EDITORS)}."
         )
-    if options.integrator not in {CODEX, COPILOT}:
+    if options.integrator not in INTEGRATORS:
         raise NoActor(
-            f"integrator: {options.integrator!r} names no Integrator. Known: {CODEX}, {COPILOT}."
+            f"integrator: {options.integrator!r} names no Integrator. "
+            f"Known: {', '.join(INTEGRATORS)}."
         )
 
 
@@ -244,7 +259,8 @@ def actor_runtime_error(
     Editor, is after a sub-issue has already failed and a wave of tokens has already been spent.
 
     A role handed a ready-made actor is skipped: nothing will be constructed for it, so what the
-    options *name* for that role is not a fact about this run.
+    options *name* for that role is not a fact about this run. A role switched off is skipped for
+    the same reason — an absent Editor needs no SDK on the machine.
     """
     named_roles = [
         ("implementer", options.implementer, implementer),
@@ -254,19 +270,23 @@ def actor_runtime_error(
     missing = [
         f"{role} {named!r}: `{runtime.name}` is not installed — {runtime.fix}"
         for role, named, provided in named_roles
-        if provided is None and not _installed(runtime := ACTOR_RUNTIME[named])
+        if provided is None
+        and named != NONE
+        and not _installed(runtime := ACTOR_RUNTIME[named])
     ]
     return "; ".join(missing) if missing else None
 
 
-def editor_of(options: RunOptions, suite: tuple[str, ...]) -> Editor:
-    """Which model adjudicates a failed session.
+def editor_of(options: RunOptions, suite: tuple[str, ...]) -> Editor | None:
+    """Which model adjudicates a failed session, or `None` when the run has no Editor.
 
     The Editor and the Implementer should not be the same model on the same failure — an Editor
     adjudicating an impasse declared by *itself* is the least independent sensor the system could
     have. Nothing here enforces that; it is why two CLIs back each role.
     """
     named = options.editor
+    if named == NONE:
+        return None
     if named == CLAUDE:
         return claude_editor(suite=suite)
     if named == CODEX:
@@ -277,10 +297,13 @@ def editor_of(options: RunOptions, suite: tuple[str, ...]) -> Editor:
     raise AssertionError("validate_actors accepted an unknown Editor")
 
 
-def integrator_of(options: RunOptions, git_metadata: Path) -> Integrator:
-    """Which model reconciles a conflict. Its own flag because reconciling two correct trees is a
-    different job from writing one, and worth being able to price differently."""
+def integrator_of(options: RunOptions, git_metadata: Path) -> Integrator | None:
+    """Which model reconciles a conflict, or `None` when the run has no Integrator. Its own flag
+    because reconciling two correct trees is a different job from writing one, and worth being
+    able to price differently."""
     named = options.integrator
+    if named == NONE:
+        return None
     if named == CODEX:
         return codex_integrator(git_metadata)
     if named == COPILOT:
