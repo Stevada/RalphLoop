@@ -55,7 +55,7 @@ ralph/
   runlog/          Event, EventKind, event(), JsonlRunLog — the authoritative run ledger
   adapters/        claude, codex, copilot, commands, context, prompt, session, turn_stream,
                    git, suite
-  mergequeue.py    \  the merge queue and the scheduler, so not an adapter either
+  mergegate.py     \  the merge gate and the scheduler, so not an adapter either
   scheduler.py      } orchestration — depends on ports only, never on a concrete adapter
   cli.py           composition root — the only place a concrete adapter is named
 
@@ -86,8 +86,9 @@ The rules that hold this shape together:
   imports `ralph.fakes`, and a test asserts the package imports nothing from `tests/`. That is what
   makes "no adapter may reach for a fake" enforceable rather than aspirational.
 
-The Implementer and the Editor are each chosen at startup — Codex or Copilot implements, Claude Code,
-Codex, or Copilot edits — and nothing downstream of `cli.py` knows which.
+The three unattended actors are each chosen at startup — Codex or Copilot implements, Codex or
+Copilot reconciles, Claude Code / Codex / Copilot edits — and nothing downstream of `cli.py` knows
+which.
 
 ---
 
@@ -136,25 +137,36 @@ Pure functions over frozen dataclasses. Tested with no subprocess, no git, no mo
 
 | Type | Module | What it is |
 |---|---|---|
-| `Actor`, `Outcome`, `SessionTelemetry`, `SuiteResult` | [session.py](../ralph/harness/model/session.py) | The classification vocabulary. `SessionTelemetry` is *what the harness observed* — `consumed_tokens` is telemetry only, gated on nothing. `SuiteResult.green` is deliberately not `verified`: a suite the harness runs is inside the **blast radius**; only CI on a clean checkout is **honest** (`docs/design.md` §6). |
+| `Actor`, `Outcome`, `SessionTelemetry`, `SuiteResult` | [session.py](../ralph/harness/model/session.py) | The classification vocabulary. `SessionTelemetry` is *what the harness observed* — `consumption` is telemetry only, gated on nothing. `SuiteResult.green` is deliberately not `verified`: a suite the harness runs is inside the **blast radius**; only CI on a clean checkout is **honest** (`docs/design.md` §6). |
+| `TokenConsumption` | [consumption.py](../ralph/harness/model/consumption.py) | The three disjoint token buckets and the total they sum to, one shape all three adapters translate into. A bucket is `None` where the vendor reported only a total, and adding an unknown bucket to a known one yields unknown — a sum missing one session's share would look exactly like a real measurement. |
 | `Approach`, `ImpasseReport` | [impasse.py](../ralph/harness/model/impasse.py) | The model's narration — a leaf that knows nothing about how it was classified. |
 | `FailureReport` | [failure.py](../ralph/harness/model/failure.py) | The claim beside the harness's facts. It sits downstream of `session.py` (which imports `impasse.py`); splitting them is what breaks the import cycle. The Editor's job is to check one against the other — *their disagreeing is itself a signal*. |
 
-`classify_implementer` / `classify_editor` ([classify.py](../ralph/harness/rules/classify.py)) turn
-telemetry into an `Outcome`. Two facts to know without reading the bodies: **zero commits is never a
-benign skip** — it is an `impasse`; and `INTEGRATION_FAILED` is unreachable from either classifier —
-only the merge queue raises it.
+`classify_implementer` / `classify_editor` / `classify_integrator`
+([classify.py](../ralph/harness/rules/classify.py)) turn telemetry into an `Outcome`. Three facts to
+know without reading the bodies: **zero commits is never a benign skip** — it is an `impasse`;
+`INTEGRATION_FAILED` is unreachable from the Implementer's and Editor's classifiers — only the merge
+gate raises it; and the Integrator's classifier asks a question about git state rather than about
+commit count, because a session that resolved a conflict and did not commit leaves a commit count
+that reads as success.
 
 ### Routing — the taxonomy, executable
 
 `route(actor, outcome) → Destination` ([routing.py](../ralph/harness/rules/routing.py)) is the
-taxonomy table with one test per row. Four destinations — `MERGE_QUEUE`, `ACT_ON_VERDICT`, `EDITOR`,
-`HUMAN` — and **no retry destination** (a test asserts no row returns anything else). Mechanical
-rebase-conflict recovery is the single narrow exception: the scheduler may resume the same
-Implementer session once in the conflicted worktree before it creates an Editor cycle.
+taxonomy table with one test per row. Four destinations — `MERGE_GATE`, `ACT_ON_VERDICT`, `EDITOR`,
+`HUMAN` — and **no retry destination** (a test asserts no row returns anything else).
 
-Only `SUCCESS` needs to know who is asking (Implementer → merge queue, Editor → act on verdict).
-`INFRA_FAILED` routes to the **human** from either actor, never to the Editor, and spends no cycle.
+Two outcomes need to know who is asking. `SUCCESS`, because an Implementer's goes to the merge
+gate, an Editor's is a verdict to act on, and an Integrator's continues the landing it is already
+inside. `INTEGRATION_FAILED`, because the same word means different things by actor: from an
+Implementer it says two trees disagree and an Editor should look; from the Integrator it says the
+actor *sent* to reconcile them could not, and no spec was ever wrong. `INFRA_FAILED` routes to the
+**human** from any actor, never to the Editor, and spends no cycle.
+
+A merge conflict never reaches `route` at all. The merge gate raises it, dispatches the Integrator, and runs its suite gate on the result — all
+inside one hold of the merge lock ([mergegate.py](../ralph/mergegate.py); `docs/design.md` §4.5 for
+why). The sub-issue lands or goes to the human; it never re-enters the gate, so there is no
+destination for it to route to.
 
 ### Verdicts, the cycle cap, and lifecycle
 
@@ -174,11 +186,12 @@ needs a real model, network, or `codex` binary is in the wrong layer.
 | Protocol | The seam | Notes that don't show in the signature |
 |---|---|---|
 | `Implementer` | writes code from a spec → `SessionTelemetry` | Either Codex or Copilot. |
+| `Integrator` | reconciles a conflicted worktree → `SessionTelemetry` | Takes only a `SessionContext`: no failure report, no `must_be_terminal`, no resumable identifier. The conflict is fully described by the repository it stands in, which is what lets *any* adapter play the role — a resumed-session contract would have restricted it to transports that can resume. Dispatched by the merge gate, never by the scheduler. |
 | `Editor` | adjudicates a failure → `(SessionTelemetry, EditorVerdict \| None)` | Bounded exactly like an Implementer — same `Budget`, same telemetry. Takes `must_be_terminal`; takes **no** `RunLog` or `IssueStore`, so every *consequence* of a verdict happens in the scheduler. |
-| `RunLog` | the harness's **authoritative** record | A Protocol, not the JSONL adapter, because the merge queue and scheduler both take one and orchestration may not name an adapter. |
+| `RunLog` | the harness's **authoritative** record | A Protocol, not the JSONL adapter, because the merge gate and scheduler both take one and orchestration may not name an adapter. |
 | `CommandSource` | target repo → `RepoCommands` | Used during pre-flight readiness. `cli.py` names the concrete descriptor adapter and passes only the discovered value downstream. |
-| `TestRunner` | a suite run → `SuiteResult` | The merge queue owns the single harness suite run, using `RepoCommands.test`. |
-| `Git` | worktree / rebase / ff plumbing | `discard_worktree` destroys the checkout **and the branch** — `git worktree add -b` refuses an existing name, so a branch that outlived its checkout could never be cut again. The scheduler calls it on both non-quarantine exits: after a landing (the commits are on integration already) and on a `revise` verdict (losing them is the point). |
+| `TestRunner` | a suite run → `SuiteResult` | The merge gate owns the single harness suite run, using `RepoCommands.test`. |
+| `Git` | worktree / merge / ff plumbing | `merge_finished` is how the gate asks whether an Integrator finished — git's own `MERGE_HEAD`, not the session's word and not a commit count, because a session that resolves everything and never commits leaves a count that reads exactly as it would on success. `discard_worktree` destroys the checkout **and the branch** — `git worktree add -b` refuses an existing name, so a branch that outlived its checkout could never be cut again. The scheduler calls it on both non-quarantine exits: after a landing (the commits are on integration already) and on a `revise` verdict (losing them is the point). |
 
 `Budget` ([ports.py](../ralph/ports.py)) carries the wall-clock backstop for an actor session.
 `RepoCommands` is the command discovery value: the required `test` command and optional `install`
@@ -204,14 +217,19 @@ Spec and findings are separate files because a revision may change one and leave
 
 ## 4. Adapters — `ralph/adapters/`
 
-The Implementer and Editor are chosen in `cli.py` from CLI arguments; nothing downstream knows which
+All three unattended actors are chosen in `cli.py` from CLI arguments; nothing downstream knows which
 concrete adapter is running, and `cli.py` remains the only module that names one.
 
-| Vendor | Implementer transport | Editor transport |
-|---|---|---|
-| **Codex** | `CodexJsonSession` over `codex exec --json` | `CodexJsonSession` over `codex exec --json` with `--sandbox read-only` |
-| **Copilot** | `CopilotSdkSession` | `CopilotSdkSession` with the SDK permission request hook |
-| **Claude Code** | — | Claude Agent SDK session with `can_use_tool` |
+| Vendor | Implementer transport | Integrator transport | Editor transport |
+|---|---|---|---|
+| **Codex** | `CodexJsonSession` over `codex exec --json` | the same, writable sandbox | `CodexJsonSession` over `codex exec --json` with `--sandbox read-only` |
+| **Copilot** | `CopilotSdkSession` | the same, permitting writes | `CopilotSdkSession` with the SDK permission request hook |
+| **Claude Code** | — | — | Claude Agent SDK session with `can_use_tool` |
+
+The Integrator rides the Implementer's transport unchanged: both write code and commit it, so the
+only thing that differs is the prompt. `runtime/integrator.py` is correspondingly the thinnest of the
+three role cores — it collects no sentinel and parses no verdict, because the merge gate reads the
+answer off git instead of out of the transcript.
 
 The reason for keeping multiple vendors available on each unattended role lives in
 [`docs/design.md`](design.md).
@@ -283,22 +301,22 @@ Editor need not be the same model as the Implementer, which matters more.
 
 Depends on ports only, never on a concrete adapter.
 
-### `MergeQueue` — [mergequeue.py](../ralph/mergequeue.py)
+### `MergeGate` — [mergegate.py](../ralph/mergegate.py)
 
 Sub-issues run in parallel but **land one at a time**. `land(wt)` holds the merge lock (an
-`asyncio.Lock`) for exactly: check the integration head has not moved → rebase → **run the suite in
+`asyncio.Lock`) for exactly: check the integration head has not moved → merge it in → **run the suite in
 the worktree** → fast-forward. It returns a `Land(result, suite)`.
 
 - The suite runs on the *prospective* merge result, so `merge --ff-only` is only ever a fast-forward
   of an already-verified tree: **the integration branch is correct by construction.**
 - This is the single harness suite run. The scheduler does not run a post-session suite.
 - The lock is never held while the Editor reasons, so one sub-issue's integration failure never
-  stalls the queue for its siblings.
-- **The queue writes nothing, anywhere.** Deciding a tree may become the integration branch is its
+  stalls the gate for its siblings.
+- **The gate writes nothing, anywhere.** Deciding a tree may become the integration branch is its
   job; recording *that* a sub-issue landed is a state transition, and those belong to the scheduler —
   two writers for one fact is one too many.
 - `Land` carries the suite out because that prospective-merge suite is the **only honest one** for an
-  `integration-failed` sub-issue: the worktree's own run was green (that is why it reached the queue),
+  `integration-failed` sub-issue: the worktree's own run was green (that is why it reached the gate),
   and handing the Editor a green `SuiteResult` beside an integration failure would be a manufactured
   contradiction.
 
@@ -320,6 +338,9 @@ One dispatch loop: read the graph once, then repeatedly dispatch every `eligible
 - **The `editor` is always an `Editor`.** The CLI names a concrete Editor, `cli.py` resolves it
   before the scheduler starts, and any unknown name is a loud option failure. A failed
   Implementer session that routes to adjudication always reaches the Editor loop.
+- **The scheduler never dispatches the Integrator.** The merge gate does, inside its own lock, and
+  hands the session's telemetry back on the `Land`. The scheduler's only job for it is the one that
+  was always the scheduler's: writing down that it happened and what it cost.
 
 When a sub-issue escalates the run does **not** stop: everything transitively blocked by it never
 becomes eligible, every unaffected sub-issue lands, and the run ends with **one** notification
@@ -330,6 +351,11 @@ becomes eligible, every unaffected sub-issue lands, and the run ends with **one*
 Append-only, one line per event, two kinds of thing only: session states and Editor verdicts. Token
 spend is deliberately not a run-log event; per-session consumption is persisted through the
 `IssueStore`, and diffstats and failing-test output belong in the impasse report.
+
+`cli.py` wraps the JSONL writer in a `NarratedRunLog`, so every event reaching the file also reaches
+the terminal as it is written — file first, so the narration can never claim something the record
+does not. It is a **view**, not a second sink: same fields, same order, same UTC clock. Between the
+first session and the closing notification a run is otherwise silent for hours.
 
 `Event` and `EventKind` live in [runlog/model.py](../ralph/runlog/model.py), outside `harness/`,
 because they are the ledger vocabulary rather than a harness decision. `event()` lives beside them
@@ -356,17 +382,40 @@ cycle's worth reads as a story with two characters:
 01  implementer  sub-issue-closed   landed
 ```
 
+`Transcripts` is the second sink for a finished session, alongside consumption: the scheduler writes
+both together in `_record_session`, for all three actors, so no call site can record half of a
+session. `FileTranscripts` in [transcripts.py](../ralph/transcripts.py) puts each one at
+`<sub-issue>/<cycle>-<actor>.log`. The port is write-only by construction — the harness never reads
+a transcript back, and one that could would be inviting a decision to be made out of model prose.
+The Integrator's is written here too, not by the merge gate: the gate writes nothing, and
+`Land.integrator` is how its telemetry reaches a writer.
+
+What the scheduler writes is a `FinishedSession` — the key, the telemetry, the `Outcome`, the
+budget, and the merge gate's `merge_finished` when there was a reconciliation. Classification
+therefore happens *before* the record at every call site, since a conclusion cannot be written down
+before it is reached, and `Land` carries the gate's observation out for the same reason it carries
+`integrator_outcome`.
+
+The body of that record is `SessionTelemetry.transcript`, which each session fills at the point it
+reads its transport — the decoded line in `CodexJsonSession._run`, the SDK message in
+`_SdkSession._converse`, the SDK event in `CopilotSdkSession._observe`, the pumped stdout in
+`run_session` — always on the line *before* the interpreting one, under a launch line the same
+adapter wrote. `session_output` is the separate, parsed string the sentinels come out of.
+`FileTranscripts` renders the footer. Keeping all of this apart is a design commitment, not a
+convenience; see [design.md](design.md#the-transcripts).
+
 ### The pre-flight — [preflight.py](../ralph/harness/rules/preflight.py), gathered in `cli.py`
 
-**It refuses; it does not warn.** Six checks, each describing a repo the harness would otherwise
+**It refuses; it does not warn.** Seven checks, each describing a run the harness would otherwise
 damage or misjudge:
 
 | Check | What it would otherwise do |
 |---|---|
 | `protected-branch` | Fast-forward `main`. Ralph lands onto the branch it is run from. |
-| `uncommitted-changes` | Fight the merge queue's fast-forwards over uncommitted work, and lose. |
+| `uncommitted-changes` | Fight the merge gate's fast-forwards over uncommitted work, and lose. |
 | `uninstalled-pre-commit-hooks` | Land commits that skipped the checks the repo believes it enforces. |
-| `missing-test-command` | Start without a suite command the merge queue can run. |
+| `missing-test-command` | Start without a suite command the merge gate can run. |
+| `missing-actor-runtime` | Start with an actor whose CLI or SDK is absent, and discover it at the session that needed it. |
 | `invalid-issue-source` | Start against an issue source it cannot reach or was misconfigured to find. |
 | `invalid-issue-graph` | Read a source that read fine but holds a graph it cannot use. |
 
@@ -384,8 +433,8 @@ asks, never by a second topological sort that is free to disagree.
 
 | Component | Module |
 |---|---|
-| Merge queue | [mergequeue.py](../ralph/mergequeue.py) |
-| Failure taxonomy + merge-queue gate | [classify.py](../ralph/harness/rules/classify.py), [routing.py](../ralph/harness/rules/routing.py), [runlog/](../ralph/runlog/), [mergequeue.py](../ralph/mergequeue.py) |
+| Merge gate | [mergegate.py](../ralph/mergegate.py) |
+| Failure taxonomy + suite gate | [classify.py](../ralph/harness/rules/classify.py), [routing.py](../ralph/harness/rules/routing.py), [runlog/](../ralph/runlog/), [mergegate.py](../ralph/mergegate.py) |
 | Command discovery | `CommandSource`, `RepoCommands`, [commands.py](../ralph/adapters/commands.py), `cli.command_source_for()` |
 | Wall-clock bound and usage telemetry | `Budget`, [bounding.py](../ralph/adapters/runtime/bounding.py), per-CLI usage parsing ([cli-metering.md](cli-metering.md)) |
 | Impasse report format | [impasse.py](../ralph/harness/model/impasse.py), [failure.py](../ralph/harness/model/failure.py) |

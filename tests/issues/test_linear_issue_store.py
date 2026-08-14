@@ -11,7 +11,7 @@ from dataclasses import replace
 
 import pytest
 
-from ralph.harness import Actor
+from ralph.harness import Actor, TokenConsumption
 from ralph.issues import Findings, SessionConsumption, Spec, SubIssueId, SubIssueState
 from ralph.issues.linear import (
     LinearComment,
@@ -20,6 +20,7 @@ from ralph.issues.linear import (
     LinearIssueStoreError,
     LinearStateMap,
 )
+from ralph.issues.linear.markdown import CONSUMPTION_MARKER, parse_consumption_records
 from ralph.runlog import EventKind, event
 
 
@@ -68,8 +69,7 @@ class FakeLinearClient:
             self.parent = updated
             return
         children = tuple(
-            updated if issue.id == updated.id else issue
-            for issue in self.parent.sub_issues
+            updated if issue.id == updated.id else issue for issue in self.parent.sub_issues
         )
         self.parent = replace(self.parent, sub_issues=children)
 
@@ -208,7 +208,9 @@ async def test_terminal_events_are_mirrored_to_linear_state() -> None:
     store.read_graph()
 
     await store.write_event(
-        event(SubIssueId("RAL-2"), Actor.IMPLEMENTER, EventKind.SUB_ISSUE_CLOSED, SubIssueState.LANDED)
+        event(
+            SubIssueId("RAL-2"), Actor.IMPLEMENTER, EventKind.SUB_ISSUE_CLOSED, SubIssueState.LANDED
+        )
     )
 
     assert client.updated_states == [("linear-2", "Done")]
@@ -252,11 +254,10 @@ async def test_consumption_is_mirrored_to_a_linear_sub_issue_comment() -> None:
     store = LinearIssueStore(parent_identifier="RAL-1", client=client)
     store.read_graph()
 
+    split = TokenConsumption.split(input=80_000, cache_read=40_000, output=3_000)
     await store.record_consumption(
         SubIssueId("RAL-2"),
-        SessionConsumption(
-            actor=Actor.IMPLEMENTER, consumed_tokens=123_000, auto_compactions=2
-        ),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumption=split, auto_compactions=2),
     )
 
     assert len(client.created_comments) == 1
@@ -266,8 +267,25 @@ async def test_consumption_is_mirrored_to_a_linear_sub_issue_comment() -> None:
     assert "implementer" in body
     assert "123000" in body
     assert "2 auto-compactions" in body
+    assert "80000 in, 40000 cached, 3000 out" in body
     assert store.consumption(SubIssueId("RAL-2")) == (
-        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000, auto_compactions=2),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumption=split, auto_compactions=2),
+    )
+
+
+def test_a_consumption_comment_written_before_the_buckets_still_parses() -> None:
+    """A Linear issue outlives the version of Ralph that commented on it. A line with no breakdown
+    is a line from before there was one, and it reads as the total it is."""
+    records = parse_consumption_records(
+        f"{CONSUMPTION_MARKER}\n- implementer: 123000 tokens, 2 auto-compactions\n"
+    )
+
+    assert records == (
+        SessionConsumption(
+            actor=Actor.IMPLEMENTER,
+            consumption=TokenConsumption.total_only(123_000),
+            auto_compactions=2,
+        ),
     )
 
 
@@ -282,7 +300,9 @@ async def test_unreachable_linear_does_not_fail_consumption_persistence() -> Non
 
     await store.record_consumption(
         SubIssueId("RAL-2"),
-        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000),
+        SessionConsumption(
+            actor=Actor.IMPLEMENTER, consumption=TokenConsumption.total_only(123_000)
+        ),
     )
 
     assert store.consumption(SubIssueId("RAL-2")) == ()

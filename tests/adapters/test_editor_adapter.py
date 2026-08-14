@@ -23,12 +23,12 @@ from ralph.adapters.runtime.editor import (
 )
 from ralph.adapters.runtime.turn_stream import (
     AutoCompaction,
-    TokenUsage,
     Turn,
     TurnStreamAsk,
     TurnStreamSession,
 )
 from ralph.harness import (
+    TokenConsumption,
     EditorVerdict,
     Outcome,
     SessionTelemetry,
@@ -36,8 +36,8 @@ from ralph.harness import (
     classify_editor,
     failure_report,
 )
-from ralph.issues import Findings, Spec
-from ralph.ports import Budget, SessionContext, Worktree
+from ralph.issues import Findings, Spec, SubIssueId
+from ralph.ports import Budget, Candidate, SessionContext, Worktree
 from tests.builders import impasse, telemetry
 
 SUITE: Sequence[str] = ("python", "-m", "pytest", "-q")
@@ -48,7 +48,7 @@ GENEROUS = Budget(wall_clock_s=10.0)
 
 
 def session_context(budget: Budget = GENEROUS) -> SessionContext:
-    return SessionContext(spec=SPEC, findings=FINDINGS, worktree=WORKTREE, budget=budget)
+    return SessionContext(candidate=Candidate(id=SubIssueId("01"), spec=SPEC, findings=FINDINGS, worktree=WORKTREE), budget=budget)
 
 FAILURE = failure_report(
     Outcome.IMPASSE,
@@ -241,9 +241,12 @@ def test_a_verdict_outside_the_three_is_not_a_verdict() -> None:
 class StubSession:
     """A scripted Editor session. Emits its turns, then ends — unless it is killed first."""
 
-    def __init__(self, turns: Sequence[Turn], *, pause: float = 0.0) -> None:
+    def __init__(
+        self, turns: Sequence[Turn], *, pause: float = 0.0, transcript: str = ""
+    ) -> None:
         self._scripted = turns
         self._pause = pause
+        self._transcript = transcript
         self.returncode: int | None = None
         self.killed = False
 
@@ -254,6 +257,12 @@ class StubSession:
     @property
     def resumable_identifier(self) -> str | None:
         return None
+
+    @property
+    def transcript(self) -> str:
+        # Scripted independently of the turns, because that is the relationship a real session has:
+        # the turns are what a parser recovered, and the transcript is what actually arrived.
+        return self._transcript
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         for turn in self._scripted:
@@ -317,7 +326,7 @@ async def test_the_editor_returns_its_verdict_and_the_harnesss_facts() -> None:
     session = StubSession(
         [
             "Looking at the worktree.",
-            TokenUsage(consumed_tokens=31_000),
+            TokenConsumption.total_only(31_000),
             verdict_json("revise", revised_spec="# 01 — use the API that exists"),
         ]
     )
@@ -326,7 +335,7 @@ async def test_the_editor_returns_its_verdict_and_the_harnesss_facts() -> None:
 
     assert v is not None
     assert not hasattr(t, "peak_context_tokens")
-    assert t.consumed_tokens == 31_000
+    assert t.consumption.consumed_tokens == 31_000
     assert t.commits == 0  # by construction: it was denied every tool that could make one
     assert t.diffstat == ""
     assert t.impasse_report is None  # an Editor cannot declare an impasse. It adjudicates them.
@@ -336,8 +345,8 @@ async def test_the_editor_returns_its_verdict_and_the_harnesss_facts() -> None:
 async def test_an_editor_runs_to_completion_with_usage_turns() -> None:
     never_answers = StubSession(
         [
-            TokenUsage(consumed_tokens=60_000),
-            TokenUsage(consumed_tokens=130_000),
+            TokenConsumption.total_only(60_000),
+            TokenConsumption.total_only(130_000),
             "still thinking...",
             verdict_json("revise", revised_spec="# 01 — try again"),
         ],
@@ -422,11 +431,11 @@ async def test_the_prompt_hands_over_the_claim_and_the_facts_to_check_it_against
 
 
 async def test_the_run_of_a_session_records_usage_even_when_it_answers() -> None:
-    session = StubSession([TokenUsage(consumed_tokens=55_000), verdict_json("planning-defect")])
+    session = StubSession([TokenConsumption.total_only(55_000), verdict_json("planning-defect")])
 
     t, v = await adjudicate(session)
 
     assert not hasattr(t, "peak_context_tokens")
-    assert t.consumed_tokens == 55_000
+    assert t.consumption.consumed_tokens == 55_000
     assert v is not None
     assert v.verdict is Verdict.PLANNING_DEFECT

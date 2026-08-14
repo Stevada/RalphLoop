@@ -1,12 +1,12 @@
 """The test bed: a real git repository, and a stand-in agent that is a real subprocess.
 
 Neither of these is a fake. `tests/fakes.py` satisfies a Protocol in-process; these two do the
-real thing in a temporary directory — real `git init`, real commits, real worktrees, real rebase
+real thing in a temporary directory — real `git init`, real commits, real worktrees, real merge
 conflicts, a real suite that really goes red. The only thing the stand-in agent is not is
 intelligent.
 
 That is why every ticket after this one can be verified end-to-end **with no model at all**. A
-fake git that always says "rebase succeeded" tests nothing; the merge queue is the trickiest code
+fake git that always says "merge succeeded" tests nothing; the merge gate is the trickiest code
 in the harness and it deserves an adversary.
 """
 
@@ -16,14 +16,23 @@ import json
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
 from ralph.adapters.runtime.implementer import SubprocessImplementer
 from ralph.cli import RunOptions
 from ralph.issues import Findings, Spec
-from ralph.ports import Implementer, Worktree
+from ralph.harness import SessionTelemetry
+from ralph.ports import (
+    Editor,
+    Implementer,
+    Integrator,
+    SessionContext,
+    Worktree,
+)
+from tests.builders import telemetry
+from tests.fakes import FakeEditor, FakeImplementer, FakeIntegrator
 
 # The suite the throwaway repo ships with. Real pytest, run as a real subprocess, in the venv
 # interpreter — the same one the harness itself will detect and run.
@@ -55,12 +64,12 @@ class Behaviour(StrEnum):
 
     Each is a correct, green, self-contained sub-issue: one renames `calculator.add` to `plus` and
     updates its test; the other adds a test that calls `add`. They touch **different files**, so
-    there is no rebase conflict to catch them — git will merge them without a murmur, and the
+    there is no merge conflict to catch them — git will merge them without a murmur, and the
     integration branch will be red.
 
     This is the failure `CONFLICT` cannot express. A textual conflict is git's to notice; a semantic
     one is nobody's, unless the suite is re-run on the prospective merge — which is the merge
-    queue's entire reason for existing, and the thing these two exist to prove it does.
+    gate's entire reason for existing, and the thing these two exist to prove it does.
     """
 
     IMPASSE_ONCE = "impasse-once"
@@ -169,7 +178,7 @@ class TargetRepo:
         a quarantined sub-issue observable. Both need this.
 
         Committed, not just written: the base repo's working tree must be clean enough that the
-        merge queue's fast-forwards are not fighting stray edits in `.scratch/`.
+        merge gate's fast-forwards are not fighting stray edits in `.scratch/`.
         """
         for existing in self.issues_dir.glob("*.md"):
             existing.unlink()
@@ -205,6 +214,62 @@ def stand_in_implementer(agent: StandInAgent, behaviour: Behaviour | str) -> Imp
     return SubprocessImplementer(build_argv=build_argv)
 
 
+def unengaged_editor() -> Editor:
+    """An Editor for a run that is not supposed to need one.
+
+    The pre-flight refuses a run whose *named* Editor has no runtime installed, and no machine
+    running this suite is required to have one. Passing an Editor through the seam states what is
+    already true of these tests — nothing in them reaches adjudication — and keeps the refusal
+    about runs that would really construct the thing.
+    """
+    return FakeEditor()
+
+
+def unengaged_implementer() -> Implementer:
+    """The Implementer half of the same seam, for a pre-flight test that opens no session at all."""
+    return FakeImplementer()
+
+
+def unengaged_integrator() -> Integrator:
+    """The Integrator half of the same seam, for a run whose landings are not supposed to conflict."""
+    return FakeIntegrator()
+
+
+@dataclass(slots=True)
+class StandInIntegrator:
+    """A stand-in Integrator: real git work, no intelligence — the same bargain as the stand-in
+    agent. It keeps every side of every conflict, which is what an Integrator does in the ordinary
+    case where two siblings simply appended to the same place.
+
+    `resolves=False` is the one worth having. It opens a session, spends wall clock, returns
+    perfectly ordinary success telemetry, and leaves the merge open — which is exactly the failure
+    the harness has to catch by asking git instead of asking the session.
+    """
+
+    resolves: bool = True
+    calls: list[SessionContext] = field(default_factory=list)
+
+    async def reconcile(self, context: SessionContext) -> SessionTelemetry:
+        self.calls.append(context)
+        if not self.resolves:
+            return telemetry()
+        path = context.candidate.worktree.path
+        for conflicted in path.rglob("*.py"):
+            text = conflicted.read_text()
+            if "<<<<<<<" not in text:
+                continue
+            conflicted.write_text(
+                "".join(
+                    line
+                    for line in text.splitlines(keepends=True)
+                    if not line.startswith(("<<<<<<<", "=======", ">>>>>>>"))
+                )
+            )
+        _git(path, "add", "-A")
+        _git(path, "commit", "-m", "reconcile with the integration branch")
+        return telemetry()
+
+
 def make_target_repo(root: Path) -> TargetRepo:
     """Build the throwaway repo. Torn down with its tmp dir; nothing to clean up by hand."""
     repo = TargetRepo(path=root)
@@ -220,7 +285,7 @@ def make_target_repo(root: Path) -> TargetRepo:
         "from calculator import add\n\n\ndef test_add() -> None:\n    assert add(1, 2) == 3\n"
     )
     # The line both CONFLICT agents rewrite. It exists on the base so they *modify* it rather
-    # than both adding it — a plain content conflict, the kind a real rebase actually hits.
+    # than both adding it — a plain content conflict, the kind a real merge actually hits.
     (root / "shared.py").write_text('MARKER = "base"\n')
     (root / ".gitignore").write_text(".worktrees/\n.pytest_cache/\n__pycache__/\n")
 
@@ -343,8 +408,8 @@ def act(behaviour: str, tag: str, cwd: Path) -> int:
             "def test_broken() -> None:\\n    assert 1 == 2, 'the agent shipped this'\\n"
         )
         commit(f"feat({tag}): looks green to me")
-        # It says so, in as many words, and it is wrong. The merge queue is the harness gate that
-        # catches the red suite before this reaches integration.
+        # It says so, in as many words, and it is wrong. The merge gate's suite gate catches
+        # the red suite before this reaches integration.
         print(f"[{tag}] All tests pass. The implementation is complete.")
         return 0
 

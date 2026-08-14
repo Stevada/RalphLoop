@@ -32,7 +32,8 @@ from ralph.adapters.copilot.session import (
     copilot_sdk_session,
 )
 from ralph.adapters.runtime.editor import read_only
-from ralph.adapters.runtime.turn_stream import TokenUsage, Turn, TurnStreamAsk
+from ralph.adapters.runtime.turn_stream import Turn, TurnStreamAsk
+from ralph.harness import TokenConsumption
 
 if TYPE_CHECKING:
     from copilot.generated.session_events import PermissionRequest
@@ -254,7 +255,7 @@ async def test_turns_streams_text_and_usage_observations() -> None:
     turns = await collect(session)
 
     assert stub.sent == ["build it"]
-    assert turns == ["I will inspect the repo.", TokenUsage(consumed_tokens=9_999)]
+    assert turns == ["I will inspect the repo.", TokenConsumption.total_only(9_999)]
     assert session.returncode == 0
     assert stub.disconnected
 
@@ -384,7 +385,10 @@ async def test_consumption_is_one_end_of_turn_usage_observation() -> None:
         ]
     )
 
-    assert await collect(open_session(stub)) == [TokenUsage(consumed_tokens=180)]
+    # 168 from the split event — `reasoning_tokens` breaks down `output_tokens` and is not added —
+    # plus 9 from the total-only one. That second event knows no breakdown, so the buckets of the
+    # running total go unknown rather than reporting a sum that is missing 9 tokens.
+    assert await collect(open_session(stub)) == [TokenConsumption.total_only(177)]
 
 
 async def test_a_usage_event_without_token_counts_is_loud() -> None:

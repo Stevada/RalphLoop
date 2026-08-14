@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, cast
 
-from ralph.adapters.git import GitError, run_git
 from ralph.ports import RepoCommands
 
 DESCRIPTOR_NAME = ".ralph.toml"
@@ -32,10 +31,6 @@ class DescriptorMissingTestError(DescriptorCommandError):
 
 class DescriptorCommandTypeError(DescriptorCommandError):
     """A command field is present but is not a string."""
-
-
-class DescriptorUntrackedError(DescriptorCommandError):
-    """The command descriptor exists locally but is not tracked by git."""
 
 
 @dataclass(frozen=True, slots=True)

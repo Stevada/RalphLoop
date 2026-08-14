@@ -5,23 +5,25 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 import signal
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from functools import partial
 from pathlib import Path
 
 from ralph.adapters.runtime.prompt import implementer_prompt
 from ralph.adapters.runtime.session import Session
 from ralph.adapters.runtime.turn_stream import (
     AutoCompaction,
-    TokenUsage,
     Turn,
     TurnStreamAsk,
     TurnStreamSession,
 )
+from ralph.harness import TokenConsumption
 from ralph.issues import Findings, Spec
-from ralph.ports import Worktree
+from ralph.ports import HARNESS_LINE, Worktree
 
-MODEL = "gpt-5.4"
+MODEL = "gpt-5.5"
 IMPLEMENTER_SANDBOX = "workspace-write"
 EDITOR_SANDBOX = "read-only"
 APPROVAL = "never"
@@ -30,6 +32,11 @@ THREAD_STARTED = "thread.started"
 TURN_COMPLETED = "turn.completed"
 CONTEXT_COMPACTED = "context_compacted"
 CONTEXT_COMPACTION = "context_compaction"
+
+TOTAL_TOKENS = "total_tokens"
+INPUT_TOKENS = "input_tokens"
+CACHED_INPUT_TOKENS = "cached_input_tokens"
+OUTPUT_TOKENS = "output_tokens"
 
 
 class CodexUsageError(ValueError):
@@ -40,6 +47,7 @@ def codex_argv(
     spec: Spec,
     findings: Findings,
     worktree: Worktree,
+    writable: Sequence[Path],
     *,
     sandbox: str = IMPLEMENTER_SANDBOX,
 ) -> Sequence[str]:
@@ -48,10 +56,22 @@ def codex_argv(
         prompt=implementer_prompt(spec, findings),
         cwd=worktree.path,
         sandbox=sandbox,
+        writable=writable,
     )
 
 
-def _codex_exec_argv(*, prompt: str, cwd: Path, sandbox: str) -> list[str]:
+def _writable_argv(writable: Sequence[Path]) -> list[str]:
+    """`--cd` makes the worktree writable and stops there, which is one directory short of a
+    commit: `git add` writes the index, and `git commit` writes objects and moves a ref, none of
+    which live in the checkout. Without this the kernel refuses those writes and git reports
+    `Read-only file system` — a session can then resolve everything correctly and land nothing.
+
+    Empty for the Editor, which is denied writes on purpose.
+    """
+    return [arg for dir in writable for arg in ("--add-dir", str(dir))]
+
+
+def _codex_exec_argv(*, prompt: str, cwd: Path, sandbox: str, writable: Sequence[Path]) -> list[str]:
     """Codex global options precede `exec`; `exec` options follow it."""
     return [
         "codex",
@@ -61,12 +81,13 @@ def _codex_exec_argv(*, prompt: str, cwd: Path, sandbox: str) -> list[str]:
         "--model", MODEL,
         "--sandbox", sandbox,
         "--cd", str(cwd),
+        *_writable_argv(writable),
         prompt,
     ]
 
 
 def _codex_resume_argv(
-    *, prompt: str, cwd: Path, sandbox: str, resumable_identifier: str
+    *, prompt: str, cwd: Path, sandbox: str, writable: Sequence[Path], resumable_identifier: str
 ) -> list[str]:
     """`resume` is an `exec` subcommand, so `exec` options come before it."""
     return [
@@ -77,6 +98,7 @@ def _codex_resume_argv(
         "--model", MODEL,
         "--sandbox", sandbox,
         "--cd", str(cwd),
+        *_writable_argv(writable),
         "resume",
         resumable_identifier,
         prompt,
@@ -167,22 +189,48 @@ def _nested_usage(event: Mapping[str, object]) -> dict[str, object]:
     return {}
 
 
-def _usage_total(event: Mapping[str, object]) -> int | None:
-    total = _nested_usage(event).get("total_tokens")
-    return total if isinstance(total, int) and not isinstance(total, bool) else None
+def _reported_consumption(event: Mapping[str, object]) -> TokenConsumption | None:
+    """Codex's components, translated into the harness's three buckets — or a bare total.
+
+    Components first: releases since codex-cli 0.143.0 drop `total_tokens` from `turn.completed` and
+    send the components instead, so the total is the legacy path and reading it first would discard
+    a breakdown that was right there.
+
+    Codex counts cached tokens *inside* `input_tokens`, so the fresh half is the difference. It has
+    no cache-write signal at all; those tokens are billed in `input_tokens` and stay there, which is
+    what the harness's `input` bucket means. `reasoning_output_tokens` is likewise a breakdown *of*
+    output, not an addend — adding it would double-count.
+    """
+    usage = _nested_usage(event)
+    input_tokens = _optional_int(usage, INPUT_TOKENS)
+    output_tokens = _optional_int(usage, OUTPUT_TOKENS)
+    if input_tokens is not None or output_tokens is not None:
+        cache_read = _optional_int(usage, CACHED_INPUT_TOKENS) or 0
+        return TokenConsumption.split(
+            input=max((input_tokens or 0) - cache_read, 0),
+            cache_read=cache_read,
+            output=output_tokens or 0,
+        )
+    total = _optional_int(usage, TOTAL_TOKENS)
+    return None if total is None else TokenConsumption.total_only(total)
 
 
-async def end_of_turn_consumed_tokens(session: Session, _worktree: Worktree) -> int | None:
-    """The total Codex reports when the `exec` turn completes, or none if it never completed."""
-    found: int | None = None
+def _completed_turn_consumption(event: Mapping[str, object], line: str) -> TokenConsumption:
+    """A `turn.completed` carrying no readable count is a schema break, not a zero."""
+    consumption = _reported_consumption(event)
+    if consumption is None:
+        raise CodexUsageError(f"a turn.completed event with no token counts in it: {line!r}")
+    return consumption
+
+
+async def end_of_turn_consumption(session: Session, _worktree: Worktree) -> TokenConsumption | None:
+    """What Codex reports when the `exec` turn completes, or none if it never completed."""
+    found: TokenConsumption | None = None
     for line in session.output.splitlines():
         event = _loads(line)
         if _event_type(event) != TURN_COMPLETED:
             continue
-        total = _usage_total(event)
-        if total is None:
-            raise CodexUsageError(f"a turn.completed event with no total_tokens in it: {line!r}")
-        found = total
+        found = _completed_turn_consumption(event, line)
     return found
 
 
@@ -199,12 +247,14 @@ class CodexJsonSession(TurnStreamSession):
         ask: TurnStreamAsk,
         *,
         sandbox: str,
+        writable: Sequence[Path] = (),
         build_argv: Callable[[TurnStreamAsk, str], Sequence[str]] | None = None,
     ) -> None:
         self._ask = ask
         self._sandbox = sandbox
-        self._build_argv = build_argv or _session_argv
+        self._build_argv = build_argv or partial(_session_argv, writable=writable)
         self._turns: asyncio.Queue[Turn | None] = asyncio.Queue()
+        self._transcript: list[str] = []
         self._auto_compactions: list[AutoCompaction] = []
         self._resumable_identifier = ask.resumable_identifier
         self._proc: asyncio.subprocess.Process | None = None
@@ -225,6 +275,10 @@ class CodexJsonSession(TurnStreamSession):
     @property
     def resumable_identifier(self) -> str | None:
         return self._resumable_identifier
+
+    @property
+    def transcript(self) -> str:
+        return "".join(self._transcript)
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         while (turn := await self._turns.get()) is not None:
@@ -250,8 +304,13 @@ class CodexJsonSession(TurnStreamSession):
 
     async def _run(self) -> None:
         try:
+            argv = self._build_argv(self._ask, self._sandbox)
+            # The launch, at the top of the session's own record. The argv carries the model, the
+            # sandbox, every writable directory and the whole prompt, so a prompt this actor was
+            # never given is legible from the artifact rather than only from reading `prompt.py`.
+            self._transcript.append(f"{HARNESS_LINE}launched: {shlex.join(argv)}\n")
             self._proc = await asyncio.create_subprocess_exec(
-                *self._build_argv(self._ask, self._sandbox),
+                *argv,
                 cwd=self._ask.cwd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
@@ -260,7 +319,9 @@ class CodexJsonSession(TurnStreamSession):
             if self._proc.stdout is None:  # pragma: no cover — PIPE was asked for above
                 raise RuntimeError("the Codex session has no stdout to read")
             async for raw in self._proc.stdout:
-                self._observe(raw.decode(errors="replace"))
+                line = raw.decode(errors="replace")
+                self._transcript.append(line)  # recorded first. `_observe` only ever reads it.
+                self._observe(line)
             code = await self._proc.wait()
             if self._code is None:
                 self._code = code
@@ -283,10 +344,7 @@ class CodexJsonSession(TurnStreamSession):
                 self._resumable_identifier = id
 
         if kind == TURN_COMPLETED:
-            total = _usage_total(event)
-            if total is None:
-                raise CodexUsageError(f"a turn.completed event with no total_tokens in it: {line!r}")
-            self._turns.put_nowait(TokenUsage(consumed_tokens=total))
+            self._turns.put_nowait(_completed_turn_consumption(event, line))
 
         if _is_compaction(kind):
             self._auto_compactions.append(_compaction_of(kind, event))
@@ -301,15 +359,16 @@ class CodexJsonSession(TurnStreamSession):
             self._turns.put_nowait(None)
 
 
-def _session_argv(ask: TurnStreamAsk, sandbox: str) -> Sequence[str]:
+def _session_argv(ask: TurnStreamAsk, sandbox: str, *, writable: Sequence[Path]) -> Sequence[str]:
     if ask.resumable_identifier is not None:
         return _codex_resume_argv(
             prompt=ask.prompt,
             cwd=ask.cwd,
             sandbox=sandbox,
+            writable=writable,
             resumable_identifier=ask.resumable_identifier,
         )
-    return _codex_exec_argv(prompt=ask.prompt, cwd=ask.cwd, sandbox=sandbox)
+    return _codex_exec_argv(prompt=ask.prompt, cwd=ask.cwd, sandbox=sandbox, writable=writable)
 
 
 def _is_compaction(kind: str) -> bool:
@@ -340,8 +399,11 @@ def _compaction_of(kind: str, event: Mapping[str, object]) -> AutoCompaction:
     )
 
 
-def codex_sdk_session(ask: TurnStreamAsk) -> CodexJsonSession:
-    return CodexJsonSession(ask=ask, sandbox=IMPLEMENTER_SANDBOX)
+def codex_sdk_session(ask: TurnStreamAsk, git_metadata: Path) -> CodexJsonSession:
+    """For the two actors that commit. `git_metadata` is not optional for either of them: an
+    Implementer that cannot commit is an `impasse`, and an Integrator that cannot commit is a
+    human being paged."""
+    return CodexJsonSession(ask=ask, sandbox=IMPLEMENTER_SANDBOX, writable=(git_metadata,))
 
 
 def codex_read_only_session(ask: TurnStreamAsk) -> CodexJsonSession:

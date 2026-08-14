@@ -1,7 +1,7 @@
 """**`ralph run` works.**
 
 The tracer bullet. Every test here goes through `ralph.cli.run` — the real CLI, the real
-filesystem store, real git, real worktrees, the real merge queue, a real suite, and a real agent
+filesystem store, real git, real worktrees, the real merge gate, a real suite, and a real agent
 subprocess. Failure cases inject a scripted Editor so the test does not call a real model.
 
 The only thing that is not real is the agent's intelligence, and that is the one thing the harness
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -30,6 +31,7 @@ from tests.testbed import (
     TargetRepo,
     make_options,
     stand_in_implementer as stand_in,
+    unengaged_editor,
 )
 
 
@@ -46,6 +48,7 @@ async def test_ralph_run_lands_a_sub_issue_end_to_end(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -75,6 +78,7 @@ async def test_the_run_log_tells_the_true_story_in_order(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -94,11 +98,37 @@ async def test_the_run_log_tells_the_true_story_in_order(
     assert all(set(e) == {"ts", "sub_issue", "actor", "kind", "details"} for e in lines)
 
 
-async def test_a_red_base_is_caught_by_the_merge_queue_gate(
+async def test_every_run_log_event_is_narrated_to_the_terminal_as_it_happens(
+    repo: TargetRepo, agent: StandInAgent, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The file is the record, but nobody watches a file. A run is hours long and its only other
+    output arrives at the end — so what reaches the terminal must be *every* event, in the order the
+    record has them, and nothing the record does not have."""
+    await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
+        options=make_options(),
+    )
+
+    log = (repo.path / ".scratch" / PARENT_ISSUE_NAME / "run.jsonl").read_text().splitlines()
+    narrated = [
+        line for line in capsys.readouterr().out.splitlines() if "session-" in line or "closed" in line
+    ]
+
+    assert len(narrated) == len(log)
+    for line, recorded in zip(narrated, (json.loads(x) for x in log), strict=True):
+        for field in ("sub_issue", "actor", "kind", "details"):
+            assert recorded[field] in line
+        assert recorded["ts"][11:19] in line  # the record's own UTC clock, not a second one
+
+
+async def test_a_red_base_is_caught_by_the_suite_gate(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """The scheduler no longer owns a pre-session suite run. The first committed session reaches
-    the merge queue, and the merge queue is the gate that refuses the red tree."""
+    the merge gate, and its suite gate is what refuses the red tree."""
     (repo.path / "calculator.py").write_text("def add(a: int, b: int) -> int:\n    return a * b\n")
     repo.git("add", "-A")
     repo.git("commit", "-m", "break the base")
@@ -126,6 +156,7 @@ async def test_a_failed_install_aborts_the_run_before_a_single_agent_starts(
             repo.path,
             None,
             implementer=stand_in(agent, Behaviour.SUCCEED),
+            editor=unengaged_editor(),
             command_source=commands,
         )
 
@@ -149,6 +180,7 @@ async def test_the_install_runs_once_in_the_base_checkout_never_per_worktree(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         command_source=commands,
     )
 
@@ -167,6 +199,7 @@ async def test_a_repo_without_install_command_skips_base_install(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         command_source=commands,
     )
 
@@ -186,12 +219,16 @@ async def test_the_editor_allowlist_uses_the_discovered_test_command(
         return terminal_editor()
 
     monkeypatch.setattr("ralph.cli.claude_editor", editor_for)
+    # No Editor through the seam: this test is about the one the *run* builds. Which means the
+    # pre-flight would check for a Claude runtime that `editor_for` has just replaced.
+    monkeypatch.setattr("ralph.cli._installed", lambda runtime: True)
 
     report = await run(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
         command_source=commands,
+        options=make_options(editor="claude"),
     )
 
     assert report.clean
@@ -221,11 +258,11 @@ async def test_an_undeclared_impasse_session_does_not_land(
     assert "Status: ready" in (repo.issues_dir / "02-second.md").read_text()
 
 
-async def test_a_session_that_commits_a_red_suite_fails_at_the_merge_queue(
+async def test_a_session_that_commits_a_red_suite_fails_at_the_merge_gate(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     """The dangerous one: it exits 0, it committed, and it is broken. The scheduler calls that a
-    success; the merge queue is the harness suite gate that refuses it."""
+    success; the merge gate's suite gate is what refuses it."""
     report = await run(
         repo.path,
         None,
@@ -247,6 +284,7 @@ async def test_a_hanging_session_is_killed_and_does_not_land(
         None,
         budget=Budget(wall_clock_s=1.0),
         implementer=stand_in(agent, Behaviour.HANG),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -287,6 +325,7 @@ async def test_a_read_only_issue_store_does_not_crash_the_run(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -314,6 +353,7 @@ async def test_a_landed_sub_issue_leaves_no_worktree_and_no_branch(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -324,3 +364,52 @@ async def test_a_landed_sub_issue_leaves_no_worktree_and_no_branch(
 
     # The commits survived their branch: they are on integration, which is where they landed.
     assert GitCli(repo=repo.path).commits_between("main", "integration") >= 2
+
+
+async def test_each_session_leaves_its_transcript_beside_the_run_log(
+    repo: TargetRepo, agent: StandInAgent
+) -> None:
+    """The run log says a session happened; the transcript says what it said.
+
+    Asserted here rather than only against the fake because the filename is the whole design — a
+    store wired to the wrong root, or handed a cycle it computed itself, fails nowhere else.
+    """
+    await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
+        options=make_options(),
+    )
+
+    transcripts = repo.path / ".scratch" / PARENT_ISSUE_NAME / "transcripts"
+    assert sorted(p.relative_to(transcripts) for p in transcripts.rglob("*.log")) == [
+        Path("01/1-implementer.log"),
+        Path("02/1-implementer.log"),
+    ]
+    # The `succeed` stand-in commits without narrating, so the session's own half is empty — the
+    # claim that it ran and said nothing, which is not what an absent file would say. The harness's
+    # half is there regardless, and on a silent session it is the only account there is.
+    written = (transcripts / "01" / "1-implementer.log").read_text()
+    assert written.startswith("ralph| launched: ")
+    assert "ralph| outcome:        success" in written
+    assert "ralph| commits:        1" in written
+
+
+async def test_a_transcript_holds_what_the_session_actually_said(
+    repo: TargetRepo, agent: StandInAgent
+) -> None:
+    """The Implementer's own words, kept whole — including the sentinel the harness parsed out of
+    them. This is the artifact a human opens next to the preserved worktree."""
+    await run(
+        repo.path,
+        None,
+        implementer=stand_in(agent, Behaviour.IMPASSE),
+        editor=terminal_editor(),
+        options=make_options(),
+    )
+
+    body = (
+        repo.path / ".scratch" / PARENT_ISSUE_NAME / "transcripts" / "01" / "1-implementer.log"
+    ).read_text()
+    assert "the second acceptance criterion of 01" in body

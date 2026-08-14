@@ -1,11 +1,15 @@
 """Turning a finished session into an Outcome.
 
-Two classifiers, because `impasse` can only come from an Implementer — an Editor session cannot
-fail to deliver a spec it was never given — and the Editor's classifier is structurally incapable
-of returning it.
+Three classifiers, one per unattended actor, because each is asked a different question and each is
+structurally incapable of the others' answers.
 
-`INTEGRATION_FAILED` is unreachable from either: it does not classify a session at all. The
-Implementer session already succeeded. Only the merge queue can raise it.
+`impasse` can only come from an Implementer — an Editor session cannot fail to deliver a spec it was
+never given, and an Integrator is not given one at all.
+
+`INTEGRATION_FAILED` is unreachable from the Implementer's and the Editor's: it does not classify
+their sessions at all — the Implementer session already succeeded, and only the merge gate can
+raise it against one. It *is* reachable from the Integrator's, because there the merge gate is
+asking about a session it dispatched itself.
 """
 
 from __future__ import annotations
@@ -27,6 +31,21 @@ def classify_implementer(t: SessionTelemetry) -> Outcome:
         return Outcome.INFRA_FAILED
     if t.impasse_report is not None or t.commits == 0:
         return Outcome.IMPASSE
+    return Outcome.SUCCESS
+
+
+def classify_integrator(t: SessionTelemetry, merge_finished: bool) -> Outcome:
+    """Success is a finished merge, not a commit count.
+
+    `merge_finished` is the harness's own observation of the worktree, and it is the only thing
+    asked about the work. A session can resolve a conflict perfectly, leave it staged, and stop —
+    at which point the branch carries the Implementer's commits and nothing else, so a commit count
+    reads exactly as it would on success. Counting commits here would call that a landing.
+    """
+    if _died_on_the_clock(t):
+        return Outcome.INFRA_FAILED
+    if not merge_finished:
+        return Outcome.INTEGRATION_FAILED
     return Outcome.SUCCESS
 
 

@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from ralph.harness import (
+    TokenConsumption,
     Actor,
     CycleLedger,
     Destination,
@@ -31,7 +32,7 @@ from ralph.harness import (
 )
 from ralph.issues import Findings, SessionConsumption, Spec, SubIssueId, SubIssueState
 from ralph.cli import render, run
-from ralph.mergequeue import MergeQueue
+from ralph.mergegate import MergeGate
 from ralph.ports import Budget, Editor
 from ralph.scheduler import RunReport, Scheduler
 from tests.builders import graph_of, impasse, telemetry, verdict
@@ -39,9 +40,11 @@ from tests.fakes import (
     FakeEditor,
     FakeGit,
     FakeImplementer,
+    FakeIntegrator,
     FakeIssueStore,
     FakeRunLog,
     FakeTestRunner,
+    FakeTranscripts,
 )
 from tests.testbed import (
     LEDGER_ENV,
@@ -82,10 +85,17 @@ async def run_with(
         git=git,
         store=store,
         run_log=log,
+        transcripts=FakeTranscripts(),
         implementer=implementer,
         editor=editor,
-        merge_queue=MergeQueue(git=git, runner=runner, integration="integration"),
-        integration="integration",
+        merge_gate=MergeGate(
+            git=git,
+            runner=runner,
+            integration_branch="integration",
+            integrator=FakeIntegrator(git=git),
+            budget=Budget(),
+        ),
+        integration_branch="integration",
         budget=Budget(),
     ).run()
 
@@ -102,9 +112,7 @@ def test_exactly_two_outcomes_reach_the_editor() -> None:
     sent them there would burn a cycle and a model on a question with no answer.
     """
     to_the_editor = {
-        outcome
-        for outcome in Outcome
-        if route(Actor.IMPLEMENTER, outcome) is Destination.EDITOR
+        outcome for outcome in Outcome if route(Actor.IMPLEMENTER, outcome) is Destination.EDITOR
     }
     assert to_the_editor == {Outcome.IMPASSE, Outcome.INTEGRATION_FAILED}
 
@@ -126,8 +134,8 @@ async def test_an_implementer_failure_is_handed_to_the_editor(
 
     assert len(editor.calls) == 1
     context, failure, must_be_terminal = editor.calls[0]
-    assert context.spec.body == "the original spec"
-    assert context.findings.body == "what we knew"
+    assert context.candidate.spec.body == "the original spec"
+    assert context.candidate.findings.body == "what we knew"
     assert failure.outcome is expected
     assert must_be_terminal is False  # first cycle of three
 
@@ -144,7 +152,7 @@ async def test_integration_failed_spends_a_cycle_exactly_like_an_impasse() -> No
     report = await run_with(store, FakeImplementer(scripted=[SUCCESS]), editor, git=git)
 
     # Three Implementer sessions, three Editor sessions: the cap bit, and it bit on an outcome that
-    # only the merge queue can raise.
+    # only the merge gate can raise.
     assert [f.outcome for _, f, _ in editor.calls] == [Outcome.INTEGRATION_FAILED] * 3
     assert report.failed == {ONE: Outcome.INTEGRATION_FAILED}
 
@@ -186,7 +194,7 @@ async def test_a_revise_discards_the_work_and_restarts_clean_against_the_revised
 
     # The second session read the Editor's spec. This is the assertion that separates a cycle from
     # a retry: a retry would show "the original spec" twice.
-    assert [context.spec.body for context in implementer.calls] == [
+    assert [context.candidate.spec.body for context in implementer.calls] == [
         "the original spec",
         "build it with the API that exists",
     ]
@@ -220,22 +228,24 @@ async def test_knowledge_survives_only_through_the_findings() -> None:
     await run_with(store, implementer, editor)
 
     second = implementer.calls[1]
-    assert second.spec.body == "the bar"  # the bar did not move
-    assert second.findings.body == "the client's retry logic swallows the expected error"
+    assert second.candidate.spec.body == "the bar"  # the bar did not move
+    assert second.candidate.findings.body == "the client's retry logic swallows the expected error"
 
 
 async def test_each_session_consumption_is_persisted_for_the_sub_issue() -> None:
     store = store_of("01")
     implementer = FakeImplementer(
         scripted=[
-            telemetry(commits=0, consumed_tokens=100_000),
-            telemetry(commits=1, consumed_tokens=200_000),
+            telemetry(commits=0, consumption=TokenConsumption.total_only(100_000)),
+            telemetry(commits=1, consumption=TokenConsumption.total_only(200_000)),
         ]
     )
     editor = FakeEditor(
         scripted=[
             (
-                telemetry(commits=0, consumed_tokens=50_000, auto_compactions=1),
+                telemetry(
+                    commits=0, consumption=TokenConsumption.total_only(50_000), auto_compactions=1
+                ),
                 verdict(Verdict.REVISE, spec="try the supported API"),
             )
         ]
@@ -244,13 +254,21 @@ async def test_each_session_consumption_is_persisted_for_the_sub_issue() -> None
     await run_with(store, implementer, editor)
 
     assert store.consumption(ONE) == (
-        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=100_000),
-        SessionConsumption(actor=Actor.EDITOR, consumed_tokens=50_000, auto_compactions=1),
-        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=200_000),
+        SessionConsumption(
+            actor=Actor.IMPLEMENTER, consumption=TokenConsumption.total_only(100_000)
+        ),
+        SessionConsumption(
+            actor=Actor.EDITOR, consumption=TokenConsumption.total_only(50_000), auto_compactions=1
+        ),
+        SessionConsumption(
+            actor=Actor.IMPLEMENTER, consumption=TokenConsumption.total_only(200_000)
+        ),
     )
 
 
-async def test_run_report_and_notification_include_persisted_consumption_for_quarantined_runs() -> None:
+async def test_run_report_and_notification_include_persisted_consumption_for_quarantined_runs() -> (
+    None
+):
     store = FakeIssueStore(
         graph=graph_of({"01": [], "02": ["01"], "03": ["02"]}),
         states={
@@ -263,33 +281,52 @@ async def test_run_report_and_notification_include_persisted_consumption_for_qua
         [
             (
                 SubIssueId("01"),
-                SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=900),
+                SessionConsumption(
+                    actor=Actor.IMPLEMENTER, consumption=TokenConsumption.total_only(900)
+                ),
             ),
-            (SubIssueId("02"), SessionConsumption(actor=Actor.EDITOR, consumed_tokens=800)),
+            (
+                SubIssueId("02"),
+                SessionConsumption(
+                    actor=Actor.EDITOR, consumption=TokenConsumption.total_only(800)
+                ),
+            ),
         ]
     )
     implementer = FakeImplementer(
         scripted=[
-            telemetry(commits=1, consumed_tokens=10, auto_compactions=2),
-            telemetry(commits=0, consumed_tokens=20, auto_compactions=3),
+            telemetry(commits=1, consumption=TokenConsumption.total_only(10), auto_compactions=2),
+            telemetry(commits=0, consumption=TokenConsumption.total_only(20), auto_compactions=3),
         ]
     )
     editor = FakeEditor(
-        scripted=[(telemetry(commits=0, consumed_tokens=5, auto_compactions=1), verdict())]
+        scripted=[
+            (
+                telemetry(
+                    commits=0, consumption=TokenConsumption.total_only(5), auto_compactions=1
+                ),
+                verdict(),
+            )
+        ]
     )
 
     report = await run_with(store, implementer, editor)
 
-    assert report.consumption == {SubIssueId("01"): 10, SubIssueId("02"): 25}
-    assert report.total_consumed_tokens == 35
+    assert report.consumption == {
+        SubIssueId("01"): TokenConsumption.total_only(10),
+        SubIssueId("02"): TokenConsumption.total_only(25),
+    }
+    assert report.total_consumption == TokenConsumption.total_only(35)
     assert report.auto_compactions == {SubIssueId("01"): 2, SubIssueId("02"): 4}
     assert report.total_auto_compactions == 6
 
     text = render(report.notification)
     assert "consumption:" in text
-    assert "  01: 10 tokens, 2 auto-compactions" in text
-    assert "  02: 25 tokens, 4 auto-compactions" in text
-    assert "  total: 35 tokens, 6 auto-compactions" in text
+    # These sessions reported totals and no breakdown, and the notification says so rather than
+    # printing three zeros beside a real number.
+    assert "  01: 10 tokens (no breakdown), 2 auto-compactions" in text
+    assert "  02: 25 tokens (no breakdown), 4 auto-compactions" in text
+    assert "  total: 35 tokens (no breakdown), 6 auto-compactions" in text
     assert "  03:" not in text
     assert "02  impasse" in text
 
@@ -344,7 +381,9 @@ async def test_no_fourth_implementer_session_is_ever_dispatched() -> None:
     """
     store = store_of("01")
     implementer = FakeImplementer(scripted=[IMPASSE])  # never succeeds
-    editor = FakeEditor(scripted=[(telemetry(commits=0), verdict(Verdict.REVISE))])  # never gives up
+    editor = FakeEditor(
+        scripted=[(telemetry(commits=0), verdict(Verdict.REVISE))]
+    )  # never gives up
 
     report = await run_with(store, implementer, editor)
 

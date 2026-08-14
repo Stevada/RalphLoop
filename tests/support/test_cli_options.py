@@ -15,7 +15,10 @@ def test_cli_options_have_the_current_defaults() -> None:
 
     assert options.issue_mode == "filesystem"
     assert options.implementer == "codex"
-    assert options.editor == "claude"
+    # The two roles that answer a failure are unfilled unless a run asks for them: a default run
+    # pages a human rather than spending tokens on an actor nobody chose.
+    assert options.editor == "none"
+    assert options.integrator == "none"
     assert options.protected == frozenset({"main", "master"})
     assert options.linear_api_key is None
 

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from ralph.adapters.codex import (
+    codex_integrator,
     EDITOR_SANDBOX,
     IMPLEMENTER_SANDBOX,
     CodexUsageError,
@@ -23,40 +24,54 @@ from ralph.adapters.codex import (
     CodexJsonSession,
     codex_argv,
     codex_implementer,
-    end_of_turn_consumed_tokens,
+    end_of_turn_consumption,
 )
 from ralph.adapters.runtime.bounding import Bound
-from ralph.adapters.git import GitCli
-from ralph.adapters.runtime.prompt import conflict_resolution_prompt
+from ralph.adapters.git import GitCli, git_metadata
+from ralph.adapters.runtime.prompt import integrator_prompt
 from ralph.adapters.runtime.session import Session
-from ralph.adapters.runtime.turn_stream import AutoCompaction, TokenUsage, Turn, TurnStreamAsk
+from ralph.adapters.runtime.turn_stream import (
+    AutoCompaction,
+    Turn,
+    TurnStreamAsk,
+    run_turn_stream,
+)
 from ralph.harness import (
+    NOTHING,
     Outcome,
+    TokenConsumption,
     Verdict,
     classify_editor,
     classify_implementer,
     failure_report,
 )
-from ralph.issues import Findings, Spec
-from ralph.ports import Budget, SessionContext, Worktree
+from ralph.issues import Findings, Spec, SubIssueId
+from ralph.ports import Budget, Candidate, SessionContext, Worktree
 from tests.builders import impasse, telemetry
 from tests.testbed import TargetRepo
 
 SPEC = Spec(body="# 01 — make it add\n\n## Acceptance criteria\n\n- [ ] `add(1, 2) == 3`")
 FINDINGS = Findings(body="`add()` is already in calculator.py")
 GENEROUS = Budget(wall_clock_s=30.0)
+
+
 def session_context(
     wt: Worktree, spec: Spec = SPEC, findings: Findings = FINDINGS, budget: Budget = GENEROUS
 ) -> SessionContext:
-    return SessionContext(spec=spec, findings=findings, worktree=wt, budget=budget)
+    return SessionContext(candidate=Candidate(id=SubIssueId("01"), spec=spec, findings=findings, worktree=wt), budget=budget)
 
 
 # ── the argv ─────────────────────────────────────────────────────────────────────────────────
 
 
+WRITABLE = (Path("/repo/.git"),)
+
+
 def test_the_session_is_asked_for_json() -> None:
     """`--json` is how the session reports completed-turn usage."""
-    argv = codex_argv(SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="main"))
+    argv = codex_argv(
+        SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="main"), WRITABLE
+    )
 
     assert argv[:4] == ["codex", "--ask-for-approval", "never", "exec"]
     assert "--json" in argv
@@ -64,7 +79,9 @@ def test_the_session_is_asked_for_json() -> None:
 
 
 def test_the_spec_and_the_findings_both_reach_the_model() -> None:
-    prompt = codex_argv(SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"))[-1]
+    prompt = codex_argv(
+        SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"), WRITABLE
+    )[-1]
 
     assert "`add(1, 2) == 3`" in prompt
     assert "already in calculator.py" in prompt
@@ -72,12 +89,26 @@ def test_the_spec_and_the_findings_both_reach_the_model() -> None:
 
 
 def test_how_codex_is_driven_is_fixed_not_configured() -> None:
-    argv = codex_argv(SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"))
+    argv = codex_argv(
+        SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"), WRITABLE
+    )
 
     assert "--sandbox" in argv and IMPLEMENTER_SANDBOX in argv
     assert "--ask-for-approval" in argv and "never" in argv
     assert "--dangerously-bypass-approvals-and-sandbox" not in argv
-    assert "gpt-5.4" in argv
+    assert "gpt-5.5" in argv
+
+
+def test_the_git_directory_is_writable_or_the_session_cannot_commit() -> None:
+    """The worktree is not enough. A session confined to `--cd` can resolve every file it was
+    asked to and still fail `git add` with `Read-only file system`, because the index, the objects
+    and the refs are all outside the checkout."""
+    argv = codex_argv(
+        SPEC, FINDINGS, Worktree(path=Path("/w"), branch="ralph/01", base="m"), WRITABLE
+    )
+
+    assert "--add-dir" in argv
+    assert argv[argv.index("--add-dir") + 1] == "/repo/.git"
 
 
 # ── completed-turn usage ─────────────────────────────────────────────────────────────────────
@@ -85,28 +116,63 @@ def test_how_codex_is_driven_is_fixed_not_configured() -> None:
 
 async def test_consumption_comes_from_the_completed_turn_usage() -> None:
     session = Session(
-        bound=Bound(killed=None, consumed_tokens=0),
+        bound=Bound(killed=None, consumption=NOTHING),
         exit_code=0,
         output=(
             '{"type": "turn.completed", "usage": {"total_tokens": 123}}\n'
             '{"type": "turn.completed", "usage": {"total_tokens": 456}}\n'
         ),
+        transcript="",  # `end_of_turn_consumption` reads `output`; this is not its input
         wall_clock_s=1.0,
     )
 
-    assert await end_of_turn_consumed_tokens(session, Worktree(Path("/w"), "b", "base")) == 456
+    # A total with no components is all this event says, and all the harness may claim.
+    assert await end_of_turn_consumption(session, Worktree(Path("/w"), "b", "base")) == (
+        TokenConsumption.total_only(456)
+    )
+
+
+async def test_consumption_splits_a_usage_that_carries_no_total() -> None:
+    """Verbatim from codex-cli 0.143.0.
+
+    Two claims. The total is input + output — 2_450_064, not the 4_729_086 that summing all four
+    would give, because `cached_input_tokens` and `reasoning_output_tokens` break down the other
+    two rather than adding to them.
+
+    And the buckets are **disjoint**: Codex counts cached tokens inside `input_tokens`, so the
+    fresh half is the difference. 2_421_295 reported as input is really 152_111 fresh prompt on top
+    of a 2_269_184-token cache read — a 15x difference in what the same run costs, and the whole
+    reason the buckets are reported separately.
+    """
+    session = Session(
+        bound=Bound(killed=None, consumption=NOTHING),
+        exit_code=0,
+        output=(
+            '{"type":"turn.completed","usage":{"input_tokens":2421295,'
+            '"cached_input_tokens":2269184,"output_tokens":28769,'
+            '"reasoning_output_tokens":9838}}\n'
+        ),
+        transcript="",  # `end_of_turn_consumption` reads `output`; this is not its input
+        wall_clock_s=1.0,
+    )
+
+    consumption = await end_of_turn_consumption(session, Worktree(Path("/w"), "b", "base"))
+
+    assert consumption == TokenConsumption.split(input=152_111, cache_read=2_269_184, output=28_769)
+    assert consumption is not None and consumption.consumed_tokens == 2_450_064
 
 
 async def test_a_completed_turn_without_usage_is_loud() -> None:
     session = Session(
-        bound=Bound(killed=None, consumed_tokens=0),
+        bound=Bound(killed=None, consumption=NOTHING),
         exit_code=0,
         output='{"type": "turn.completed", "usage": {}}\n',
+        transcript="",  # `end_of_turn_consumption` reads `output`; this is not its input
         wall_clock_s=1.0,
     )
 
     with pytest.raises(CodexUsageError):
-        await end_of_turn_consumed_tokens(session, Worktree(Path("/w"), "b", "base"))
+        await end_of_turn_consumption(session, Worktree(Path("/w"), "b", "base"))
 
 
 # ── the JSONL turn stream ────────────────────────────────────────────────────────────────────
@@ -118,7 +184,11 @@ final = int(sys.argv[1])
 mode = sys.argv[2]
 if final:
     print(json.dumps({"type": "thread.started", "thread_id": "codex-thread-123"}), flush=True)
-    print(json.dumps({"type": "turn.completed", "usage": {"total_tokens": final}}), flush=True)
+    # The live shape: components, no total, with cached/reasoning set so that a reader which
+    # summed all four would report 2x final rather than final.
+    usage = {"input_tokens": final - 34, "cached_input_tokens": final - 34,
+             "output_tokens": 34, "reasoning_output_tokens": 34}
+    print(json.dumps({"type": "turn.completed", "usage": usage}), flush=True)
 print(json.dumps({"type": "agent_message", "message": "done"}), flush=True)
 if mode == "compact":
     print(json.dumps({"type": "context_compacted", "pre_compaction_tokens": 170000, "post_compaction_tokens": 43000, "tokens_removed": 127000}), flush=True)
@@ -152,7 +222,12 @@ async def test_the_codex_json_session_streams_text_usage_and_compaction() -> Non
 
     turns = await collect(session)
 
-    assert turns == [TokenUsage(consumed_tokens=1_234), "done", "done\n"]
+    # The stub's prompt is entirely cached, so `input` is nothing and the 1_200 is all cache read.
+    assert turns == [
+        TokenConsumption.split(input=0, cache_read=1_200, output=34),
+        "done",
+        "done\n",
+    ]
     assert session.auto_compactions == (
         AutoCompaction(
             event="compacted",
@@ -161,6 +236,68 @@ async def test_the_codex_json_session_streams_text_usage_and_compaction() -> Non
             tokens_removed=127_000,
         ),
     )
+    # The turns above are what the parser recovered. The transcript is the stream itself, events
+    # and all — including the two the parser consumed for usage and compaction and emitted no text
+    # for, which are the two a human debugging a budget or a context blowout wants to see.
+    assert '"type": "turn.completed"' in session.transcript
+    assert '"type": "context_compacted"' in session.transcript
+
+
+STUB_CODEX_UNKNOWN_SCHEMA = """\
+import json, sys
+
+print(json.dumps({"type": "thread.started", "thread_id": "codex-thread-999"}), flush=True)
+# Well-formed JSON whose text sits under a key `_text_of` does not navigate.
+print(json.dumps({"type": "item.completed", "item": {
+    "type": "agent_message", "text": "take both sides and commit"}}), flush=True)
+"""
+
+
+async def test_a_schema_the_parser_does_not_know_still_reaches_the_transcript() -> None:
+    """The defect that made a real failed reconciliation unreadable.
+
+    `turns()` is a *reading* of the stream, and a reading is only ever as current as the shapes it
+    was taught. Move the text under a key it does not probe and it recovers nothing — while the
+    lines that survive are the ones that survive *because* they failed to parse, which is to say
+    the banners and the noise. A transcript assembled from turns inverts itself exactly when the
+    vendor moves, and it does so silently.
+
+    Recording before interpreting is what makes that impossible, so this test asserts the two
+    halves are independent: the parser recovers nothing here, and the human still gets everything.
+    """
+    session = CodexJsonSession(
+        TurnStreamAsk(prompt="resolve it", cwd=Path("/tmp")),
+        sandbox=IMPLEMENTER_SANDBOX,
+        build_argv=lambda _ask, _sandbox: (sys.executable, "-c", STUB_CODEX_UNKNOWN_SCHEMA),
+    )
+
+    completed = await run_turn_stream(session, GENEROUS)
+
+    assert completed.output == ""
+    assert "take both sides and commit" in completed.transcript
+    assert "codex-thread-999" in completed.transcript
+
+
+async def test_a_transcript_opens_with_what_the_harness_launched() -> None:
+    """The other half of a session a human cannot explain: what it was *told*.
+
+    An Integrator that stopped short of committing is a different problem depending on whether its
+    prompt asked it to commit, and the prompt is assembled far from the artifact. The argv carries
+    the model, the sandbox, every writable directory and the prompt itself, so the question is
+    answered by opening the file rather than by reading `prompt.py` and inferring.
+    """
+    session = CodexJsonSession(
+        TurnStreamAsk(prompt="reconcile it and commit", cwd=Path("/tmp")),
+        sandbox=IMPLEMENTER_SANDBOX,
+        build_argv=lambda _ask, _sandbox: (sys.executable, "-c", "pass"),
+    )
+
+    completed = await run_turn_stream(session, GENEROUS)
+
+    # A session that said nothing at all, and the record still answers what ran.
+    assert completed.output == ""
+    assert completed.transcript.startswith("ralph| launched: ")
+    assert "-c pass" in completed.transcript
 
 
 async def test_kill_stops_the_codex_turn_stream_without_raising() -> None:
@@ -187,7 +324,7 @@ async def test_a_session_records_completed_turn_consumption(repo: TargetRepo) ->
     assert t.killed is None
     assert t.exit_code == 0
     assert not hasattr(t, "peak_context_tokens")
-    assert t.consumed_tokens == 1_234_567
+    assert t.consumption.consumed_tokens == 1_234_567
     assert t.resumable_identifier == "codex-thread-123"
 
 
@@ -198,7 +335,7 @@ async def test_a_session_runs_to_completion_without_completed_turn_usage(repo: T
     t = await codex_implementer_with_stub(final=0).run(session_context(wt))
 
     assert t.killed is None
-    assert t.consumed_tokens == 0
+    assert t.consumption.consumed_tokens == 0
     assert "done" in t.session_output
     assert classify_implementer(t) is Outcome.IMPASSE
 
@@ -249,7 +386,7 @@ def codex_implementer_with_blocking_stub() -> CodexImplementer:
     return CodexImplementer(open_session=open_session)
 
 
-async def test_the_codex_implementer_resumes_the_specific_thread_for_conflict_resolution(
+async def test_the_codex_integrator_opens_a_fresh_session_in_the_conflicted_worktree(
     repo: TargetRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     git = GitCli(repo=repo.path)
@@ -277,7 +414,7 @@ async def test_the_codex_implementer_resumes_the_specific_thread_for_conflict_re
                 "commit",
                 "-m", "resolve conflict",
             ], check=True)
-            print(json.dumps({{"type": "turn.completed", "usage": {{"total_tokens": 770}}}}), flush=True)
+            print(json.dumps({{"type": "turn.completed", "usage": {{"input_tokens": 736, "cached_input_tokens": 700, "output_tokens": 34, "reasoning_output_tokens": 12}}}}), flush=True)
             print(json.dumps({{"type": "agent_message", "message": "resolved"}}), flush=True)
             """)
     )
@@ -285,21 +422,20 @@ async def test_the_codex_implementer_resumes_the_specific_thread_for_conflict_re
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("RALPH_CODEX_ARGV_LOG", str(argv_log))
 
-    t = await codex_implementer().resolve_conflict(session_context(wt), "codex-thread-789")
+    context = session_context(wt)
+    t = await codex_integrator(git_metadata(repo.path)).reconcile(context)
 
     argv = json.loads(argv_log.read_text())
-    resume = argv.index("resume")
     assert argv[:3] == ["--ask-for-approval", "never", "exec"]
     assert "--json" in argv
-    assert "--sandbox" in argv and IMPLEMENTER_SANDBOX in argv
+    assert "--sandbox" in argv and IMPLEMENTER_SANDBOX in argv, "it must be able to write"
     assert "--cd" in argv and str(wt.path) in argv
-    assert "--last" not in argv
-    assert argv[resume + 1] == "codex-thread-789"
-    assert argv[resume + 2] == conflict_resolution_prompt()
-    assert "Acceptance criteria" not in argv[resume + 2]
+    assert "--add-dir" in argv and str(git_metadata(repo.path)) in argv, "it must be able to commit"
+    assert "resume" not in argv, "a fresh session: the conflict is in the repo, not in a transcript"
+    assert argv[-1] == integrator_prompt(context.candidate.spec, context.candidate.findings)
     assert t.killed is None
-    assert t.consumed_tokens == 770
-    assert t.resumable_identifier == "codex-thread-789"
+    assert t.resumable_identifier is None
+    assert t.consumption.consumed_tokens == 770
     assert t.commits == 1
     assert "resolved" in t.session_output
 
@@ -312,7 +448,9 @@ FAILURE = failure_report(
 )
 
 
-async def test_the_codex_editor_reuses_the_editor_core_under_read_only_sandbox(tmp_path: Path) -> None:
+async def test_the_codex_editor_reuses_the_editor_core_under_read_only_sandbox(
+    tmp_path: Path,
+) -> None:
     seen: list[tuple[TurnStreamAsk, str]] = []
 
     def open_session(ask: TurnStreamAsk) -> CodexJsonSession:
@@ -325,9 +463,12 @@ async def test_the_codex_editor_reuses_the_editor_core_under_read_only_sandbox(t
     editor = CodexEditor(open_session=open_session, suite=("uv", "run", "pytest", "-q"))
     t, verdict = await editor.adjudicate(
         SessionContext(
-            spec=Spec(body="build it"),
-            findings=Findings(body=""),
-            worktree=Worktree(path=tmp_path, branch="ralph/01", base="integration"),
+            candidate=Candidate(
+                id=SubIssueId("01"),
+                spec=Spec(body="build it"),
+                findings=Findings(body=""),
+                worktree=Worktree(path=tmp_path, branch="ralph/01", base="integration"),
+            ),
             budget=Budget(wall_clock_s=10.0),
         ),
         FAILURE,
@@ -338,7 +479,7 @@ async def test_the_codex_editor_reuses_the_editor_core_under_read_only_sandbox(t
     assert seen[0][1] == EDITOR_SANDBOX
     assert verdict is not None
     assert verdict.verdict is Verdict.PLANNING_DEFECT
-    assert t.consumed_tokens == 55_000
+    assert t.consumption.consumed_tokens == 55_000
     assert t.commits == 0
     assert classify_editor(t, verdict) is Outcome.SUCCESS
 
@@ -356,7 +497,8 @@ def _recording_editor_argv(
         "-c",
         "import json; "
         "print(json.dumps({'type':'agent_message','message':%r})); "
-        "print(json.dumps({'type':'turn.completed','usage':{'total_tokens':55000}}))"
+        "print(json.dumps({'type':'turn.completed','usage':{'input_tokens':54000,"
+        "'cached_input_tokens':50000,'output_tokens':1000,'reasoning_output_tokens':400}}))"
         % f"<verdict>{json.dumps(answer)}</verdict>",
     )
 
@@ -385,22 +527,25 @@ async def test_a_real_codex_session_lands_a_real_sub_issue(repo: TargetRepo) -> 
             """)
     )
 
-    t = await codex_implementer().run(
-        session_context(wt, spec=spec, findings=Findings(body=""), budget=Budget(wall_clock_s=600.0))
+    t = await codex_implementer(git_metadata(repo.path)).run(
+        session_context(
+            wt, spec=spec, findings=Findings(body=""), budget=Budget(wall_clock_s=600.0)
+        )
     )
 
     assert t.killed is None
     assert t.commits >= 1
     assert not hasattr(t, "peak_context_tokens")
-    assert t.consumed_tokens > 0
+    assert t.consumption.consumed_tokens > 0
     assert repo.run_suite(wt.path)
 
 
 @REAL
-async def test_a_real_codex_resumed_session_resolves_a_real_rebase_conflict(
+async def test_a_real_codex_integrator_resolves_a_real_merge_conflict(
     repo: TargetRepo,
 ) -> None:
-    """Spends two real Codex turns: one to create work, one to resume it after a moved base."""
+    """Spends two real Codex turns: one to create the work, one to reconcile it after the base
+    moved. The second is a *fresh* session — it is told nothing about the first."""
     git = GitCli(repo=repo.path)
     wt = git.add_worktree("ralph/01", repo.path / ".worktrees" / "active" / "01", "integration")
     spec = Spec(
@@ -417,27 +562,26 @@ async def test_a_real_codex_resumed_session_resolves_a_real_rebase_conflict(
         wt, spec=spec, findings=Findings(body=""), budget=Budget(wall_clock_s=900.0)
     )
 
-    first = await codex_implementer().run(context)
+    first = await codex_implementer(git_metadata(repo.path)).run(context)
     assert first.resumable_identifier is not None
     assert first.commits >= 1
 
     (repo.path / "shared.py").write_text('MARKER = "integration-side"\n')
     repo.git("add", "shared.py")
     repo.git("commit", "-m", "move integration marker")
-    rebase = subprocess.run(
-        ["git", "rebase", "integration"],
+    merge = subprocess.run(
+        ["git", "merge", "--no-edit", "integration"],
         cwd=wt.path,
         capture_output=True,
         text=True,
         check=False,
     )
-    assert rebase.returncode != 0
+    assert merge.returncode != 0
     assert "<<<<<<<" in (wt.path / "shared.py").read_text()
 
-    resumed = await codex_implementer().resolve_conflict(context, first.resumable_identifier)
+    reconciled = await codex_integrator(git_metadata(repo.path)).reconcile(context)
 
-    assert resumed.killed is None
-    assert resumed.resumable_identifier == first.resumable_identifier
-    assert resumed.consumed_tokens > 0
-    assert resumed.commits >= 1
+    assert reconciled.killed is None
+    assert reconciled.consumption.consumed_tokens > 0
+    assert git.merge_finished(wt), "it resolved the conflict but never committed it"
     assert repo.run_suite(wt.path)

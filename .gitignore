@@ -17,6 +17,7 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+*.pyc
 
 # Local editor settings (shared .claude/ config stays tracked)
 .claude/settings.local.json

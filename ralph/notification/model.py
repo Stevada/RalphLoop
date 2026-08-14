@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ralph.harness import FailureReport, Outcome
+from ralph.harness import FailureReport, Outcome, TokenConsumption, total
 from ralph.issues.graph import SubIssueId
 
 
@@ -21,7 +21,7 @@ class Escalation:
 @dataclass(frozen=True, slots=True)
 class SubIssueConsumption:
     sub_issue: SubIssueId
-    consumed_tokens: int
+    consumption: TokenConsumption
     auto_compactions: int
 
 
@@ -32,8 +32,8 @@ class Notification:
     escalations: tuple[Escalation, ...]  # ranked: the one to open first comes first
 
     @property
-    def total_consumed_tokens(self) -> int:
-        return sum(c.consumed_tokens for c in self.consumption)
+    def total_consumption(self) -> TokenConsumption:
+        return total(c.consumption for c in self.consumption)
 
     @property
     def total_auto_compactions(self) -> int:

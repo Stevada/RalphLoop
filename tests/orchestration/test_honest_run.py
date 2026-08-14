@@ -6,12 +6,12 @@ parallel, and one that integrates them:
     01 ──┬── 02 ──┬── 04
          └── 03 ──┘
 
-against a real git repository, with real worktrees, a real merge queue, a real suite, and a real
+against a real git repository, with real worktrees, a real merge gate, a real suite, and a real
 agent subprocess. Failure cases inject a scripted Editor so the test does not call a real model.
 
 This is not the moment the system first comes together — that was #04, and every ticket since has
 kept it working. There is no big-bang integration here. What is new is the *whole* claim, asserted
-in one place: every sub-issue lands, the history is linear, the suite is green on the integration
+in one place: every sub-issue lands by fast-forward, the suite is green on the integration
 branch, and the run log tells the truth about what happened in what order.
 """
 
@@ -32,6 +32,7 @@ from tests.testbed import (
     behaviour_spec,
     make_options,
     stand_in_implementer as stand_in,
+    unengaged_editor,
 )
 
 # A contract, two in parallel behind it, one integrating both. The smallest graph in which
@@ -54,7 +55,7 @@ def story(repo: TargetRepo) -> list[tuple[str, str, str]]:
     return [(e["sub_issue"], e["kind"], e["details"]) for e in events(repo)]
 
 
-async def test_every_sub_issue_lands_and_the_history_is_linear(
+async def test_every_sub_issue_lands_and_every_landing_is_a_fast_forward(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
     repo.write_graph(PHASE)
@@ -63,16 +64,20 @@ async def test_every_sub_issue_lands_and_the_history_is_linear(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
     assert sorted(report.landed) == ["01", "02", "03", "04"]
     assert report.clean
 
-    # Four sub-issues, four commits on top of the base and its graph commit — and **no merge
-    # commits**. Four agents worked concurrently and the branch reads as though they had queued.
-    assert repo.commit_count("integration") == 6
-    assert repo.git("log", "--merges", "--oneline", "integration") == ""
+    # Four sub-issues, four commits on top of the base and its graph commit — plus one merge for
+    # each worktree that had to catch up with a sibling that landed first. Every merge commit on the
+    # branch was made **inside a worktree**, before that worktree's suite ran; the gate's own
+    # fast-forward never synthesizes one, which is what makes the branch correct by construction.
+    catch_ups = repo.git("log", "--merges", "--format=%s", "integration").splitlines()
+    assert all(m.startswith("Merge branch 'integration' into ralph/") for m in catch_ups)
+    assert repo.commit_count("integration") == 6 + len(catch_ups)
 
     # The suite is green on the integration branch, run from the base checkout, after everything
     # landed. Not the harness's own word for it: pytest, again, on the tree that now exists.
@@ -98,6 +103,7 @@ async def test_the_run_log_tells_the_true_story_in_order(
         repo.path,
         None,
         implementer=stand_in(agent, Behaviour.SUCCEED),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -194,8 +200,8 @@ async def test_a_semantic_conflict_surfaces_on_the_second_to_land(
     """**The one a green integration branch would have hidden.**
 
     Two sub-issues, no dependency between them, both green in their own worktrees, and touching
-    different files — so there is no rebase conflict for git to catch. One renames `calculator.add`;
-    the other adds a test that calls it. Whichever lands second is rebased cleanly onto a branch its
+    different files — so there is no merge conflict for git to catch. One renames `calculator.add`;
+    the other adds a test that calls it. Whichever lands second merges cleanly with a branch its
     own work no longer fits, and only the suite re-run *on the prospective merge* can see it.
 
     Which of the two loses the race is not asserted, because it is not determined: they are dispatched
@@ -223,4 +229,4 @@ async def test_a_semantic_conflict_surfaces_on_the_second_to_land(
 
     loser = next(iter(report.failed))
     assert (repo.path / ".worktrees" / "failed" / PARENT_ISSUE_NAME / str(loser)).is_dir()
-    assert "the merge queue: suite-red" in render(report.notification)
+    assert "the merge gate: suite-red" in render(report.notification)

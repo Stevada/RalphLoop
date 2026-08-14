@@ -8,7 +8,7 @@ They live here rather than in `ralph/` because nothing in the shipped package ma
 and the surest way to guarantee that is for the package not to contain one.
 
 `Git` and `TestRunner` also have *real* adapters, tested against real temporary repositories — a
-fake git that always says "rebase succeeded" tests nothing. The fakes here are for the layers
+fake git that always says "merge succeeded" tests nothing. The fakes here are for the layers
 above, which have no business knowing what git is.
 """
 
@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ralph.harness import EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
+from ralph.harness import Actor, EditorVerdict, FailureReport, SessionTelemetry, SuiteResult
 from ralph.issues import (
     Findings,
     IssueGraph,
@@ -27,7 +27,7 @@ from ralph.issues import (
     SubIssueId,
     SubIssueState,
 )
-from ralph.ports import RepoCommands, SessionContext, Worktree
+from ralph.ports import FinishedSession, RepoCommands, SessionContext, Worktree
 from ralph.runlog import Event
 from tests.builders import telemetry
 
@@ -37,9 +37,7 @@ class FakeImplementer:
     """Returns scripted telemetry, one per call, and records what it was asked to build."""
 
     scripted: Sequence[SessionTelemetry] = field(default_factory=list)
-    conflict_scripted: Sequence[SessionTelemetry] = field(default_factory=list)
     calls: list[SessionContext] = field(default_factory=list)
-    resolve_conflict_calls: list[tuple[SessionContext, str]] = field(default_factory=list)
 
     async def run(self, context: SessionContext) -> SessionTelemetry:
         self.calls.append(context)
@@ -47,14 +45,28 @@ class FakeImplementer:
             return telemetry()
         return self.scripted[min(len(self.calls) - 1, len(self.scripted) - 1)]
 
-    async def resolve_conflict(
-        self, context: SessionContext, resumable_identifier: str
-    ) -> SessionTelemetry:
-        self.resolve_conflict_calls.append((context, resumable_identifier))
-        if not self.conflict_scripted:
+
+@dataclass(slots=True)
+class FakeIntegrator:
+    """Returns scripted telemetry and records the conflicts it was asked to reconcile.
+
+    `resolves` decides what it does to the fake git it shares with the gate: reconciling for real
+    means clearing the conflict, and a fake that returned success while leaving the merge open
+    would hide the one failure this actor exists to make visible.
+    """
+
+    git: FakeGit | None = None
+    resolves: bool = True
+    scripted: Sequence[SessionTelemetry] = field(default_factory=list)
+    calls: list[SessionContext] = field(default_factory=list)
+
+    async def reconcile(self, context: SessionContext) -> SessionTelemetry:
+        self.calls.append(context)
+        if self.git is not None and self.resolves:
+            self.git.open_merges.discard(context.candidate.worktree.branch)
+        if not self.scripted:
             return telemetry()
-        index = min(len(self.resolve_conflict_calls) - 1, len(self.conflict_scripted) - 1)
-        return self.conflict_scripted[index]
+        return self.scripted[min(len(self.calls) - 1, len(self.scripted) - 1)]
 
 
 @dataclass(slots=True)
@@ -133,6 +145,26 @@ class FakeRunLog:
 
 
 @dataclass(slots=True)
+class FakeTranscripts:
+    """In-memory transcripts, keyed exactly as the files would be named.
+
+    A dict rather than a list because the key is the claim worth asserting: two sessions that
+    collided on one filename would be one entry here, and a test that counted appends would not
+    notice.
+    """
+
+    written: dict[tuple[SubIssueId, int, Actor], FinishedSession] = field(default_factory=dict)
+
+    async def write(self, session: FinishedSession) -> None:
+        self.written[(session.sub_issue, session.cycle, session.actor)] = session
+
+    def bodies(self) -> dict[tuple[SubIssueId, int, Actor], str]:
+        """What each session said, without the harness's footer — which `FileTranscripts` renders
+        and this fake deliberately does not, so a test asserting on one is testing the renderer."""
+        return {key: s.telemetry.transcript for key, s in self.written.items()}
+
+
+@dataclass(slots=True)
 class FakeTestRunner:
     """Green by default. `red_in` names the worktrees whose suite fails — which is how the
     semantic-conflict case gets set up without a real repository."""
@@ -166,15 +198,14 @@ class FakeGit:
     tested against real repositories."""
 
     head: str = "integration"
-    rebase_conflicts: set[str] = field(default_factory=set)  # branches whose rebase fails
-    rebase_results: dict[str, list[bool]] = field(default_factory=dict)
-    conflict_resolution_rebase_results: dict[str, list[bool]] = field(default_factory=dict)
+    merge_conflicts: set[str] = field(default_factory=set)  # branches whose merge conflicts
+    open_merges: set[str] = field(default_factory=set)  # branches with a merge still uncommitted
+    merge_results: dict[str, list[bool]] = field(default_factory=dict)
     ff_refuses: set[str] = field(default_factory=set)  # branches whose fast-forward is refused
     commit_counts: dict[str, int] = field(default_factory=dict)
     worktrees: list[Worktree] = field(default_factory=list)
-    rebased: list[tuple[str, str]] = field(default_factory=list)
-    conflict_resolution_rebased: list[tuple[str, str]] = field(default_factory=list)
-    merged: list[str] = field(default_factory=list)
+    merges: list[tuple[str, str]] = field(default_factory=list)
+    fast_forwarded: list[str] = field(default_factory=list)
     moved: list[tuple[str, Path]] = field(default_factory=list)
     discarded: list[str] = field(default_factory=list)
 
@@ -190,22 +221,22 @@ class FakeGit:
     def discard_worktree(self, wt: Worktree) -> None:
         self.discarded.append(wt.branch)
 
-    def rebase(self, wt: Worktree, onto: str) -> bool:
-        self.rebased.append((wt.branch, onto))
-        if scripted := self.rebase_results.get(wt.branch):
-            return scripted.pop(0)
-        return wt.branch not in self.rebase_conflicts
+    def merge(self, wt: Worktree, onto: str) -> bool:
+        self.merges.append((wt.branch, onto))
+        clean = scripted.pop(0) if (scripted := self.merge_results.get(wt.branch)) else (
+            wt.branch not in self.merge_conflicts
+        )
+        if not clean:
+            self.open_merges.add(wt.branch)
+        return clean
 
-    def rebase_for_conflict_resolution(self, wt: Worktree, onto: str) -> bool:
-        self.conflict_resolution_rebased.append((wt.branch, onto))
-        if scripted := self.conflict_resolution_rebase_results.get(wt.branch):
-            return scripted.pop(0)
-        return wt.branch not in self.rebase_conflicts
+    def merge_finished(self, wt: Worktree) -> bool:
+        return wt.branch not in self.open_merges
 
     def merge_ff_only(self, branch: str) -> bool:
         if branch in self.ff_refuses:
             return False
-        self.merged.append(branch)
+        self.fast_forwarded.append(branch)
         return True
 
     def commits_between(self, base: str, branch: str) -> int:

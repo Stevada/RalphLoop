@@ -28,6 +28,7 @@ from tests.testbed import (
     behaviour_spec,
     make_options,
     stand_in_implementer as stand_in,
+    unengaged_editor,
 )
 
 
@@ -116,6 +117,7 @@ async def test_a_killed_session_yields_a_report_built_from_harness_facts_only(
         None,
         budget=Budget(wall_clock_s=1.0),
         implementer=stand_in(agent, Behaviour.HANG),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 
@@ -145,11 +147,11 @@ async def test_a_non_integration_report_carries_no_harness_suite_result(
     assert escalation.report.claim is not None
 
 
-async def test_an_integration_failure_carries_the_merge_queue_suite_result(
+async def test_an_integration_failure_carries_the_merge_gate_suite_result(
     repo: TargetRepo, agent: StandInAgent
 ) -> None:
-    """A committed red tree reaches the merge queue. The red suite it reports is the merge-queue
-    gate's evidence, not a scheduler post-session run."""
+    """A committed red tree reaches the merge gate. The red suite it reports is the suite gate's
+    evidence, not a scheduler post-session run."""
     repo.write_graph({"01": []})
 
     report = await run(
@@ -201,6 +203,7 @@ async def test_nothing_is_ever_retried(
         None,
         budget=Budget(wall_clock_s=1.0),
         implementer=stand_in(agent, spec),
+        editor=unengaged_editor(),
         options=make_options(),
     )
 

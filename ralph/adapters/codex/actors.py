@@ -1,16 +1,19 @@
-"""Codex's two actors over the JSONL turn stream."""
+"""Codex's three actors over the JSONL turn stream."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import partial
+from pathlib import Path
 
 from ralph.adapters.codex.session import codex_read_only_session, codex_sdk_session
 from ralph.adapters.runtime.editor import run_editor
+from ralph.adapters.runtime.integrator import run_turn_stream_integrator
 from ralph.adapters.runtime.prompt import (
-    conflict_resolution_prompt,
     editor_prompt,
     implementer_prompt,
+    integrator_prompt,
 )
 from ralph.adapters.runtime.implementer import run_turn_stream_implementer
 from ralph.adapters.runtime.turn_stream import OpenSession, TurnStreamAsk
@@ -27,23 +30,28 @@ class CodexImplementer:
     async def run(self, context: SessionContext) -> SessionTelemetry:
         session = self.open_session(
             TurnStreamAsk(
-                prompt=implementer_prompt(context.spec, context.findings),
-                cwd=context.worktree.path,
+                prompt=implementer_prompt(context.candidate.spec, context.candidate.findings),
+                cwd=context.candidate.worktree.path,
             )
         )
         return await run_turn_stream_implementer(session, context)
 
-    async def resolve_conflict(
-        self, context: SessionContext, resumable_identifier: str
-    ) -> SessionTelemetry:
+
+@dataclass(frozen=True, slots=True)
+class CodexIntegrator:
+    """Codex reconciling a conflicted worktree. A fresh session, not a resumed one — the conflict
+    is fully described by the repository it is standing in."""
+
+    open_session: OpenSession
+
+    async def reconcile(self, context: SessionContext) -> SessionTelemetry:
         session = self.open_session(
             TurnStreamAsk(
-                prompt=conflict_resolution_prompt(),
-                cwd=context.worktree.path,
-                resumable_identifier=resumable_identifier,
+                prompt=integrator_prompt(context.candidate.spec, context.candidate.findings),
+                cwd=context.candidate.worktree.path,
             )
         )
-        return await run_turn_stream_implementer(session, context)
+        return await run_turn_stream_integrator(session, context)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,16 +71,20 @@ class CodexEditor:
         session = self.open_session(
             TurnStreamAsk(
                 prompt=editor_prompt(
-                    context.spec, context.findings, failure, must_be_terminal
+                    context.candidate.spec, context.candidate.findings, failure, must_be_terminal
                 ),
-                cwd=context.worktree.path,
+                cwd=context.candidate.worktree.path,
             )
         )
         return await run_editor(session, context.budget)
 
 
-def codex_implementer() -> CodexImplementer:
-    return CodexImplementer(open_session=codex_sdk_session)
+def codex_implementer(git_metadata: Path) -> CodexImplementer:
+    return CodexImplementer(open_session=partial(codex_sdk_session, git_metadata=git_metadata))
+
+
+def codex_integrator(git_metadata: Path) -> CodexIntegrator:
+    return CodexIntegrator(open_session=partial(codex_sdk_session, git_metadata=git_metadata))
 
 
 def codex_editor(suite: Sequence[str]) -> CodexEditor:

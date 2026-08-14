@@ -17,11 +17,18 @@ from pathlib import Path
 import pytest
 
 from ralph.cli import render
-from ralph.adapters.copilot import CopilotEditor, CopilotImplementer, copilot_implementer
-from ralph.adapters.runtime.prompt import conflict_resolution_prompt
-from ralph.adapters.runtime.turn_stream import AutoCompaction, Permission, TokenUsage, Turn, TurnStreamAsk
+from ralph.adapters.copilot import (
+    CopilotEditor,
+    CopilotImplementer,
+    CopilotIntegrator,
+    copilot_implementer,
+    copilot_integrator,
+)
+from ralph.adapters.runtime.prompt import integrator_prompt
+from ralph.adapters.runtime.turn_stream import AutoCompaction, Permission, Turn, TurnStreamAsk
 from ralph.adapters.git import GitCli, run_git
 from ralph.harness import (
+    TokenConsumption,
     Actor,
     EditorVerdict,
     Outcome,
@@ -33,16 +40,14 @@ from ralph.issues import Findings, SessionConsumption, Spec, SubIssueId, SubIssu
 from ralph.issues.filesystem import FilesystemIssueStore
 from ralph.issues.linear import LinearIssueStore
 from ralph.notification import notify
-from ralph.ports import Budget, SessionContext, Worktree
+from ralph.ports import Budget, Candidate, SessionContext, Worktree
 from tests.builders import graph_of, impasse, telemetry
 from tests.issues.test_linear_issue_store import FakeLinearClient, parent_with, sub_issue
 from tests.testbed import TargetRepo
 
 SUITE: Sequence[str] = ("python", "-m", "pytest")
 
-FAILURE = failure_report(
-    Outcome.IMPASSE, telemetry(commits=0, impasse_report=impasse())
-)
+FAILURE = failure_report(Outcome.IMPASSE, telemetry(commits=0, impasse_report=impasse()))
 
 SPEC = Spec(body="# 01 — build it\n\n## Acceptance criteria\n\n- [ ] Add a file.")
 FINDINGS = Findings(body="Start from the existing calculator module.")
@@ -81,10 +86,12 @@ class StubTurnStreamSession:
         resumable_identifier: str | None = None,
         on_start: Callable[[], None] | None = None,
         block_after_turns: bool = False,
+        transcript: str = "",
     ) -> None:
         self._turns = turns
         self._auto_compactions = tuple(auto_compactions)
         self._resumable_identifier = resumable_identifier
+        self._transcript = transcript
         self._on_start = on_start
         self._block_after_turns = block_after_turns
         self._released = asyncio.Event()
@@ -98,6 +105,12 @@ class StubTurnStreamSession:
     @property
     def resumable_identifier(self) -> str | None:
         return self._resumable_identifier
+
+    @property
+    def transcript(self) -> str:
+        # Scripted independently of the turns, because that is the relationship a real session has:
+        # the turns are what a parser recovered, and the transcript is what actually arrived.
+        return self._transcript
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         if self._on_start is not None:
@@ -132,7 +145,7 @@ async def test_the_implementer_reports_sdk_usage_and_git_facts(repo: TargetRepo)
     def open_session(ask: TurnStreamAsk) -> StubTurnStreamSession:
         seen.append(ask)
         return StubTurnStreamSession(
-            ["implemented\n", TokenUsage(consumed_tokens=999_999)],
+            ["implemented\n", TokenConsumption.total_only(999_999)],
             resumable_identifier="copilot-session-123",
             on_start=commit_work,
         )
@@ -148,7 +161,7 @@ async def test_the_implementer_reports_sdk_usage_and_git_facts(repo: TargetRepo)
     assert seen[0].permit("Write", {"file_path": "copilot.txt"}).allowed
     assert t.killed is None
     assert t.exit_code == 0
-    assert t.consumed_tokens == 999_999
+    assert t.consumption.consumed_tokens == 999_999
     assert t.auto_compactions == 0
     assert t.resumable_identifier == "copilot-session-123"
     assert t.commits == 1
@@ -156,7 +169,7 @@ async def test_the_implementer_reports_sdk_usage_and_git_facts(repo: TargetRepo)
     assert t.session_output == "implemented\n"
 
 
-async def test_the_implementer_resumes_the_specific_session_for_conflict_resolution(
+async def test_the_integrator_opens_a_fresh_session_in_the_conflicted_worktree(
     repo: TargetRepo,
 ) -> None:
     git = GitCli(repo=repo.path)
@@ -169,24 +182,21 @@ async def test_the_implementer_resumes_the_specific_session_for_conflict_resolut
     def open_session(ask: TurnStreamAsk) -> StubTurnStreamSession:
         seen.append(ask)
         return StubTurnStreamSession(
-            ["resolved\n", TokenUsage(consumed_tokens=333_333)],
+            ["resolved\n", TokenConsumption.total_only(333_333)],
             resumable_identifier=ask.resumable_identifier,
             on_start=commit_work,
         )
 
-    t = await CopilotImplementer(open_session=open_session).resolve_conflict(
-        _context(wt), "copilot-session-789"
-    )
+    context = _context(wt)
+    t = await CopilotIntegrator(open_session=open_session).reconcile(context)
 
     assert seen[0].cwd == wt.path
-    assert seen[0].prompt == conflict_resolution_prompt()
-    assert "Acceptance criteria" not in seen[0].prompt
-    assert seen[0].resumable_identifier == "copilot-session-789"
+    assert seen[0].prompt == integrator_prompt(context.candidate.spec, context.candidate.findings)
+    assert seen[0].resumable_identifier is None, "a fresh session, not a resumed one"
     assert seen[0].permit is not None
     assert seen[0].permit("Write", {"file_path": "copilot.txt"}).allowed
     assert t.killed is None
-    assert t.consumed_tokens == 333_333
-    assert t.resumable_identifier == "copilot-session-789"
+    assert t.consumption.consumed_tokens == 333_333
     assert t.commits == 1
     assert "resolved" in t.session_output
 
@@ -200,7 +210,10 @@ async def test_the_implementer_reports_sdk_auto_compactions(repo: TargetRepo) ->
 
     def open_session(_ask: TurnStreamAsk) -> StubTurnStreamSession:
         return StubTurnStreamSession(
-            ["implemented\n", TokenUsage(consumed_tokens=999_999)],
+            [
+                "implemented\n",
+                TokenConsumption.split(input=600_000, cache_read=380_000, output=19_999),
+            ],
             auto_compactions=[
                 AutoCompaction(event="started"),
                 AutoCompaction(event="compacted", success=True),
@@ -225,7 +238,10 @@ async def test_sdk_auto_compactions_reach_both_stores_and_the_report(
 
     def open_session(_ask: TurnStreamAsk) -> StubTurnStreamSession:
         return StubTurnStreamSession(
-            ["implemented\n", TokenUsage(consumed_tokens=999_999)],
+            [
+                "implemented\n",
+                TokenConsumption.split(input=600_000, cache_read=380_000, output=19_999),
+            ],
             auto_compactions=[
                 AutoCompaction(event="started"),
                 AutoCompaction(event="compacted", success=True),
@@ -236,7 +252,7 @@ async def test_sdk_auto_compactions_reach_both_stores_and_the_report(
     t = await CopilotImplementer(open_session=open_session).run(_context(wt))
     record = SessionConsumption(
         actor=Actor.IMPLEMENTER,
-        consumed_tokens=t.consumed_tokens,
+        consumption=t.consumption,
         auto_compactions=t.auto_compactions,
     )
 
@@ -258,7 +274,11 @@ async def test_sdk_auto_compactions_reach_both_stores_and_the_report(
         {},
         {SubIssueId("01"): (record,)},
     )
-    assert "01: 999999 tokens, 1 auto-compactions" in render(notification)
+    # The buckets survive the whole path — SDK turn, telemetry, both stores, notification — which
+    # is the only place that is provable end to end.
+    assert "01: 999999 tokens (600000 in, 380000 cached, 19999 out), 1 auto-compactions" in render(
+        notification
+    )
 
 
 async def test_the_implementer_parses_an_impasse_from_the_sdk_output(repo: TargetRepo) -> None:
@@ -301,7 +321,7 @@ async def test_the_implementer_is_killed_through_the_sdk_session(repo: TargetRep
 
 
 def _context(wt: Worktree, budget: Budget = Budget(wall_clock_s=20.0)) -> SessionContext:
-    return SessionContext(spec=SPEC, findings=FINDINGS, worktree=wt, budget=budget)
+    return SessionContext(candidate=Candidate(id=SubIssueId("01"), spec=SPEC, findings=FINDINGS, worktree=wt), budget=budget)
 
 
 REAL = pytest.mark.skipif(
@@ -311,7 +331,7 @@ REAL = pytest.mark.skipif(
 
 
 @REAL
-async def test_a_real_copilot_resumed_session_resolves_a_real_rebase_conflict(
+async def test_a_real_copilot_integrator_resolves_a_real_merge_conflict(
     repo: TargetRepo,
 ) -> None:
     git = GitCli(repo=repo.path)
@@ -327,9 +347,12 @@ async def test_a_real_copilot_resumed_session_resolves_a_real_rebase_conflict(
             """)
     )
     context = SessionContext(
-        spec=spec,
-        findings=Findings(body=""),
-        worktree=wt,
+        candidate=Candidate(
+            id=SubIssueId("01"),
+            spec=spec,
+            findings=Findings(body=""),
+            worktree=wt,
+        ),
         budget=Budget(wall_clock_s=900.0),
     )
 
@@ -340,22 +363,21 @@ async def test_a_real_copilot_resumed_session_resolves_a_real_rebase_conflict(
     (repo.path / "shared.py").write_text('MARKER = "integration-side"\n')
     repo.git("add", "shared.py")
     repo.git("commit", "-m", "move integration marker")
-    rebase = subprocess.run(
-        ["git", "rebase", "integration"],
+    merge = subprocess.run(
+        ["git", "merge", "--no-edit", "integration"],
         cwd=wt.path,
         capture_output=True,
         text=True,
         check=False,
     )
-    assert rebase.returncode != 0
+    assert merge.returncode != 0
     assert "<<<<<<<" in (wt.path / "shared.py").read_text()
 
-    resumed = await copilot_implementer().resolve_conflict(context, first.resumable_identifier)
+    reconciled = await copilot_integrator().reconcile(context)
 
-    assert resumed.killed is None
-    assert resumed.resumable_identifier == first.resumable_identifier
-    assert resumed.consumed_tokens > 0
-    assert resumed.commits >= 1
+    assert reconciled.killed is None
+    assert reconciled.consumption.consumed_tokens > 0
+    assert git.merge_finished(wt), "it resolved the conflict but never committed it"
     assert repo.run_suite(wt.path)
 
 
@@ -363,7 +385,9 @@ async def test_a_real_copilot_resumed_session_resolves_a_real_rebase_conflict(
 
 
 async def test_the_editor_runs_to_completion(tmp_path: Path) -> None:
-    telemetry, verdict = await _adjudicate(tmp_path, consumed_tokens=130_000, verdict=None)
+    telemetry, verdict = await _adjudicate(
+        tmp_path, consumption=TokenConsumption.total_only(130_000), verdict=None
+    )
 
     assert telemetry.killed is None
     assert not hasattr(telemetry, "peak_context_tokens")
@@ -372,7 +396,9 @@ async def test_the_editor_runs_to_completion(tmp_path: Path) -> None:
 
 async def test_the_editor_reports_no_commits_by_construction(tmp_path: Path) -> None:
     """Not observed — *constructed*. It was denied every tool that could have made one."""
-    telemetry, verdict = await _adjudicate(tmp_path, consumed_tokens=9_000, verdict=Verdict.REVISE)
+    telemetry, verdict = await _adjudicate(
+        tmp_path, consumption=TokenConsumption.total_only(9_000), verdict=Verdict.REVISE
+    )
 
     assert telemetry.commits == 0
     assert telemetry.diffstat == ""
@@ -382,7 +408,7 @@ async def test_the_editor_reports_no_commits_by_construction(tmp_path: Path) -> 
 
 async def test_the_editor_reads_the_verdict_out_of_the_sdk_session(tmp_path: Path) -> None:
     _, verdict = await _adjudicate(
-        tmp_path, consumed_tokens=9_000, verdict=Verdict.PLANNING_DEFECT
+        tmp_path, consumption=TokenConsumption.total_only(9_000), verdict=Verdict.PLANNING_DEFECT
     )
 
     assert verdict is not None
@@ -392,7 +418,9 @@ async def test_the_editor_reads_the_verdict_out_of_the_sdk_session(tmp_path: Pat
 
 async def test_the_prompt_and_worktree_reach_the_sdk_session(tmp_path: Path) -> None:
     seen: list[TurnStreamAsk] = []
-    await _adjudicate(tmp_path, consumed_tokens=9_000, verdict=Verdict.REVISE, seen=seen)
+    await _adjudicate(
+        tmp_path, consumption=TokenConsumption.total_only(9_000), verdict=Verdict.REVISE, seen=seen
+    )
 
     assert "You are the **Editor**" in seen[0].prompt
     assert "build it" in seen[0].prompt  # the spec the Implementer was given
@@ -415,9 +443,12 @@ async def test_the_editor_denies_mutating_tools_through_the_shared_permit(tmp_pa
 
     await CopilotEditor(open_session=open_session, suite=SUITE).adjudicate(
         SessionContext(
-            spec=Spec(body="build it"),
-            findings=Findings(body=""),
-            worktree=_worktree(tmp_path),
+            candidate=Candidate(
+                id=SubIssueId("01"),
+                spec=Spec(body="build it"),
+                findings=Findings(body=""),
+                worktree=_worktree(tmp_path),
+            ),
             budget=Budget(wall_clock_s=20.0),
         ),
         FAILURE,
@@ -430,7 +461,7 @@ async def test_the_editor_denies_mutating_tools_through_the_shared_permit(tmp_pa
 async def _adjudicate(
     tmp_path: Path,
     *,
-    consumed_tokens: int,
+    consumption: TokenConsumption,
     verdict: Verdict | None,
     seen: list[TurnStreamAsk] | None = None,
 ) -> tuple[SessionTelemetry, EditorVerdict | None]:
@@ -453,14 +484,17 @@ async def _adjudicate(
         turns: list[Turn] = []
         if said:
             turns.append(said)
-        turns.append(TokenUsage(consumed_tokens=consumed_tokens))
+        turns.append(consumption)
         return StubTurnStreamSession(turns)
 
     return await CopilotEditor(open_session=open_session, suite=SUITE).adjudicate(
         SessionContext(
-            spec=Spec(body="build it"),
-            findings=Findings(body=""),
-            worktree=_worktree(tmp_path),
+            candidate=Candidate(
+                id=SubIssueId("01"),
+                spec=Spec(body="build it"),
+                findings=Findings(body=""),
+                worktree=_worktree(tmp_path),
+            ),
             budget=Budget(wall_clock_s=20.0),
         ),
         FAILURE,

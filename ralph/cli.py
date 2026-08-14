@@ -11,26 +11,34 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.util
 import logging
 import os
 import shlex
+import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 
 from ralph.adapters.claude import claude_editor
-from ralph.adapters.codex import codex_editor, codex_implementer
+from ralph.adapters.codex import codex_editor, codex_implementer, codex_integrator
 from ralph.adapters.commands import DescriptorCommandError, DescriptorCommandSource
-from ralph.adapters.copilot import copilot_editor, copilot_implementer
-from ralph.adapters.git import GitCli, run_git
+from ralph.adapters.copilot import (
+    copilot_editor,
+    copilot_implementer,
+    copilot_integrator,
+)
+from ralph.adapters.git import GitCli, git_metadata, run_git
 from ralph.adapters.suite import SubprocessTestRunner, install_once
 from ralph.harness import (
     CycleLedger,
     FailureReport,
     Refusal,
     RepoFacts,
+    TokenConsumption,
     build_order,
     refusals,
 )
@@ -44,24 +52,61 @@ from ralph.issues.linear import (
     LinearStateMap,
 )
 from ralph.issues.store import IssueStore
-from ralph.mergequeue import MergeQueue
+from ralph.mergegate import MergeGate
 from ralph.notification import Notification
-from ralph.ports import Budget, CommandSource, Editor, Implementer, RepoCommands
-from ralph.runlog import JsonlRunLog
+from ralph.ports import (
+    Budget,
+    CommandSource,
+    Editor,
+    Implementer,
+    Integrator,
+    RepoCommands,
+    RunLog,
+)
+from ralph.runlog import Event, JsonlRunLog
 from ralph.scheduler import RunReport, Scheduler
+from ralph.transcripts import FileTranscripts
 
 log = logging.getLogger("ralph")
 
 CODEX = "codex"
 CLAUDE = "claude"
 COPILOT = "copilot"
+NONE = "none"
+"""The role is unfilled on this run. Only the two roles that answer a *failure* may be switched off
+— an Implementer is the run, and a run without one has nothing to do."""
+
+IMPLEMENTERS = (CODEX, COPILOT)
+EDITORS = (CLAUDE, CODEX, COPILOT, NONE)
+INTEGRATORS = (CODEX, COPILOT, NONE)
+
+
+@dataclass(frozen=True, slots=True)
+class ActorRuntime:
+    """What a concrete adapter needs on the machine before any of its sessions can open."""
+
+    kind: Literal["program", "module"]
+    name: str
+    """A CLI to find on PATH, or an SDK to import."""
+
+    fix: str
+
+
+ACTOR_RUNTIME: Mapping[str, ActorRuntime] = {
+    CODEX: ActorRuntime("program", "codex", "install the Codex CLI and put `codex` on PATH"),
+    CLAUDE: ActorRuntime("module", "claude_agent_sdk", "run `uv sync --extra editor`"),
+    COPILOT: ActorRuntime("module", "copilot", "run `uv sync --extra copilot`"),
+}
+"""Here rather than in the adapters, because which actor is backed by which adapter is this module's
+secret — and the pre-flight has to answer the question without constructing either one."""
 
 FILESYSTEM = "filesystem"
 LINEAR = "linear"
 
 DEFAULT_ISSUE_MODE = FILESYSTEM
 DEFAULT_IMPLEMENTER = CODEX
-DEFAULT_EDITOR = CLAUDE
+DEFAULT_EDITOR = NONE
+DEFAULT_INTEGRATOR = NONE
 DEFAULT_PROTECTED = ("main", "master")
 
 LINEAR_API_KEY = "LINEAR_API_KEY"
@@ -103,6 +148,7 @@ class RunOptions:
     issue_mode: str = DEFAULT_ISSUE_MODE
     implementer: str = DEFAULT_IMPLEMENTER
     editor: str = DEFAULT_EDITOR
+    integrator: str = DEFAULT_INTEGRATOR
     protected: frozenset[str] = frozenset(DEFAULT_PROTECTED)
     linear_api_key: str | None = None
 
@@ -111,6 +157,7 @@ class RunOptions:
             f"issue_mode={self.issue_mode} "
             f"implementer={self.implementer} "
             f"editor={self.editor} "
+            f"integrator={self.integrator} "
             f"protected={{{', '.join(sorted(self.protected))}}} "
             f"linear_api_key={'set' if self.linear_api_key else 'unset'}"
         )
@@ -122,12 +169,14 @@ def _options_for(
     issue_mode: str = DEFAULT_ISSUE_MODE,
     implementer: str = DEFAULT_IMPLEMENTER,
     editor: str = DEFAULT_EDITOR,
+    integrator: str = DEFAULT_INTEGRATOR,
     protected: Sequence[str] = DEFAULT_PROTECTED,
 ) -> RunOptions:
     return RunOptions(
         issue_mode=issue_mode,
         implementer=implementer,
         editor=editor,
+        integrator=integrator,
         protected=frozenset(protected),
         linear_api_key=env.get(LINEAR_API_KEY),
     )
@@ -142,15 +191,27 @@ def _add_option_flags(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--implementer",
-        choices=(CODEX, COPILOT),
+        choices=IMPLEMENTERS,
         default=DEFAULT_IMPLEMENTER,
         help=f"the CLI that writes code. Defaults to {DEFAULT_IMPLEMENTER}.",
     )
     parser.add_argument(
         "--editor",
-        choices=(CLAUDE, CODEX, COPILOT),
+        choices=EDITORS,
         default=DEFAULT_EDITOR,
-        help=f"the CLI that diagnoses failures. Defaults to {DEFAULT_EDITOR}.",
+        help=(
+            f"the CLI that diagnoses failures. Defaults to {DEFAULT_EDITOR}. "
+            f"{NONE} sends every failure it would have adjudicated to the human instead."
+        ),
+    )
+    parser.add_argument(
+        "--integrator",
+        choices=INTEGRATORS,
+        default=DEFAULT_INTEGRATOR,
+        help=(
+            f"the CLI that reconciles merge conflicts. Defaults to {DEFAULT_INTEGRATOR}. "
+            f"{NONE} sends every merge conflict to the human instead."
+        ),
     )
     parser.add_argument(
         "--protected",
@@ -163,24 +224,69 @@ def _add_option_flags(parser: argparse.ArgumentParser) -> None:
 
 def validate_actors(options: RunOptions) -> None:
     """The CLI must name actors this harness knows, without constructing their adapters."""
-    if options.implementer not in {CODEX, COPILOT}:
+    if options.implementer not in IMPLEMENTERS:
         raise NoActor(
-            f"implementer: {options.implementer!r} names no Implementer. Known: {CODEX}, {COPILOT}."
+            f"implementer: {options.implementer!r} names no Implementer. "
+            f"Known: {', '.join(IMPLEMENTERS)}."
         )
-    if options.editor not in {CLAUDE, CODEX, COPILOT}:
+    if options.editor not in EDITORS:
         raise NoActor(
-            f"editor: {options.editor!r} names no Editor. Known: {CLAUDE}, {CODEX}, {COPILOT}."
+            f"editor: {options.editor!r} names no Editor. Known: {', '.join(EDITORS)}."
+        )
+    if options.integrator not in INTEGRATORS:
+        raise NoActor(
+            f"integrator: {options.integrator!r} names no Integrator. "
+            f"Known: {', '.join(INTEGRATORS)}."
         )
 
 
-def editor_of(options: RunOptions, suite: tuple[str, ...]) -> Editor:
-    """Which model adjudicates a failed session.
+def _installed(runtime: ActorRuntime) -> bool:
+    if runtime.kind == "program":
+        return shutil.which(runtime.name) is not None
+    # `find_spec`, not an import: asking whether the SDK is *there* must not run a line of it.
+    return importlib.util.find_spec(runtime.name) is not None
+
+
+def actor_runtime_error(
+    options: RunOptions,
+    implementer: Implementer | None = None,
+    editor: Editor | None = None,
+    integrator: Integrator | None = None,
+) -> str | None:
+    """Every actor this run would *construct* whose runtime is missing, or `None` if there is none.
+
+    Without this the failure surfaces at the first session that needs the runtime — which, for an
+    Editor, is after a sub-issue has already failed and a wave of tokens has already been spent.
+
+    A role handed a ready-made actor is skipped: nothing will be constructed for it, so what the
+    options *name* for that role is not a fact about this run. A role switched off is skipped for
+    the same reason — an absent Editor needs no SDK on the machine.
+    """
+    named_roles = [
+        ("implementer", options.implementer, implementer),
+        ("editor", options.editor, editor),
+        ("integrator", options.integrator, integrator),
+    ]
+    missing = [
+        f"{role} {named!r}: `{runtime.name}` is not installed — {runtime.fix}"
+        for role, named, provided in named_roles
+        if provided is None
+        and named != NONE
+        and not _installed(runtime := ACTOR_RUNTIME[named])
+    ]
+    return "; ".join(missing) if missing else None
+
+
+def editor_of(options: RunOptions, suite: tuple[str, ...]) -> Editor | None:
+    """Which model adjudicates a failed session, or `None` when the run has no Editor.
 
     The Editor and the Implementer should not be the same model on the same failure — an Editor
     adjudicating an impasse declared by *itself* is the least independent sensor the system could
     have. Nothing here enforces that; it is why two CLIs back each role.
     """
     named = options.editor
+    if named == NONE:
+        return None
     if named == CLAUDE:
         return claude_editor(suite=suite)
     if named == CODEX:
@@ -191,11 +297,26 @@ def editor_of(options: RunOptions, suite: tuple[str, ...]) -> Editor:
     raise AssertionError("validate_actors accepted an unknown Editor")
 
 
-def implementer_of(options: RunOptions) -> Implementer:
+def integrator_of(options: RunOptions, git_metadata: Path) -> Integrator | None:
+    """Which model reconciles a conflict, or `None` when the run has no Integrator. Its own flag
+    because reconciling two correct trees is a different job from writing one, and worth being
+    able to price differently."""
+    named = options.integrator
+    if named == NONE:
+        return None
+    if named == CODEX:
+        return codex_integrator(git_metadata)
+    if named == COPILOT:
+        return copilot_integrator()
+    validate_actors(options)
+    raise AssertionError("validate_actors accepted an unknown Integrator")
+
+
+def implementer_of(options: RunOptions, git_metadata: Path) -> Implementer:
     """Which model implements — the one decision only this module is allowed to make."""
     named = options.implementer
     if named == CODEX:
-        return codex_implementer()
+        return codex_implementer(git_metadata)
     if named == COPILOT:
         return copilot_implementer()
     validate_actors(options)
@@ -287,6 +408,9 @@ def _facts_and_commands(
     issue_source: str | None,
     options: RunOptions,
     command_source: CommandSource | None = None,
+    implementer: Implementer | None = None,
+    editor: Editor | None = None,
+    integrator: Integrator | None = None,
 ) -> tuple[RepoFacts, RepoCommands | None]:
     """Ask the world the pre-flight questions, and hand the answers to a rule that cannot ask anything.
 
@@ -314,6 +438,7 @@ def _facts_and_commands(
             dirty=git.dirty_files(),
             has_test_command=commands is not None and bool(commands.test),
             command_error=command_error,
+            actor_runtime_error=actor_runtime_error(options, implementer, editor, integrator),
             source_error=source_error,
             graph_error=graph_error,
             pre_commit_config=pre_commit_config,
@@ -338,8 +463,13 @@ def validate(
     issue_source: str | None = None,
     options: RunOptions | None = None,
     command_source: CommandSource | None = None,
+    implementer: Implementer | None = None,
+    editor: Editor | None = None,
+    integrator: Integrator | None = None,
 ) -> tuple[Refusal, ...]:
-    return readiness(repo, issue_source, options, command_source).refusals
+    return readiness(
+        repo, issue_source, options, command_source, implementer, editor, integrator
+    ).refusals
 
 
 def readiness(
@@ -347,10 +477,16 @@ def readiness(
     issue_source: str | None = None,
     options: RunOptions | None = None,
     command_source: CommandSource | None = None,
+    implementer: Implementer | None = None,
+    editor: Editor | None = None,
+    integrator: Integrator | None = None,
 ) -> Readiness:
+    """An actor passed here is one this run will not construct, so its runtime is not checked."""
     options = options or _options_for()
     validate_actors(options)
-    facts, commands = _facts_and_commands(repo.resolve(), issue_source, options, command_source)
+    facts, commands = _facts_and_commands(
+        repo.resolve(), issue_source, options, command_source, implementer, editor, integrator
+    )
     return Readiness(
         refusals=refusals(facts),
         commands=commands if commands is not None and commands.test else None,
@@ -414,8 +550,10 @@ async def run(
     budget: Budget | None = None,
     implementer: Implementer | None = None,
     editor: Editor | None = None,
+    integrator: Integrator | None = None,
     options: RunOptions | None = None,
     command_source: CommandSource | None = None,
+    sequential: bool = False,
 ) -> RunReport:
     """Explicit `implementer`/`editor` override the ones the resolved options name — those are the seams
     the tests inject the scripted stand-in and a stub Editor through, and the reason no test in the
@@ -426,7 +564,9 @@ async def run(
 
     # The same checks `ralph validate` runs, and they are not advisory. A run that starts on `main`
     # has already done the damage by the time anybody reads the warning it printed.
-    ready = readiness(repo, issue_source, options, command_source)
+    ready = readiness(
+        repo, issue_source, options, command_source, implementer, editor, integrator
+    )
     if ready.refusals:
         raise Refused(render_refusals(ready.refusals))
     if ready.commands is None:
@@ -434,7 +574,7 @@ async def run(
     commands = ready.commands
 
     git = GitCli(repo=repo)
-    integration = git.head_branch()
+    integration_branch = git.head_branch()
 
     # Install runs once in the base checkout, before anything is dispatched.
     runner = SubprocessTestRunner(cmd=commands.test)
@@ -442,21 +582,36 @@ async def run(
         await install_once(repo, commands.install)
 
     store = issue_store(repo, issue_source, options)
-    selected_implementer = implementer if implementer is not None else implementer_of(options)
+    metadata = git_metadata(repo)
+    selected_implementer = (
+        implementer if implementer is not None else implementer_of(options, metadata)
+    )
     selected_editor = editor if editor is not None else editor_of(options, commands.test)
+    selected_integrator = (
+        integrator if integrator is not None else integrator_of(options, metadata)
+    )
     parent = parent_issue_name(repo, issue_source, options)
     scratch = repo / ".scratch" / parent if parent is not None else repo / ".scratch"
+    session_budget = budget or Budget()
     scheduler = Scheduler(
         repo=repo,
         git=git,
         store=store,
-        run_log=JsonlRunLog(path=scratch / "run.jsonl"),
+        run_log=NarratedRunLog(JsonlRunLog(path=scratch / "run.jsonl")),
+        transcripts=FileTranscripts(root=scratch / "transcripts"),
         implementer=selected_implementer,
         editor=selected_editor,
-        merge_queue=MergeQueue(git=git, runner=runner, integration=integration),
-        integration=integration,
-        budget=budget or Budget(),
+        merge_gate=MergeGate(
+            git=git,
+            runner=runner,
+            integration_branch=integration_branch,
+            integrator=selected_integrator,
+            budget=session_budget,
+        ),
+        integration_branch=integration_branch,
+        budget=session_budget,
         parent_issue_name=parent,
+        sequential=sequential,
     )
     report = await scheduler.run()
     notification = render(report.notification, parent)
@@ -465,6 +620,56 @@ async def run(
     except Exception:  # noqa: BLE001 — stdout still carries the notification
         log.warning("could not publish the final notification to the issue store", exc_info=True)
     return report
+
+
+def render_event(e: Event) -> str:
+    """One run-log event, for a human watching it happen.
+
+    The same five fields the JSONL line carries, in the same order — this is a *view* of the record,
+    not a second record. UTC like the file, and time-of-day only: a run is hours, not days, and the
+    date would be five characters of noise on every line.
+    """
+    return (
+        f"{e.ts:%H:%M:%S}  {e.sub_issue:<10} {e.actor.value:<12} "
+        f"{e.kind.value:<17} {e.details.value}"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class NarratedRunLog:
+    """A `RunLog` that also narrates to the terminal as it writes.
+
+    The file is the record; this is the only account of a run *while it is still happening*. The
+    notification comes at the end, which is hours too late to tell you a wave has started, and
+    `tail -f` on a path the run computes for itself is a poor substitute for the run saying so.
+
+    Ordered file-first on purpose: the terminal must never claim something the record does not.
+    """
+
+    inner: RunLog
+
+    async def write(self, e: Event) -> None:
+        await self.inner.write(e)
+        # Unbuffered, because the whole value here is timeliness — a narration that arrives in a
+        # 4KB block when the run ends is the notification again, with worse formatting.
+        print(render_event(e), flush=True)
+
+    def events(self) -> tuple[Event, ...]:
+        return self.inner.events()
+
+
+def render_consumption(c: TokenConsumption) -> str:
+    """The total, and the breakdown where there is one.
+
+    A vendor that reported only a total gets to have said only that. Printing three zeros beside a
+    real total would read as a session that generated nothing, which is a different claim entirely.
+    """
+    if c.input_tokens is None or c.cache_read_tokens is None or c.output_tokens is None:
+        return f"{c.consumed_tokens} tokens (no breakdown)"
+    return (
+        f"{c.consumed_tokens} tokens "
+        f"({c.input_tokens} in, {c.cache_read_tokens} cached, {c.output_tokens} out)"
+    )
 
 
 def render(n: Notification, parent_issue_name: str | None = None) -> str:
@@ -480,11 +685,11 @@ def render(n: Notification, parent_issue_name: str | None = None) -> str:
         lines.append("\nconsumption:")
         for c in n.consumption:
             lines.append(
-                f"  {c.sub_issue}: {c.consumed_tokens} tokens, "
+                f"  {c.sub_issue}: {render_consumption(c.consumption)}, "
                 f"{c.auto_compactions} auto-compactions"
             )
         lines.append(
-            f"  total: {n.total_consumed_tokens} tokens, "
+            f"  total: {render_consumption(n.total_consumption)}, "
             f"{n.total_auto_compactions} auto-compactions"
         )
     if not n.escalations:
@@ -507,7 +712,7 @@ def render(n: Notification, parent_issue_name: str | None = None) -> str:
             lines.append(f"    it says: {e.report.claim.unsatisfiable_criterion}")
             lines.append(f"    would need: {e.report.claim.what_would_satisfy}")
         if e.report.integration_detail is not None:
-            lines.append(f"    the merge queue: {e.report.integration_detail}")
+            lines.append(f"    the merge gate: {e.report.integration_detail}")
         commits = e.report.telemetry.commits
         worktree_dir = (
             f".worktrees/failed/{parent_issue_name}/{e.sub_issue}"
@@ -556,6 +761,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="read the graph and print the build order. No session is opened.",
     )
     runner.add_argument(
+        "--sequential",
+        action="store_true",
+        help="run one sub-issue at a time instead of every eligible one at once.",
+    )
+    runner.add_argument(
         "--log-level",
         default=DEFAULT_LOG_LEVEL,
         help="the harness's diagnostic verbosity: DEBUG / INFO / WARNING / ERROR.",
@@ -585,6 +795,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         issue_mode=args.issue_mode,
         implementer=args.implementer,
         editor=args.editor,
+        integrator=args.integrator,
         protected=args.protected or DEFAULT_PROTECTED,
     )
     try:
@@ -606,12 +817,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(render_plan(args.repo, args.issue_source, options))
         return 0
 
-    print(f"options: {options.loggable()} log_level={level}")
+    print(f"options: {options.loggable()} sequential={args.sequential} log_level={level}")
     report = asyncio.run(
         run(
             args.repo,
             args.issue_source,
             options=options,
+            sequential=args.sequential,
         )
     )
     print(render(report.notification, parent_issue_name(args.repo, args.issue_source, options)))

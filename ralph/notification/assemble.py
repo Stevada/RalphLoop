@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from ralph.harness import FailureReport, Outcome, never_eligible
+from ralph.harness import FailureReport, Outcome, never_eligible, total
 from ralph.issues import SessionConsumption
 from ralph.issues.graph import IssueGraph, SubIssueId
 from ralph.issues.state import SubIssueState
@@ -62,7 +62,7 @@ def _summarize_consumption(
     return tuple(
         SubIssueConsumption(
             sub_issue=id,
-            consumed_tokens=sum(record.consumed_tokens for record in consumption[id]),
+            consumption=total(record.consumption for record in consumption[id]),
             auto_compactions=sum(record.auto_compactions for record in consumption[id]),
         )
         for id in sorted(graph.sub_issues)

@@ -23,18 +23,21 @@ from ralph.harness import (
     SuiteResult,
     Verdict,
 )
-from ralph.issues import Findings, IssueGraph, Spec, SubIssue, SubIssueState
+from ralph.issues import Findings, IssueGraph, Spec, SubIssue, SubIssueId, SubIssueState
 from ralph.issues.store import IssueStore
 from ralph.ports import (
     Budget,
+    Candidate,
     CommandSource,
     Editor,
     Git,
     Implementer,
+    Integrator,
     RepoCommands,
     RunLog,
     SessionContext,
     TestRunner,
+    Transcripts,
     Worktree,
 )
 from tests.builders import graph_of, telemetry
@@ -43,9 +46,11 @@ from tests.fakes import (
     FakeEditor,
     FakeGit,
     FakeImplementer,
+    FakeIntegrator,
     FakeIssueStore,
     FakeRunLog,
     FakeTestRunner,
+    FakeTranscripts,
 )
 
 FROZEN = [
@@ -85,7 +90,13 @@ def test_the_outcome_taxonomy_is_exactly_four_failures_and_one_success() -> None
 
 def test_there_is_no_retry_destination() -> None:
     """There is no retry destination in this system."""
-    assert {d.value for d in Destination} == {"merge-queue", "act-on-verdict", "editor", "human"}
+    assert {d.value for d in Destination} == {
+        "merge-gate",
+        "act-on-verdict",
+        "suite-gate",
+        "editor",
+        "human",
+    }
     assert not any("retry" in d.value for d in Destination)
 
 
@@ -117,7 +128,7 @@ def test_repo_commands_are_split_argvs_from_the_target_repo() -> None:
 
 def test_session_telemetry_carries_consumption_but_no_context_peak() -> None:
     names = {f.name for f in dataclasses.fields(SessionTelemetry)}
-    assert "consumed_tokens" in names
+    assert "consumption" in names
     assert "auto_compactions" in names
     assert "resumable_identifier" in names
     assert "peak_context_tokens" not in names
@@ -144,9 +155,11 @@ def test_the_cycle_cap_is_three() -> None:
 
 def test_every_port_has_a_fake_that_satisfies_it() -> None:
     implementer: Implementer = FakeImplementer()
+    integrator: Integrator = FakeIntegrator()
     editor: Editor = FakeEditor()
     store: IssueStore = FakeIssueStore(graph=graph_of({"01": []}))
     log: RunLog = FakeRunLog()
+    transcripts: Transcripts = FakeTranscripts()
     runner: TestRunner = FakeTestRunner()
     git: Git = FakeGit()
     commands: CommandSource = FakeCommandSource(
@@ -154,9 +167,11 @@ def test_every_port_has_a_fake_that_satisfies_it() -> None:
     )
 
     assert isinstance(implementer, Implementer)
+    assert isinstance(integrator, Integrator)
     assert isinstance(editor, Editor)
     assert isinstance(store, IssueStore)
     assert isinstance(log, RunLog)
+    assert isinstance(transcripts, Transcripts)
     assert isinstance(runner, TestRunner)
     assert isinstance(git, Git)
     assert isinstance(commands, CommandSource)
@@ -170,39 +185,52 @@ def test_the_worktree_knows_where_it_came_from() -> None:
     assert wt.base == "integration"
 
 
-def test_session_context_groups_the_shared_actor_inputs() -> None:
+def test_a_session_context_is_a_candidate_plus_the_bound_on_one_session() -> None:
+    """The split is the point: everything that *travels* is on the candidate, and the only thing
+    the candidate does not carry is the wall clock — which is why the merge gate, which opens no
+    session of its own, can take a candidate and never a session context."""
     wt = Worktree(path=Path("/tmp/wt"), branch="ralph/01", base="integration")
     context = SessionContext(
-        spec=Spec(body="build it"),
-        findings=Findings(body="facts"),
-        worktree=wt,
+        candidate=Candidate(
+            id=SubIssueId("01"),
+            spec=Spec(body="build it"),
+            findings=Findings(body="facts"),
+            worktree=wt,
+        ),
         budget=Budget(wall_clock_s=1.0),
     )
 
-    assert [f.name for f in dataclasses.fields(SessionContext)] == [
+    assert [f.name for f in dataclasses.fields(Candidate)] == [
+        "id",
         "spec",
         "findings",
         "worktree",
-        "budget",
     ]
-    assert context.worktree is wt
+    assert [f.name for f in dataclasses.fields(SessionContext)] == ["candidate", "budget"]
+    assert context.candidate.worktree is wt
     assert context.budget.wall_clock_s == 1.0
 
 
-async def test_an_implementer_can_be_asked_to_resolve_a_conflict() -> None:
+async def test_an_integrator_is_asked_only_for_a_worktree() -> None:
+    """No `must_be_terminal`, no failure report, no resumable identifier. The conflict is fully
+    described by the repository it is standing in, which is what lets any adapter play the role —
+    a resumed-session contract would have restricted it to transports that can resume."""
     wt = Worktree(path=Path("/tmp/wt"), branch="ralph/01", base="integration")
     context = SessionContext(
-        spec=Spec(body="build it"),
-        findings=Findings(body="facts"),
-        worktree=wt,
+        candidate=Candidate(
+            id=SubIssueId("01"),
+            spec=Spec(body="build it"),
+            findings=Findings(body="facts"),
+            worktree=wt,
+        ),
         budget=Budget(wall_clock_s=1.0),
     )
-    implementer = FakeImplementer()
+    integrator = FakeIntegrator()
 
-    result = await implementer.resolve_conflict(context, "opaque-session")
+    result = await integrator.reconcile(context)
 
     assert isinstance(result, SessionTelemetry)
-    assert implementer.resolve_conflict_calls == [(context, "opaque-session")]
+    assert integrator.calls == [context]
 
 
 def test_an_impasse_report_is_the_models_story_not_the_harnesss_facts() -> None:

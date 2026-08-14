@@ -8,19 +8,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ralph.harness import Actor, Outcome, Verdict
+import pytest
+
+from ralph.harness import Actor, Outcome, TokenConsumption, Verdict
 from ralph.issues import SubIssueId, SubIssueState
-from ralph.mergequeue import MergeQueue
+from ralph.mergegate import MergeGate
 from ralph.ports import Budget
+from ralph.runlog import EventKind
 from ralph.scheduler import Scheduler
-from tests.builders import graph_of, telemetry, verdict
+from tests.builders import graph_of, impasse, telemetry, verdict
 from tests.fakes import (
     FakeEditor,
     FakeGit,
     FakeImplementer,
+    FakeIntegrator,
     FakeIssueStore,
     FakeRunLog,
     FakeTestRunner,
+    FakeTranscripts,
 )
 
 REPO = Path("/repo")
@@ -36,17 +41,31 @@ def scheduler_over(
     git: FakeGit,
     log: FakeRunLog,
     editor: FakeEditor | None = None,
+    integrator: FakeIntegrator | None = None,
+    transcripts: FakeTranscripts | None = None,
+    without_editor: bool = False,
+    without_integrator: bool = False,
 ) -> tuple[Scheduler, FakeTestRunner]:
+    """`without_editor` / `without_integrator` are the roles left unfilled — what `--editor none`
+    and `--integrator none` resolve to. They are separate from passing no fake, which means
+    *default fake*."""
     runner = FakeTestRunner()
     scheduler = Scheduler(
         repo=REPO,
         git=git,
         store=store,
         run_log=log,
+        transcripts=transcripts or FakeTranscripts(),
         implementer=implementer,
-        editor=editor or terminal_editor(),
-        merge_queue=MergeQueue(git=git, runner=runner, integration="integration"),
-        integration="integration",
+        editor=None if without_editor else editor or terminal_editor(),
+        merge_gate=MergeGate(
+            git=git,
+            runner=runner,
+            integration_branch="integration",
+            integrator=None if without_integrator else integrator or FakeIntegrator(git=git),
+            budget=Budget(),
+        ),
+        integration_branch="integration",
         budget=Budget(),
     )
     return scheduler, runner
@@ -67,7 +86,7 @@ async def test_an_infra_failure_goes_straight_to_a_human_and_never_to_the_editor
     report = await scheduler.run()
 
     assert report.failed == {SubIssueId("01"): Outcome.INFRA_FAILED}
-    assert git.merged == []  # it never reached the merge queue
+    assert git.fast_forwarded == []  # it never reached the merge gate
     assert runner.runs == []  # and the scheduler did not run a post-session suite
     assert len(implementer.calls) == 1  # and it was never run a second time
 
@@ -109,162 +128,285 @@ async def test_a_landed_sub_issue_leaves_its_worktree_where_it_was() -> None:
     assert runner.runs == [REPO / ".worktrees" / "active" / "01"]
 
 
-async def test_a_rebase_conflict_is_resolved_once_before_the_editor_is_involved() -> None:
+async def test_a_merge_conflict_is_reconciled_and_lands_without_reaching_the_editor() -> None:
+    """The Integrator answers it inside the gate, and the sub-issue lands as if nothing happened.
+
+    One merge, not two: the gate never releases the lock, so there is no second trip through it.
+    """
     store = FakeIssueStore(
         graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
     )
-    implementer = FakeImplementer(
-        scripted=[telemetry(resumable_identifier="resume-01")],
-        conflict_scripted=[telemetry(consumed_tokens=7_000)],
-    )
+    implementer = FakeImplementer(scripted=[telemetry()])
     editor = terminal_editor()
-    git = FakeGit(
-        head="integration",
-        rebase_results={"ralph/01": [False, True]},
-        conflict_resolution_rebase_results={"ralph/01": [False]},
+    git = FakeGit(head="integration", merge_conflicts={"ralph/01"})
+    integrator = FakeIntegrator(
+        git=git, scripted=[telemetry(consumption=TokenConsumption.total_only(7_000))]
     )
-    log = FakeRunLog()
 
-    scheduler, runner = scheduler_over(store, implementer, git, log, editor)
+    scheduler, runner = scheduler_over(store, implementer, git, FakeRunLog(), editor, integrator)
     report = await scheduler.run()
 
     assert report.landed == (SubIssueId("01"),)
     assert report.clean
-    assert git.conflict_resolution_rebased == [("ralph/01", "integration")]
-    assert git.rebased == [("ralph/01", "integration"), ("ralph/01", "integration")]
+    assert git.merges == [("ralph/01", "integration")]
     assert len(implementer.calls) == 1
-    assert implementer.resolve_conflict_calls == [
-        (implementer.calls[0], "resume-01")
-    ]
+    assert len(integrator.calls) == 1
     assert editor.calls == []
     assert runner.runs == [REPO / ".worktrees" / "active" / "01"]
+    # Billed, though it changed nothing about the outcome.
     assert [record.actor for _, record in store.consumption_records] == [
         Actor.IMPLEMENTER,
-        Actor.IMPLEMENTER,
+        Actor.INTEGRATOR,
     ]
+    integrator_record = store.consumption_records[1][1]
+    assert integrator_record.consumption.consumed_tokens == 7_000
 
 
-async def test_a_second_rebase_conflict_after_resolution_reaches_the_editor() -> None:
+async def test_a_reconciliation_that_succeeded_is_closed_in_the_log_like_any_other_session() -> None:
+    """A `session-started` with no `session-finished` is a session the log says never ended.
+
+    The failing reconciliation used to be the only one that got closed, so the log's account of the
+    Integrator depended on whether it had worked.
+    """
     store = FakeIssueStore(
         graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
     )
-    implementer = FakeImplementer(
-        scripted=[telemetry(resumable_identifier="resume-01")],
-        conflict_scripted=[telemetry()],
-    )
-    editor = terminal_editor()
-    git = FakeGit(
-        head="integration",
-        rebase_results={"ralph/01": [False, False]},
-        conflict_resolution_rebase_results={"ralph/01": [False]},
-    )
+    git = FakeGit(head="integration", merge_conflicts={"ralph/01"})
+    run_log = FakeRunLog()
 
-    scheduler, _ = scheduler_over(store, implementer, git, FakeRunLog(), editor)
+    scheduler, _ = scheduler_over(
+        store,
+        FakeImplementer(scripted=[telemetry()]),
+        git,
+        run_log,
+        terminal_editor(),
+        FakeIntegrator(git=git, scripted=[telemetry()]),
+    )
+    await scheduler.run()
+
+    integrator = [e for e in run_log.events() if e.actor is Actor.INTEGRATOR]
+    assert [e.kind for e in integrator] == [EventKind.SESSION_STARTED, EventKind.SESSION_FINISHED]
+    assert integrator[1].details is Outcome.SUCCESS
+
+
+async def test_a_reconciliation_is_stamped_from_its_own_clock_not_from_when_it_was_written() -> None:
+    """The gate holds the merge lock for the whole reconciliation, so both events are written
+    after it is over. Stamped `now`, a two-minute Integrator reads as instantaneous — which in the
+    log is indistinguishable from one that died on startup."""
+    store = FakeIssueStore(
+        graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
+    )
+    git = FakeGit(head="integration", merge_conflicts={"ralph/01"})
+    run_log = FakeRunLog()
+
+    scheduler, _ = scheduler_over(
+        store,
+        FakeImplementer(scripted=[telemetry()]),
+        git,
+        run_log,
+        terminal_editor(),
+        FakeIntegrator(git=git, scripted=[telemetry(wall_clock_s=120.0)]),
+    )
+    await scheduler.run()
+
+    started, finished = (e for e in run_log.events() if e.actor is Actor.INTEGRATOR)
+    assert (finished.ts - started.ts).total_seconds() == pytest.approx(120.0, abs=1.0)
+
+
+async def test_an_unreconciled_conflict_goes_to_a_human_and_never_to_the_editor() -> None:
+    """No spec was wrong, so there is nothing for an Editor to rewrite. The escalation carries the
+    **Integrator's** outcome, not the Implementer's: the Implementer delivered."""
+    store = FakeIssueStore(
+        graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
+    )
+    implementer = FakeImplementer(scripted=[telemetry()])
+    editor = terminal_editor()
+    git = FakeGit(head="integration", merge_conflicts={"ralph/01"})
+    integrator = FakeIntegrator(git=git, resolves=False)
+
+    scheduler, runner = scheduler_over(store, implementer, git, FakeRunLog(), editor, integrator)
     report = await scheduler.run()
 
     assert report.failed == {SubIssueId("01"): Outcome.INTEGRATION_FAILED}
-    assert len(implementer.resolve_conflict_calls) == 1
-    assert len(editor.calls) == 1
-    _, failure, must_be_terminal = editor.calls[0]
-    assert failure.outcome is Outcome.INTEGRATION_FAILED
-    assert failure.integration_detail == "rebase-conflict"
-    assert must_be_terminal is False
+    assert len(integrator.calls) == 1
+    assert editor.calls == []
+    assert runner.runs == [], "the suite gate is downstream of a merge that never finished"
+    assert git.moved == [("ralph/01", REPO / ".worktrees" / "failed" / "01")]
 
 
-async def test_a_red_retry_after_resolution_reaches_the_editor_with_suite_evidence() -> None:
+async def test_a_conflict_goes_to_a_human_unreconciled_when_the_run_has_no_integrator() -> None:
+    """`--integrator none`. No session is opened to learn what the gate already knows, and the
+    escalation carries the Implementer's own — the only session there was."""
     store = FakeIssueStore(
         graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
     )
-    implementer = FakeImplementer(
-        scripted=[telemetry(resumable_identifier="resume-01")],
-        conflict_scripted=[telemetry()],
-    )
+    implementer = FakeImplementer(scripted=[telemetry()])
     editor = terminal_editor()
-    git = FakeGit(
-        head="integration",
-        rebase_results={"ralph/01": [False, True]},
-        conflict_resolution_rebase_results={"ralph/01": [False]},
+    git = FakeGit(head="integration", merge_conflicts={"ralph/01"})
+
+    scheduler, runner = scheduler_over(
+        store, implementer, git, FakeRunLog(), editor, without_integrator=True
     )
-    scheduler, runner = scheduler_over(store, implementer, git, FakeRunLog(), editor)
+    report = await scheduler.run()
+
+    assert report.failed == {SubIssueId("01"): Outcome.INTEGRATION_FAILED}
+    assert editor.calls == [], "a conflict is never an Editor's question"
+    assert runner.runs == [], "the suite gate is downstream of a merge that never finished"
+    assert git.moved == [("ralph/01", REPO / ".worktrees" / "failed" / "01")]
+
+
+async def test_a_failure_goes_to_a_human_unadjudicated_when_the_run_has_no_editor() -> None:
+    """`--editor none`. An impasse would have gone to the Editor; with none, the human gets the
+    Implementer's report as it stands, and the sub-issue never gets a second Implementer session."""
+    store = FakeIssueStore(
+        graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
+    )
+    implementer = FakeImplementer(scripted=[telemetry(commits=0, impasse_report=impasse())])
+    git = FakeGit(head="integration")
+
+    scheduler, _ = scheduler_over(store, implementer, git, FakeRunLog(), without_editor=True)
+    report = await scheduler.run()
+
+    assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
+    assert len(implementer.calls) == 1, "no cycle was spent, so no second session was opened"
+    assert git.moved == [("ralph/01", REPO / ".worktrees" / "failed" / "01")]
+
+
+async def test_a_crashed_integrator_session_goes_straight_to_a_human() -> None:
+    """A killed Integrator is `infra-failed`, not a conflict nobody could resolve. Same
+    destination, different sentence in the notification — and the second one sends a human to the
+    wrong place."""
+    store = FakeIssueStore(
+        graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
+    )
+    implementer = FakeImplementer(scripted=[telemetry()])
+    editor = terminal_editor()
+    git = FakeGit(head="integration", merge_conflicts={"ralph/01"})
+    integrator = FakeIntegrator(
+        git=git, resolves=False, scripted=[telemetry(killed="wall-clock", exit_code=124, commits=0)]
+    )
+
+    scheduler, _ = scheduler_over(store, implementer, git, FakeRunLog(), editor, integrator)
+    report = await scheduler.run()
+
+    assert report.failed == {SubIssueId("01"): Outcome.INFRA_FAILED}
+    assert editor.calls == []
+    assert git.moved == [("ralph/01", REPO / ".worktrees" / "failed" / "01")]
+
+
+async def test_a_red_suite_after_reconciliation_still_reaches_the_editor() -> None:
+    """The conflict was textual and got resolved; the tree is still broken. That is a *semantic*
+    failure, which is the Editor's, and the reconciliation does not buy an exemption from the gate.
+    """
+    store = FakeIssueStore(
+        graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
+    )
+    implementer = FakeImplementer(scripted=[telemetry()])
+    editor = terminal_editor()
+    git = FakeGit(head="integration", merge_conflicts={"ralph/01"})
+    integrator = FakeIntegrator(git=git)
+
+    scheduler, runner = scheduler_over(store, implementer, git, FakeRunLog(), editor, integrator)
     runner.red_in.add(REPO / ".worktrees" / "active" / "01")
 
     report = await scheduler.run()
 
     assert report.failed == {SubIssueId("01"): Outcome.INTEGRATION_FAILED}
-    assert len(implementer.resolve_conflict_calls) == 1
+    assert len(integrator.calls) == 1
     assert len(editor.calls) == 1
     _, failure, _ = editor.calls[0]
     assert failure.integration_detail == "suite-red"
     assert failure.suite is not None and not failure.suite.green
+    # Still billed, even though the sub-issue went on to fail for an unrelated reason.
+    assert [record.actor for _, record in store.consumption_records] == [
+        Actor.IMPLEMENTER,
+        Actor.INTEGRATOR,
+        Actor.EDITOR,
+    ]
 
 
-async def test_a_crashed_conflict_resolution_session_goes_straight_to_a_human() -> None:
+async def test_a_merge_gate_failure_that_is_not_a_conflict_never_opens_an_integrator() -> None:
     store = FakeIssueStore(
         graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
     )
-    implementer = FakeImplementer(
-        scripted=[telemetry(resumable_identifier="resume-01")],
-        conflict_scripted=[telemetry(killed="wall-clock", exit_code=124, commits=0)],
-    )
+    implementer = FakeImplementer(scripted=[telemetry()])
     editor = terminal_editor()
-    git = FakeGit(
-        head="integration",
-        rebase_results={"ralph/01": [False]},
-        conflict_resolution_rebase_results={"ralph/01": [False]},
-    )
+    git = FakeGit(head="integration", ff_refuses={"ralph/01"})
+    integrator = FakeIntegrator(git=git)
 
-    scheduler, _ = scheduler_over(store, implementer, git, FakeRunLog(), editor)
+    scheduler, _ = scheduler_over(store, implementer, git, FakeRunLog(), editor, integrator)
     report = await scheduler.run()
 
-    assert report.failed == {SubIssueId("01"): Outcome.INFRA_FAILED}
-    assert len(implementer.resolve_conflict_calls) == 1
-    assert editor.calls == []
-    assert git.moved == [("ralph/01", REPO / ".worktrees" / "failed" / "01")]
+    assert report.failed == {SubIssueId("01"): Outcome.INTEGRATION_FAILED}
+    assert integrator.calls == []
 
 
-async def test_a_later_cycle_gets_its_own_single_conflict_resolution_session() -> None:
+# --- transcripts ----------------------------------------------------------------------------------
+
+
+async def test_every_session_of_every_actor_leaves_a_transcript_under_its_own_cycle() -> None:
+    """Two cycles, all three actors, and no two of them landing on the same key.
+
+    Cycle one is an impasse the Editor answers with `revise`; cycle two delivers, conflicts, and
+    the Integrator the merge gate dispatches gets it onto the integration branch. That is every
+    session a sub-issue can produce short of the cap, and the point is that the four are four
+    separate transcripts — an Editor session filed under a cycle of its own, or an Integrator filed
+    without one, would silently overwrite a sibling.
+    """
     store = FakeIssueStore(
         graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
     )
     implementer = FakeImplementer(
         scripted=[
-            telemetry(resumable_identifier="resume-01"),
-            telemetry(resumable_identifier="resume-02"),
-        ],
-        conflict_scripted=[telemetry(), telemetry()],
+            telemetry(commits=0, transcript="I cannot see how"),
+            telemetry(transcript="done, and it merges"),
+        ]
     )
     editor = FakeEditor(
-        scripted=[(telemetry(commits=0), verdict(Verdict.REVISE, spec="try again"))]
+        scripted=[(telemetry(transcript="the spec was wrong"), verdict(Verdict.REVISE))]
     )
-    git = FakeGit(
-        head="integration",
-        rebase_results={"ralph/01": [False, False, False, True]},
-        conflict_resolution_rebase_results={"ralph/01": [False, False]},
-    )
+    git = FakeGit(head="integration", merge_conflicts={"ralph/01"})
+    integrator = FakeIntegrator(git=git, scripted=[telemetry(transcript="took both sides")])
+    transcripts = FakeTranscripts()
 
-    scheduler, _ = scheduler_over(store, implementer, git, FakeRunLog(), editor)
+    scheduler, _ = scheduler_over(
+        store, implementer, git, FakeRunLog(), editor, integrator, transcripts
+    )
     report = await scheduler.run()
 
     assert report.landed == (SubIssueId("01"),)
-    assert report.clean
-    assert [identifier for _, identifier in implementer.resolve_conflict_calls] == [
-        "resume-01",
-        "resume-02",
-    ]
-    assert len(editor.calls) == 1
+    assert transcripts.bodies() == {
+        (SubIssueId("01"), 1, Actor.IMPLEMENTER): "I cannot see how",
+        (SubIssueId("01"), 1, Actor.EDITOR): "the spec was wrong",
+        (SubIssueId("01"), 2, Actor.IMPLEMENTER): "done, and it merges",
+        (SubIssueId("01"), 2, Actor.INTEGRATOR): "took both sides",
+    }
 
 
-async def test_other_merge_queue_failures_do_not_use_conflict_resolution() -> None:
+async def test_a_quarantined_session_is_kept_too() -> None:
+    """The transcript matters most for the sub-issue nobody could land — it is what the human who
+    opens the preserved worktree reads to find out what the session was thinking."""
     store = FakeIssueStore(
         graph=graph_of({"01": []}), states={SubIssueId("01"): SubIssueState.READY}
     )
-    implementer = FakeImplementer(scripted=[telemetry(resumable_identifier="resume-01")])
-    editor = terminal_editor()
-    git = FakeGit(head="integration", ff_refuses={"ralph/01"})
+    implementer = FakeImplementer(scripted=[telemetry(commits=0, transcript="stuck")])
+    editor = FakeEditor(
+        scripted=[(telemetry(transcript="unanswerable"), verdict(Verdict.PLANNING_DEFECT))]
+    )
+    transcripts = FakeTranscripts()
 
-    scheduler, _ = scheduler_over(store, implementer, git, FakeRunLog(), editor)
+    scheduler, _ = scheduler_over(
+        store,
+        implementer,
+        FakeGit(head="integration"),
+        FakeRunLog(),
+        editor,
+        transcripts=transcripts,
+    )
     report = await scheduler.run()
 
-    assert report.failed == {SubIssueId("01"): Outcome.INTEGRATION_FAILED}
-    assert implementer.resolve_conflict_calls == []
-    assert git.conflict_resolution_rebased == []
+    assert report.failed == {SubIssueId("01"): Outcome.IMPASSE}
+    assert transcripts.bodies() == {
+        (SubIssueId("01"), 1, Actor.IMPLEMENTER): "stuck",
+        (SubIssueId("01"), 1, Actor.EDITOR): "unanswerable",
+    }

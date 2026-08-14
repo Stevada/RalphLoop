@@ -17,16 +17,21 @@ from ralph.harness import (
     Killed,
     SessionTelemetry,
     SuiteResult,
+    TokenConsumption,
     Verdict,
 )
 from ralph.issues import Findings, IssueGraph, Spec, SubIssue, SubIssueId
+from ralph.ports import Budget, Candidate, SessionContext, Worktree
+
+DEFAULT_CONSUMPTION = TokenConsumption.split(input=30_000, cache_read=15_000, output=5_000)
+"""50,000 tokens, split the way a real session's are: mostly prompt, much of it cached."""
 
 
 def telemetry(
     *,
     exit_code: int = 0,
     killed: Killed | None = None,
-    consumed_tokens: int = 50_000,
+    consumption: TokenConsumption = DEFAULT_CONSUMPTION,
     auto_compactions: int = 0,
     resumable_identifier: str | None = None,
     wall_clock_s: float = 60.0,
@@ -34,12 +39,13 @@ def telemetry(
     diffstat: str = " 1 file changed, 1 insertion(+)",
     session_output: str = "all green, boss",
     impasse_report: ImpasseReport | None = None,
+    transcript: str = "everything it said, verbatim",
 ) -> SessionTelemetry:
     """A green Implementer session, unless you say otherwise."""
     return SessionTelemetry(
         exit_code=exit_code,
         killed=killed,
-        consumed_tokens=consumed_tokens,
+        consumption=consumption,
         auto_compactions=auto_compactions,
         resumable_identifier=resumable_identifier,
         wall_clock_s=wall_clock_s,
@@ -47,6 +53,7 @@ def telemetry(
         diffstat=diffstat,
         session_output=session_output,
         impasse_report=impasse_report,
+        transcript=transcript,
     )
 
 
@@ -93,6 +100,31 @@ def verdict(
         revised_findings=Findings(body=findings) if findings is not None else None,
         rationale=rationale,
     )
+
+
+def candidate(
+    worktree: Worktree,
+    spec: str = "build it",
+    findings: str = "",
+    id: str | None = None,
+) -> Candidate:
+    """What travels, for the tests that are about something else. The merge gate takes one because
+    the Integrator it may dispatch needs a spec to break ties with; every other field is scenery.
+
+    The id defaults to the worktree's branch suffix, so two candidates in one test are two
+    candidates rather than the same one twice.
+    """
+    return Candidate(
+        id=SubIssueId(id if id is not None else worktree.branch.rsplit("/", 1)[-1]),
+        spec=Spec(body=spec),
+        findings=Findings(body=findings),
+        worktree=worktree,
+    )
+
+
+def context(worktree: Worktree, spec: str = "build it", findings: str = "") -> SessionContext:
+    """One candidate, bounded for a session."""
+    return SessionContext(candidate=candidate(worktree, spec, findings), budget=Budget())
 
 
 def graph_of(edges: Mapping[str, Iterable[str]]) -> IssueGraph:

@@ -19,13 +19,14 @@ from collections.abc import AsyncGenerator
 from ralph.adapters.runtime.editor import READ_ONLY_TOOLS
 from ralph.adapters.runtime.turn_stream import (
     AutoCompaction,
-    TokenUsage,
     Turn,
     TurnStreamAsk,
     TurnStreamSession,
 )
+from ralph.harness import NOTHING, TokenConsumption
+from ralph.ports import HARNESS_LINE
 
-MODEL = "claude-opus-4-8"
+MODEL = "claude-opus-5"
 """The Editor is the expensive one on purpose. It runs at most three times per sub-issue and it is
 the only actor whose judgment the harness cannot check against a suite."""
 
@@ -38,42 +39,69 @@ class _SdkSession:
     def __init__(self, ask: TurnStreamAsk) -> None:
         self._ask = ask
         self._turns: asyncio.Queue[Turn | None] = asyncio.Queue()
+        self._transcript: list[str] = []
         self._code: int | None = None
         self._running = asyncio.create_task(self._converse())
 
     async def _converse(self) -> None:
-        # Imported here, not at module scope: `claude-agent-sdk` is an optional dependency, and a
-        # run that never reaches Claude adjudication must not require it to be installed.
-        from claude_agent_sdk import (
-            ClaudeAgentOptions,
-            PermissionResultAllow,
-            PermissionResultDeny,
-            query,
-        )
-
-        async def can_use_tool(tool: str, input: dict[str, object], context: object) -> object:
-            """**The enforcement surface.** The harness adjudicates the call before it happens."""
-            assert self._ask.permit is not None
-            permission = self._ask.permit(tool, input)
-            if permission.allowed:
-                return PermissionResultAllow()
-            return PermissionResultDeny(message=permission.reason)
-
-        options = ClaudeAgentOptions(
-            model=MODEL,
-            allowed_tools=sorted(READ_ONLY_TOOLS),
-            can_use_tool=can_use_tool,
-            cwd=str(self._ask.cwd),
-        )
+        # Nothing above the `try`. This coroutine runs as a bare task nobody awaits, so an exception
+        # raised before it is a *silent* one, and the sentinel in `finally` is what tells the reader
+        # the stream ended — without it, the reader waits on an empty queue for the life of the run.
         try:
+            from claude_agent_sdk import (
+                ClaudeAgentOptions,
+                PermissionResultAllow,
+                PermissionResultDeny,
+                query,
+            )
+
+            async def can_use_tool(tool: str, input: dict[str, object], context: object) -> object:
+                """**The enforcement surface.** The harness adjudicates the call before it
+                happens."""
+                assert self._ask.permit is not None
+                permission = self._ask.permit(tool, input)
+                if permission.allowed:
+                    return PermissionResultAllow()
+                return PermissionResultDeny(message=permission.reason)
+
+            options = ClaudeAgentOptions(
+                model=MODEL,
+                allowed_tools=sorted(READ_ONLY_TOOLS),
+                can_use_tool=can_use_tool,
+                cwd=str(self._ask.cwd),
+            )
+            # The launch, at the top of the session's own record — an SDK actor has no argv to
+            # print, so the harness prints what it would have said.
+            self._record(
+                f"{HARNESS_LINE}launched: claude-agent-sdk model={MODEL} cwd={self._ask.cwd} "
+                f"tools={','.join(sorted(READ_ONLY_TOOLS))}"
+            )
+            self._record(f"{HARNESS_LINE}prompt follows, then the session's own output")
+            self._record(self._ask.prompt)
+            # The SDK bills per message, and a `Turn` is a running total — so the accumulating
+            # happens here, where it is known that these are increments.
+            consumed = NOTHING
             async for message in query(prompt=self._ask.prompt, options=options):
+                self._record(repr(message))  # before `_turns_of`, which keeps only text and usage
                 for turn in _turns_of(message):
-                    self._turns.put_nowait(turn)
+                    if isinstance(turn, TokenConsumption):
+                        consumed += turn
+                        self._turns.put_nowait(consumed)
+                    else:
+                        self._turns.put_nowait(turn)
             self._code = 0
         except asyncio.CancelledError:
             self._code = -9
+        except Exception as failure:
+            # Recorded, not just returned as a code: an Editor session that ends with no verdict is
+            # `infra-failed`, and this is where the human reads *why*.
+            self._code = 1
+            self._record(f"{HARNESS_LINE}the Claude SDK session failed: {failure!r}")
         finally:
             self._turns.put_nowait(None)
+
+    def _record(self, line: str) -> None:
+        self._transcript.append(f"{line}\n")
 
     @property
     def returncode(self) -> int | None:
@@ -87,13 +115,20 @@ class _SdkSession:
     def resumable_identifier(self) -> str | None:
         return None
 
+    @property
+    def transcript(self) -> str:
+        return "".join(self._transcript)
+
     async def turns(self) -> AsyncGenerator[Turn, None]:
         while (turn := await self._turns.get()) is not None:
             yield turn
 
     def kill(self) -> None:
-        if not self._running.done():
-            self._running.cancel()
+        # The sentinel unconditionally, cancelled or not: `TurnStreamSession` requires that `kill()`
+        # *end* `turns()`, and cancelling a task that has already finished does nothing at all. A
+        # kill that cannot end the stream is how a dead conversation outlives the wall clock.
+        self._running.cancel()
+        self._turns.put_nowait(None)
 
     async def wait(self) -> int:
         await asyncio.gather(self._running, return_exceptions=True)
@@ -119,19 +154,23 @@ def _turns_of(message: object) -> list[Turn]:
     return turns
 
 
-def _observed(usage: object) -> TokenUsage:
-    """Token consumption from one SDK usage payload."""
+def _observed(usage: object) -> TokenConsumption:
+    """One SDK usage payload, translated into the harness's three buckets.
+
+    Claude's `input_tokens` already excludes both cached halves, so no subtraction is needed — but
+    `cache_creation_input_tokens` is folded in, because a cache *write* is prompt the model paid
+    close to full price for, and the bucket boundary that matters is the one against cache reads.
+    """
 
     def count(name: str) -> int:
         value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, 0)
         return value if isinstance(value, int) else 0
 
-    prompt = (
-        count("input_tokens")
-        + count("cache_read_input_tokens")
-        + count("cache_creation_input_tokens")
+    return TokenConsumption.split(
+        input=count("input_tokens") + count("cache_creation_input_tokens"),
+        cache_read=count("cache_read_input_tokens"),
+        output=count("output_tokens"),
     )
-    return TokenUsage(consumed_tokens=prompt + count("output_tokens"))
 
 
 def claude_sdk_session(ask: TurnStreamAsk) -> TurnStreamSession:

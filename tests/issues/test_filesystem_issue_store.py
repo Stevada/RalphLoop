@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from ralph.issues.filesystem import FilesystemIssueStore, IssueParseError
-from ralph.harness import Actor
+from ralph.harness import Actor, TokenConsumption
 from ralph.issues import Findings, SessionConsumption, Spec, SubIssueId, SubIssueState
 from ralph.runlog import EventKind, event
 
@@ -152,20 +152,41 @@ async def test_a_session_event_does_not_touch_the_status_line(tmp_path: Path) ->
 async def test_consumption_records_round_trip_for_a_sub_issue(tmp_path: Path) -> None:
     issue(tmp_path, "01-first.md")
     store = FilesystemIssueStore(issues_dir=tmp_path)
+    split = TokenConsumption.split(input=80_000, cache_read=40_000, output=3_000)
 
     await store.record_consumption(
         SubIssueId("01"),
-        SessionConsumption(
-            actor=Actor.IMPLEMENTER, consumed_tokens=123_000, auto_compactions=2
-        ),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumption=split, auto_compactions=2),
     )
     await store.record_consumption(
-        SubIssueId("01"), SessionConsumption(actor=Actor.EDITOR, consumed_tokens=45_000)
+        SubIssueId("01"),
+        SessionConsumption(actor=Actor.EDITOR, consumption=TokenConsumption.total_only(45_000)),
     )
 
+    # Both shapes survive the trip: the buckets come back as buckets, and a total that never had a
+    # breakdown does not acquire one on the way home.
     assert store.consumption(SubIssueId("01")) == (
-        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=123_000, auto_compactions=2),
-        SessionConsumption(actor=Actor.EDITOR, consumed_tokens=45_000),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumption=split, auto_compactions=2),
+        SessionConsumption(actor=Actor.EDITOR, consumption=TokenConsumption.total_only(45_000)),
+    )
+
+
+async def test_a_consumption_record_written_before_the_buckets_still_reads(tmp_path: Path) -> None:
+    """A `.scratch/` outlives the version of Ralph that wrote it. A line from before the split
+    existed carries a total and no buckets — which is a record, not a parse error."""
+    issue(tmp_path, "01-first.md")
+    (tmp_path / "consumption.jsonl").write_text(
+        '{"sub_issue": "01", "actor": "implementer", "consumed_tokens": 900, '
+        '"auto_compactions": 1}\n'
+    )
+    store = FilesystemIssueStore(issues_dir=tmp_path)
+
+    assert store.consumption(SubIssueId("01")) == (
+        SessionConsumption(
+            actor=Actor.IMPLEMENTER,
+            consumption=TokenConsumption.total_only(900),
+            auto_compactions=1,
+        ),
     )
 
 
@@ -179,22 +200,25 @@ async def test_one_consumption_file_keeps_the_sub_issues_apart(tmp_path: Path) -
     store = FilesystemIssueStore(issues_dir=tmp_path)
 
     await store.record_consumption(
-        SubIssueId("01"), SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=100)
+        SubIssueId("01"),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumption=TokenConsumption.total_only(100)),
     )
     await store.record_consumption(
-        SubIssueId("02"), SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=200)
+        SubIssueId("02"),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumption=TokenConsumption.total_only(200)),
     )
     await store.record_consumption(
-        SubIssueId("01"), SessionConsumption(actor=Actor.EDITOR, consumed_tokens=300)
+        SubIssueId("01"),
+        SessionConsumption(actor=Actor.EDITOR, consumption=TokenConsumption.total_only(300)),
     )
 
     assert (tmp_path / "consumption.jsonl").read_text().count("\n") == 3
     assert store.consumption(SubIssueId("01")) == (
-        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=100),
-        SessionConsumption(actor=Actor.EDITOR, consumed_tokens=300),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumption=TokenConsumption.total_only(100)),
+        SessionConsumption(actor=Actor.EDITOR, consumption=TokenConsumption.total_only(300)),
     )
     assert store.consumption(SubIssueId("02")) == (
-        SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=200),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumption=TokenConsumption.total_only(200)),
     )
 
 
@@ -204,7 +228,8 @@ async def test_the_consumption_file_is_not_mistaken_for_a_sub_issue(tmp_path: Pa
     issue(tmp_path, "01-first.md")
     store = FilesystemIssueStore(issues_dir=tmp_path)
     await store.record_consumption(
-        SubIssueId("01"), SessionConsumption(actor=Actor.IMPLEMENTER, consumed_tokens=100)
+        SubIssueId("01"),
+        SessionConsumption(actor=Actor.IMPLEMENTER, consumption=TokenConsumption.total_only(100)),
     )
 
     graph, _ = store.read_graph()

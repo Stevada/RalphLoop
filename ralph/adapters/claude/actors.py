@@ -37,9 +37,9 @@ class ClaudeCodeEditor:
         session = self.open_session(
             TurnStreamAsk(
                 prompt=editor_prompt(
-                    context.spec, context.findings, failure, must_be_terminal
+                    context.candidate.spec, context.candidate.findings, failure, must_be_terminal
                 ),
-                cwd=context.worktree.path,
+                cwd=context.candidate.worktree.path,
                 permit=lambda tool, input: read_only(tool, input, self.suite),
             )
         )

@@ -6,12 +6,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
+from ralph.harness.model.consumption import TokenConsumption
 from ralph.harness.model.impasse import ImpasseReport
 
 
 class Actor(StrEnum):
     IMPLEMENTER = "implementer"
     EDITOR = "editor"
+    INTEGRATOR = "integrator"
 
 
 type Killed = Literal["wall-clock"]
@@ -35,14 +37,21 @@ class SessionTelemetry:
 
     exit_code: int
     killed: Killed | None
-    consumed_tokens: int  # telemetry only. nothing is gated on it.
+    consumption: TokenConsumption  # telemetry only. nothing is gated on it.
     auto_compactions: int  # telemetry only. nothing is gated on it.
     resumable_identifier: str | None  # telemetry only. nothing is gated on it.
     wall_clock_s: float
     commits: int
     diffstat: str
-    session_output: str  # the session's own transcript. NOT the suite's — that is SuiteResult.output
+    session_output: str  # what the model said, as the adapter read it. NOT the suite's output.
     impasse_report: ImpasseReport | None  # parsed from the <impasse> sentinel, out of the above
+    transcript: str
+    """Everything the session emitted, before the adapter read anything out of it.
+
+    Separate from `session_output` because the two answer to different masters: `session_output` is
+    only as complete as the adapter's parser, and a parser is allowed to be behind a vendor's
+    schema. What a human is owed cannot be.
+    """
 
 
 @dataclass(frozen=True, slots=True)

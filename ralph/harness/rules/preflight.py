@@ -2,8 +2,8 @@
 
 A warning is a thing a human reads after the damage. Every check below describes a repository the
 harness would go on to damage or misjudge — a protected branch it would fast-forward, a dirty tree
-it would fight, a suite it cannot run and would therefore call green, a graph it cannot read. The
-correct response to each is to not start.
+it would fight, a suite it cannot run and would therefore call green, a graph it cannot read, an
+actor whose sessions could never open. The correct response to each is to not start.
 
 Every refusal is returned, not the first: a human fixing their morning should learn everything
 wrong with it in one pass, not one thing per attempt.
@@ -45,7 +45,7 @@ def refusals(facts: RepoFacts) -> tuple[Refusal, ...]:
             Refusal(
                 Check.UNCOMMITTED_CHANGES,
                 f"the working tree has uncommitted changes: {_dirty_summary(facts.dirty)}. The "
-                "merge queue fast-forwards this checkout while the run is in flight; anything "
+                "merge gate fast-forwards this checkout while the run is in flight; anything "
                 "uncommitted in it is in the way of that, and may be lost. Commit or stash first.",
             )
         )
@@ -70,6 +70,9 @@ def refusals(facts: RepoFacts) -> tuple[Refusal, ...]:
                 "starting a run.",
             )
         )
+
+    if facts.actor_runtime_error is not None:
+        found.append(Refusal(Check.MISSING_ACTOR_RUNTIME, facts.actor_runtime_error))
 
     if facts.source_error is not None:
         found.append(Refusal(Check.INVALID_ISSUE_SOURCE, facts.source_error))

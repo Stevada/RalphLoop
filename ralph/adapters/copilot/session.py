@@ -12,10 +12,11 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
+from ralph.harness import NOTHING, TokenConsumption
+from ralph.ports import HARNESS_LINE
 from ralph.adapters.runtime.turn_stream import (
     AutoCompaction,
     Permit,
-    TokenUsage,
     Turn,
     TurnStreamAsk,
     TurnStreamSession,
@@ -44,7 +45,6 @@ INPUT_TOKENS = "input_tokens"
 CACHE_READ_TOKENS = "cache_read_tokens"
 CACHE_WRITE_TOKENS = "cache_write_tokens"
 OUTPUT_TOKENS = "output_tokens"
-REASONING_TOKENS = "reasoning_tokens"
 
 DELTA_CONTENT = "delta_content"
 CONTENT = "content"
@@ -92,13 +92,14 @@ class CopilotSdkSession(TurnStreamSession):
         self._resumable_identifier = ask.resumable_identifier or _new_session_identifier()
         self._create_session = create_session
         self._turns: asyncio.Queue[Turn | None] = asyncio.Queue()
+        self._transcript: list[str] = []
         self._idle = asyncio.Event()
         self._auto_compactions: list[AutoCompaction] = []
         self._code: int | None = None
         self._running_session: RunningCopilotSession | None = None
         self._aborting: asyncio.Task[None] | None = None
         self._saw_message_delta = False
-        self._consumed_tokens = 0
+        self._consumption = NOTHING
         self._observed_usage = False
         self._emitted_usage = False
         self._stream_closed = False
@@ -115,6 +116,10 @@ class CopilotSdkSession(TurnStreamSession):
     @property
     def resumable_identifier(self) -> str | None:
         return self._resumable_identifier
+
+    @property
+    def transcript(self) -> str:
+        return "".join(self._transcript)
 
     async def turns(self) -> AsyncGenerator[Turn, None]:
         while (turn := await self._turns.get()) is not None:
@@ -137,6 +142,14 @@ class CopilotSdkSession(TurnStreamSession):
 
     async def _converse(self) -> None:
         try:
+            # The launch, at the top of the session's own record — an SDK actor has no argv to
+            # print, so the harness prints what it would have said.
+            self._transcript.append(
+                f"{HARNESS_LINE}launched: copilot-sdk model={MODEL} cwd={self._ask.cwd} "
+                f"session={self._resumable_identifier}\n"
+                f"{HARNESS_LINE}prompt follows, then the session's own output\n"
+                f"{self._ask.prompt}\n"
+            )
             self._running_session = await self._create_session(
                 self._ask,
                 self._resumable_identifier,
@@ -158,6 +171,7 @@ class CopilotSdkSession(TurnStreamSession):
     def _observe(self, event: SdkEvent) -> None:
         kind = _event_type(event)
         data = event.data
+        self._transcript.append(f"{kind} {data!r}\n")  # recorded before any branch below reads it
 
         if kind == ASSISTANT_MESSAGE_DELTA:
             self._saw_message_delta = True
@@ -166,7 +180,7 @@ class CopilotSdkSession(TurnStreamSession):
             self._put_text(_str_attr(data, CONTENT))
         elif kind == ASSISTANT_USAGE:
             self._observed_usage = True
-            self._consumed_tokens += _usage_tokens(data)
+            self._consumption += _usage_consumption(data)
         elif kind == SESSION_COMPACTION_START:
             self._auto_compactions.append(
                 AutoCompaction(
@@ -202,7 +216,7 @@ class CopilotSdkSession(TurnStreamSession):
 
     def _emit_usage(self) -> None:
         if self._observed_usage and not self._emitted_usage:
-            self._turns.put_nowait(TokenUsage(consumed_tokens=self._consumed_tokens))
+            self._turns.put_nowait(self._consumption)
             self._emitted_usage = True
 
 
@@ -331,20 +345,29 @@ def _event_type(event: SdkEvent) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _usage_tokens(data: object) -> int:
-    total = _optional_int_attr(data, TOTAL_TOKENS)
-    if total is not None:
-        return total
+def _usage_consumption(data: object) -> TokenConsumption:
+    """Copilot's components, translated into the harness's three buckets — or a bare total.
+
+    Components first, so a breakdown is never discarded in favour of a total that says less. Cache
+    *writes* fold into `input`: they are prompt the model paid close to full price for, and the
+    boundary worth measuring is the one against cache reads. `reasoning_tokens` is a breakdown *of*
+    output rather than an addend — adding it would double-count.
+    """
     parts = (
         _optional_int_attr(data, INPUT_TOKENS),
         _optional_int_attr(data, CACHE_READ_TOKENS),
         _optional_int_attr(data, CACHE_WRITE_TOKENS),
         _optional_int_attr(data, OUTPUT_TOKENS),
-        _optional_int_attr(data, REASONING_TOKENS),
     )
-    if all(tokens is None for tokens in parts):
+    if any(tokens is not None for tokens in parts):
+        input, cache_read, cache_write, output = (tokens or 0 for tokens in parts)
+        return TokenConsumption.split(
+            input=input + cache_write, cache_read=cache_read, output=output
+        )
+    total = _optional_int_attr(data, TOTAL_TOKENS)
+    if total is None:
         raise CopilotSdkUsageError(f"a usage event with no token counts in it: {data!r}")
-    return sum(tokens for tokens in parts if tokens is not None)
+    return TokenConsumption.total_only(total)
 
 
 def _str_attr(data: object, name: str) -> str | None:

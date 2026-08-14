@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from ralph.harness import Actor
+from ralph.harness import Actor, TokenConsumption
 from ralph.issues.consumption import SessionConsumption
 from ralph.issues.content import Findings, Spec
 from ralph.issues.linear.model import LinearComment, LinearIssue, LinearIssueStoreError
@@ -18,10 +18,16 @@ REVISION = re.compile(r"<!--\s*ralph:revision:(\d+)\s*-->")
 CONSUMPTION_MARKER = "<!-- ralph:consumption -->"
 CONSUMPTION_LINE = re.compile(
     r"^\s*-\s+(implementer|editor):\s+(\d+)"
-    r"(?:\s+tokens,\s+(\d+)\s+auto-compactions)?\s*$",
+    r"(?:\s+tokens,\s+(\d+)\s+auto-compactions)?"
+    r"(?:,\s+(\d+)\s+in,\s+(\d+)\s+cached,\s+(\d+)\s+out)?\s*$",
     re.MULTILINE,
 )
-"""The sub-issue is named by the comment's own issue, so it is absent from the line itself."""
+"""The sub-issue is named by the comment's own issue, so it is absent from the line itself.
+
+Both trailing groups are optional because this parses back what *earlier* runs wrote: a Linear issue
+outlives the version of Ralph that commented on it, and a line missing the breakdown is a line from
+before there was one — not a parse error.
+"""
 
 
 def parse_content(issue: LinearIssue) -> tuple[str, str]:
@@ -56,17 +62,36 @@ def parse_consumption_records(body: str) -> tuple[SessionConsumption, ...]:
     return tuple(
         SessionConsumption(
             actor=Actor(actor),
-            consumed_tokens=int(raw_tokens),
+            consumption=_parsed_consumption(raw_tokens, raw_input, raw_cache_read, raw_output),
             auto_compactions=int(raw_auto_compactions or 0),
         )
-        for actor, raw_tokens, raw_auto_compactions in CONSUMPTION_LINE.findall(body)
+        for actor, raw_tokens, raw_auto_compactions, raw_input, raw_cache_read, raw_output in (
+            CONSUMPTION_LINE.findall(body)
+        )
+    )
+
+
+def _parsed_consumption(
+    raw_tokens: str, raw_input: str, raw_cache_read: str, raw_output: str
+) -> TokenConsumption:
+    """A line with no breakdown yields a total and no buckets — which is exactly what it says."""
+    if not (raw_input and raw_cache_read and raw_output):
+        return TokenConsumption.total_only(int(raw_tokens))
+    return TokenConsumption.split(
+        input=int(raw_input), cache_read=int(raw_cache_read), output=int(raw_output)
     )
 
 
 def render_consumption_line(record: SessionConsumption) -> str:
+    c = record.consumption
+    breakdown = (
+        ""
+        if c.input_tokens is None or c.cache_read_tokens is None or c.output_tokens is None
+        else f", {c.input_tokens} in, {c.cache_read_tokens} cached, {c.output_tokens} out"
+    )
     return (
-        f"- {record.actor.value}: {record.consumed_tokens} tokens, "
-        f"{record.auto_compactions} auto-compactions\n"
+        f"- {record.actor.value}: {c.consumed_tokens} tokens, "
+        f"{record.auto_compactions} auto-compactions{breakdown}\n"
     )
 
 

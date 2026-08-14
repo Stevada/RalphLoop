@@ -176,6 +176,7 @@ async def run_editor(
         bound=completed.bound,
         exit_code=completed.exit_code,
         output=completed.output,
+        transcript=completed.transcript,
         wall_clock_s=completed.wall_clock_s,
         auto_compactions=completed.auto_compactions,
     )
@@ -186,6 +187,7 @@ def editor_telemetry(
     bound: Bound,
     exit_code: int,
     output: str,
+    transcript: str,
     wall_clock_s: float,
     auto_compactions: int = 0,
 ) -> SessionTelemetry:
@@ -199,7 +201,7 @@ def editor_telemetry(
     return SessionTelemetry(
         exit_code=exit_code,
         killed=bound.killed,
-        consumed_tokens=bound.consumed_tokens,
+        consumption=bound.consumption,
         auto_compactions=auto_compactions,
         resumable_identifier=None,
         wall_clock_s=wall_clock_s,
@@ -207,6 +209,7 @@ def editor_telemetry(
         diffstat="",
         session_output=output,
         impasse_report=None,  # an Editor cannot declare an impasse. It adjudicates them.
+        transcript=transcript,
     )
 
 

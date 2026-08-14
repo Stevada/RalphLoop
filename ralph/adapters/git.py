@@ -1,7 +1,7 @@
 """Real git, against a real repository.
 
-The one adapter with no plausible fake: a fake git that always says "rebase succeeded" tests
-nothing, and the merge queue is the trickiest code in the harness. Its tests run against a real
+The one adapter with no plausible fake: a fake git that always says "merge succeeded" tests
+nothing, and the merge gate is the trickiest code in the harness. Its tests run against a real
 temporary repo.
 """
 
@@ -31,10 +31,24 @@ def run_git(cwd: Path, *args: str) -> str:
 
 
 def _try_git(cwd: Path, *args: str) -> bool:
-    """For the three commands whose failure is a *result*, not an error: a rebase can conflict, a
-    fast-forward can be refused. Everything else goes through `run_git` and raises."""
+    """For the commands whose failure is a *result*, not an error: a merge can conflict, a
+    fast-forward can be refused, a ref can simply not exist. Everything else goes through `run_git`
+    and raises."""
     proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=False)
     return proc.returncode == 0
+
+
+def git_metadata(repo: Path) -> Path:
+    """Where git writes when a session commits — the index, the objects, the refs — for `repo` and
+    every worktree cut from it.
+
+    **None of it is inside the worktree.** A linked worktree's `.git` is a pointer file into this
+    directory, so an actor confined to its own checkout can rewrite every source file it was asked
+    to and still not be able to record that it did. Asked of git rather than assembled as
+    `repo / ".git"`, which is a file, not a directory, whenever the target repo is itself a
+    worktree or was cloned with `--separate-git-dir`.
+    """
+    return Path(run_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,22 +81,27 @@ class GitCli:
         run_git(self.repo, "worktree", "remove", "--force", str(wt.path))
         run_git(self.repo, "branch", "-D", wt.branch)
 
-    def rebase(self, wt: Worktree, onto: str) -> bool:
-        """False on conflict — and **no rebase left in progress**. A half-finished rebase in a
-        worktree the Editor is about to read would show it a tree neither actor ever produced."""
-        if _try_git(wt.path, "rebase", onto):
-            return True
-        _try_git(wt.path, "rebase", "--abort")
-        return False
+    def merge(self, wt: Worktree, onto: str) -> bool:
+        """False on conflict, leaving git's conflict state exactly as it produced it.
 
-    def rebase_for_conflict_resolution(self, wt: Worktree, onto: str) -> bool:
-        """False on conflict, leaving git's conflict state intact for the resolver to read."""
-        return _try_git(wt.path, "rebase", onto)
+        `--no-edit` because no session has a terminal: git opens an editor for the merge commit
+        message on the merges that want one, and a merge that blocked on `vi` would hold the merge
+        lock until the run was killed.
+        """
+        return _try_git(wt.path, "merge", "--no-edit", onto)
+
+    def merge_finished(self, wt: Worktree) -> bool:
+        """`MERGE_HEAD` is git's own record that a merge is still open; the commit that concludes
+        one deletes it. Asking git beats asking the model, and beats counting commits: a session
+        that resolved everything and stopped without committing leaves a branch carrying exactly the
+        commits it had before, which is indistinguishable from success by any count.
+        """
+        return not _try_git(wt.path, "rev-parse", "--verify", "--quiet", "MERGE_HEAD")
 
     def merge_ff_only(self, branch: str) -> bool:
         """False when git **refuses**, which is the point. `git merge` does not fire the pre-commit
         hook, so a merge commit would put an unverified tree on the integration branch. The merge
-        queue already re-ran the suite on the prospective merge result; if that result is not a
+        gate already re-ran the suite on the prospective merge result; if that result is not a
         fast-forward, the thing we verified is not the thing we would be landing."""
         return _try_git(self.repo, "merge", "--ff-only", branch)
 
@@ -102,7 +121,7 @@ class GitCli:
         repo while it runs, and a pre-flight that refused its own run log would be unusable. Untracked
         files also do not stand in the way of a fast-forward, which is what this check is for.
 
-        Not on the `Git` port. The scheduler and the merge queue never ask this — only the
+        Not on the `Git` port. The scheduler and the merge gate never ask this — only the
         pre-flight does, and a Protocol is the list of what orchestration needs, not an inventory of
         what git can do.
         """

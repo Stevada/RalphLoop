@@ -10,13 +10,14 @@ turn-stream-backed — but the transport itself is role-neutral by construction.
 from __future__ import annotations
 
 import asyncio
+import shlex
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from ralph.adapters.runtime.bounding import Bound, run_bounded
-from ralph.ports import Budget
+from ralph.ports import HARNESS_LINE, Budget
 
 
 class Transcript:
@@ -56,12 +57,17 @@ class Session:
     bound: Bound
     exit_code: int
     output: str
+    transcript: str
+    """What the session said, under the harness's record of what it launched. Separate from
+    `output` so that the launch cannot be mistaken for something the process printed — a role core
+    reads sentinels out of `output`, and it must find only the session's own words there."""
     wall_clock_s: float
 
 
 async def run_session(argv: Sequence[str], cwd: Path, budget: Budget) -> Session:
     """Run a command under the wall-clock bound and collect everything it said."""
     started = time.monotonic()
+    launched = f"{HARNESS_LINE}launched: {shlex.join(argv)}\n"
 
     proc = await asyncio.create_subprocess_exec(
         *argv, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
@@ -78,5 +84,6 @@ async def run_session(argv: Sequence[str], cwd: Path, budget: Budget) -> Session
         bound=bound,
         exit_code=proc.returncode if proc.returncode is not None else -1,
         output=transcript.text,
+        transcript=launched + transcript.text,
         wall_clock_s=time.monotonic() - started,
     )

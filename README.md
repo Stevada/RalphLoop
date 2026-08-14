@@ -2,15 +2,17 @@
 
 Harness engineering for autonomous issue execution via coding agents.
 
-Three actors. A **Planner** (human-invoked) cuts a parent issue into a graph of sub-issues. An
+Four actors. A **Planner** (human-invoked) cuts a parent issue into a graph of sub-issues. An
 **Implementer** (Codex or Copilot) writes the code and the tests, one sub-issue per session, in
 an isolated worktree. An **Editor** (Claude Code or Copilot, read-only) diagnoses the sessions
-that fail and returns a verdict.
+that fail and returns a verdict. An **Integrator** (Codex or Copilot) reconciles the conflicts
+that parallel landing creates. The last two are opt-in: a run that names neither pages a human
+where they would have been.
 
 The harness is the machinery between them: it dispatches sub-issues as their dependencies land,
 bounds every session, classifies every failure honestly, and lands work through a lock-guarded
-**merge queue** that rebases, re-runs the suite on the prospective merge, and fast-forwards — so
-the integration branch is correct by construction.
+**merge gate** that merges the integration branch in, re-runs the suite on the result, and
+fast-forwards — so the integration branch is correct by construction.
 
 > **Status: it runs.** All eleven sub-issues in `.scratch/build_harness/` have landed. What has
 > **not** happened: no run has yet been driven end-to-end by a real model. Every test in the suite
@@ -47,12 +49,25 @@ uv run ralph run <repo> [issue-source]       # run the graph to completion
 ```
 
 `validate` refuses; it does not warn. A protected branch, a dirty tree, a missing test command, a
-pre-commit hook the repo asks for and has not installed, a graph that will not parse — each gets its
-own sentence, and `ralph run` runs the same checks before it dispatches anything.
+pre-commit hook the repo asks for and has not installed, a graph that will not parse, an actor whose
+CLI or SDK is not installed — each gets its own sentence, and `ralph run` runs the same checks before
+it dispatches anything.
+
+A run narrates itself while it goes: every event appended to `<repo>/.scratch/<phase>/run.jsonl` is
+printed as it is written, so a run in flight is watchable rather than silent until its notification.
+The lines stay skimmable because the bodies are kept elsewhere — each session's full output goes to
+`<repo>/.scratch/<phase>/transcripts/<sub-issue>/<cycle>-<actor>.log`.
+
+```
+16:42:22  VIR-80     implementer  session-started   in-progress
+16:54:02  VIR-82     implementer  session-finished  integration-failed
+16:55:19  VIR-80     implementer  sub-issue-closed  landed
+17:12:44  VIR-82     editor       verdict-recorded  revise
+```
 
 ## Target repo commands
 
-Each target repo declares Ralph's commands in a tracked `.ralph.toml` file at its root:
+Each target repo declares Ralph's commands in a `.ralph.toml` file at its root:
 
 ```toml
 [commands]
@@ -60,7 +75,7 @@ test = "uv run pytest -q"  # required
 install = "uv sync"        # optional
 ```
 
-`test` is the command the merge queue runs on the prospective merge. `install`, when present, runs
+`test` is the command the merge gate runs on the prospective merge. `install`, when present, runs
 once in the base checkout before any worktree is opened. Both command strings are split with shell
 quoting rules.
 
@@ -88,7 +103,8 @@ leaves everything else points down to.
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) — it fetches Python 3.12 itself,
   so that is the only thing you must install first
-- `codex` or `copilot` CLI for the Implementer; Claude Code or `copilot` for the Editor
+- `codex` or `copilot` CLI for the Implementer and the Integrator; Claude Code or `copilot`
+  for the Editor
 - Git 2.38+ (worktree support)
 - [mattpocock/skills](https://github.com/mattpocock/skills) at user level (provides `/tdd`):
   ```bash
@@ -120,7 +136,7 @@ Four, and no others. `ready` is the Planner's authorisation to run — a sub-iss
 authorised does not belong in the graph yet, so there is no `not-started`.
 
 `landed` is a sub-issue's terminal state; `done` belongs to the parent issue and is never written
-to a sub-issue. The merge queue sets `landed` automatically, after the fast-forward. Do not set it
+to a sub-issue. The merge gate sets `landed` automatically, after the fast-forward. Do not set it
 by hand.
 
 **Dependencies:** list blockers under `## Blocked by` using `#N` references (matched to `N-*.md`)
@@ -160,19 +176,24 @@ attached to the sub-issue.
 
 ## Failure taxonomy
 
-Three failure outcomes, and each one routes somewhere specific:
+Three failure outcomes, and each one routes somewhere specific — `integration-failed` by two paths,
+because a conflict and a red suite are different problems:
 
 | Outcome | Meaning | Goes to |
 |---|---|---|
 | `impasse` | The Implementer did not deliver — it said why, or committed nothing | Editor |
-| `integration-failed` | Committed work is red or conflicting on the prospective merge | Editor |
+| `integration-failed` | Committed work is **red** on the prospective merge | Editor |
+| `integration-failed` | Committed work **conflicts** on the prospective merge | Integrator |
 | `infra-failed` | The environment is broken, not the code | Human |
 
 **There is no retry destination in this system.** A failed sub-issue is quarantined — marked
 `needs-human`, worktree preserved, its dependents never become eligible — and everything
-unaffected still lands. The one narrow exception is mechanical rebase-conflict recovery: Ralph may
-resume the same Implementer session once, in the conflicted worktree, before it engages the Editor.
-The human is paged **once**, at the end. The run never stops early.
+unaffected still lands. The human is paged **once**, at the end. The run never stops early.
+
+A **merge conflict** is the one failure answered inside the merge gate rather than by the Editor.
+The gate keeps its lock and dispatches an
+**Integrator** to resolve the conflict and commit it. The result goes through the same suite gate as
+any other landing, and the sub-issue never returns to the gate: it lands, or it goes to the human.
 
 ## Run Options
 
@@ -185,13 +206,37 @@ The CLI defaults match Ralph's current common path:
 ```bash
 --issue-mode filesystem
 --implementer codex
---editor claude
+--editor none
+--integrator none
 --protected main
 --protected master
 ```
 
+**The two roles that answer a failure are unfilled by default.** A default run opens Implementer
+sessions and nothing else: a failure pages a human, a conflict pages a human. Naming an Editor or
+an Integrator is how a run asks to spend tokens on one.
+
 How `codex`/`copilot` is driven, and the four Linear state names, are hardcoded in the adapter that
 owns them.
+
+`--editor none` and `--integrator none` leave a role unfilled. Only these two can be: they are the
+roles that answer a *failure*, and a run can answer one by paging a human instead.
+
+- `--editor none` — every failure that would have been adjudicated goes to the human on the
+  Implementer's own report. No cycle is spent, so a sub-issue gets exactly one Implementer session
+  and no spec is ever revised.
+- `--integrator none` — a merge conflict goes to the human with git's conflict state left exactly
+  as it was made. The conflict was never an Editor's question and still isn't.
+
+Neither weakens a landing: the suite gate and the fast-forward are unchanged, and an unfilled role
+only ever *shortens* the path to a human. A run with no runtime installed for a role it has
+switched off is not refused — there is nothing to construct.
+
+`--sequential` runs one sub-issue at a time instead of every eligible one at once. It narrows what
+the scheduler dispatches and nothing else: the merge gate, the suite gate, and the fast-forward are
+the same on either setting, so the run is slower and strictly no safer. Reach for it when the
+constraint is outside the harness — a rate limit, a machine that cannot host N checkouts, or a
+session you want to watch one at a time.
 
 ### `.env` — the one secret
 
@@ -211,7 +256,7 @@ Neither is a secret, so neither lives here.
 3. **Skills as references** — the prompt invokes `/tdd` by name. Skills are installed at user
    level, never bundled here.
 4. **Worktree isolation** — every session runs in its own worktree. Parallel sessions land one at
-   a time, through the merge queue.
-5. **The merge queue is the harness suite gate.** A model's exit code is its opinion; the suite is a
+   a time, through the merge gate.
+5. **The merge gate runs the harness's only suite gate.** A model's exit code is its opinion; the suite is a
    fact only when Ralph runs it on the prospective merge. A suite the harness runs is still inside
    the **blast radius** — only CI on a clean checkout is **honest**.
