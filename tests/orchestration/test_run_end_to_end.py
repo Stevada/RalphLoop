@@ -218,10 +218,10 @@ async def test_the_editor_allowlist_uses_the_discovered_test_command(
         seen.append(suite)
         return terminal_editor()
 
-    monkeypatch.setattr("ralph.cli.claude_editor", editor_for)
+    monkeypatch.setattr("ralph.cli.actors.claude_editor", editor_for)
     # No Editor through the seam: this test is about the one the *run* builds. Which means the
     # pre-flight would check for a Claude runtime that `editor_for` has just replaced.
-    monkeypatch.setattr("ralph.cli._installed", lambda runtime: True)
+    monkeypatch.setattr("ralph.cli.actors._installed", lambda runtime: True)
 
     report = await run(
         repo.path,

@@ -13,5 +13,5 @@ READY_COMMANDS = RepoCommands(test=TEST_CMD, install=None)
 def command_source(monkeypatch: pytest.MonkeyPatch) -> FakeCommandSource:
     """Default command discovery for orchestration tests that are not about descriptor parsing."""
     source = FakeCommandSource(READY_COMMANDS)
-    monkeypatch.setattr("ralph.cli.command_source_for", lambda: source)
+    monkeypatch.setattr("ralph.cli.preflight.command_source_for", lambda: source)
     return source

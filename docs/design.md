@@ -26,7 +26,7 @@ Four actors. They never talk to each other. Three of them talk to a sub-issue's 
 The Planner is invoked by a human, in conversation. The other three run unattended inside a run.
 
 **An actor is a role, not a model.** Either Codex or Copilot can back any of the three unattended
-roles; `cli.py` chooses from CLI arguments, and nothing downstream knows which is running. That is a
+roles; `cli/` chooses from CLI arguments, and nothing downstream knows which is running. That is a
 portfolio decision, not a hedge: the Implementer and the Editor should not be the same model on the
 same failure, because an Editor adjudicating an impasse declared by *itself* is the least independent
 sensor the system could have.

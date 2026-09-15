@@ -58,10 +58,10 @@ load-bearing facts:
   `flock`, no PID files, no result-file polling. Reaching for any of those means you mistranslated the
   design.
 - **Layers, dependency arrow inward:** `harness/` → `ports.py` → `adapters/` → orchestration →
-  `cli.py`. `harness/` is pure (stdlib only, no I/O). `harness/model/` is the nouns (frozen values,
+  `cli/`. `harness/` is pure (stdlib only, no I/O). `harness/model/` is the nouns (frozen values,
   zero logic); `harness/rules/` is the verbs (the pure functions that *are* the design). Every
   `ports.py` Protocol has a fake in `tests/fakes.py`, and the fakes are what the suite runs against.
-- **Concrete adapters are named only in `cli.py`.** Nothing downstream knows whether the Implementer
+- **Concrete adapters are named only in `cli/`.** Nothing downstream knows whether the Implementer
   is Codex or Copilot, the Editor is Claude Code or Copilot, or the Integrator is either. Any of
   these CLIs can back any of the three unattended actors.
 - **The merge gate runs the harness's only suite gate.** The harness runs the discovered test command on the

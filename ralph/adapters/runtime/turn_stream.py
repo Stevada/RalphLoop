@@ -6,7 +6,7 @@ the `CopilotImplementer` all run on this seam; what differs is only the prompt, 
 the emitted output is read afterwards.
 
 This is the SDK twin of the subprocess `Session` in `session.py`: two transports behind one pair of
-role cores, wired to concrete agents only in `cli.py`.
+role cores, wired to concrete agents only in `cli/`.
 """
 
 from __future__ import annotations

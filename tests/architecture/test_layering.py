@@ -135,20 +135,25 @@ def test_the_nouns_do_not_know_about_the_verbs(module: Path) -> None:
         )
 
 
-CLI = PACKAGE / "cli.py"
+CLI = PACKAGE / "cli"
+"""The composition root — a package, so that wiring, pre-flight and presentation can each be one
+file without any of them becoming a second place where an adapter is named."""
+
 ISSUE_ADAPTERS = {"ralph.issues.filesystem", "ralph.issues.linear"}
 ISSUE_ADAPTER_DIRS = {PACKAGE / "issues" / "filesystem", PACKAGE / "issues" / "linear"}
 UPSTREAM = [
     m
     for m in SHIPPED
-    if m != CLI and (PACKAGE / "adapters") not in m.parents and not ISSUE_ADAPTER_DIRS & set(m.parents)
+    if CLI not in m.parents
+    and (PACKAGE / "adapters") not in m.parents
+    and not ISSUE_ADAPTER_DIRS & set(m.parents)
 ]
 
 
 @pytest.mark.parametrize("module", UPSTREAM, ids=_rel)
 def test_only_the_composition_root_names_a_concrete_adapter(module: Path) -> None:
-    """`cli.py` is the composition root and the only module allowed to know that the Implementer is
-    Codex rather than Copilot, that the Editor is Claude Code rather than Copilot, or that git is
+    """The `cli/` package is the composition root and the only place allowed to know that the
+    Implementer is Codex rather than Copilot, that the Editor is Claude Code rather than Copilot, or that git is
     git. The moment the scheduler imports an adapter, the seam it was built around has stopped
     existing — and swapping one model for another becomes a code change in the scheduler.
 
@@ -160,14 +165,18 @@ def test_only_the_composition_root_names_a_concrete_adapter(module: Path) -> Non
             imported == adapter or imported.startswith(f"{adapter}.") for adapter in ISSUE_ADAPTERS
         )
         assert not imported.startswith("ralph.adapters") and not names_issue_adapter, (
-            f"{_rel(module)} imports {imported!r} — only cli.py may name an adapter"
+            f"{_rel(module)} imports {imported!r} — only the cli package may name an adapter"
         )
 
 
 def test_the_composition_root_is_where_both_actors_are_chosen() -> None:
-    """And the other half of the same rule: `cli.py` really does name them, so that the walk above
-    is a statement about where the knowledge *lives* and not merely that nobody has it."""
-    named = _ralph_imports(CLI)
+    """And the other half of the same rule: the composition root really does name them, so that the
+    walk above is a statement about where the knowledge *lives* and not merely that nobody has it.
+
+    Unioned across the root's modules rather than read off one file: which file inside the root does
+    the wiring is a layout decision, and this test is about the layer.
+    """
+    named = {i for m in SHIPPED if CLI in m.parents for i in _ralph_imports(m)}
 
     assert {"ralph.adapters.codex", "ralph.adapters.copilot"} <= named  # the Implementers
     assert {

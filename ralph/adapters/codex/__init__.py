@@ -1,6 +1,6 @@
 """Codex as an SDK-backed Implementer, Integrator, and Editor.
 
-`cli.py` names this package; nothing downstream does. The three roles live in `actors.py` over one
+`cli/` names this package; nothing downstream does. The three roles live in `actors.py` over one
 JSONL session boundary in `session.py`, matching the shape of the Copilot adapter.
 """
 

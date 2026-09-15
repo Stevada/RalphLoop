@@ -57,7 +57,12 @@ ralph/
                    git, suite
   mergegate.py     \  the merge gate and the scheduler, so not an adapter either
   scheduler.py      } orchestration — depends on ports only, never on a concrete adapter
-  cli.py           composition root — the only place a concrete adapter is named
+  cli/             composition root — the only place a concrete adapter is named
+    __init__.py      wires the run, runs it, and `main`
+    options.py       the flags, the values they resolve to, and `.env`. actor names are strings here
+    actors.py        name -> adapter, for every role and for the issue store. the wiring proper
+    preflight.py     gathers the facts `rules/preflight.py` judges; `validate` and `--dry-run`
+    presentation.py  run-log narration and the final notification: values in, strings out
 
 tests/
   fakes.py         a fake per Protocol. adapters: they satisfy an interface at a seam.
@@ -87,7 +92,7 @@ The rules that hold this shape together:
   makes "no adapter may reach for a fake" enforceable rather than aspirational.
 
 The three unattended actors are each chosen at startup — Codex or Copilot implements, Codex or
-Copilot reconciles, Claude Code / Codex / Copilot edits — and nothing downstream of `cli.py` knows
+Copilot reconciles, Claude Code / Codex / Copilot edits — and nothing downstream of `cli/` knows
 which.
 
 ---
@@ -189,7 +194,7 @@ needs a real model, network, or `codex` binary is in the wrong layer.
 | `Integrator` | reconciles a conflicted worktree → `SessionTelemetry` | Takes only a `SessionContext`: no failure report, no `must_be_terminal`, no resumable identifier. The conflict is fully described by the repository it stands in, which is what lets *any* adapter play the role — a resumed-session contract would have restricted it to transports that can resume. Dispatched by the merge gate, never by the scheduler. |
 | `Editor` | adjudicates a failure → `(SessionTelemetry, EditorVerdict \| None)` | Bounded exactly like an Implementer — same `Budget`, same telemetry. Takes `must_be_terminal`; takes **no** `RunLog` or `IssueStore`, so every *consequence* of a verdict happens in the scheduler. |
 | `RunLog` | the harness's **authoritative** record | A Protocol, not the JSONL adapter, because the merge gate and scheduler both take one and orchestration may not name an adapter. |
-| `CommandSource` | target repo → `RepoCommands` | Used during pre-flight readiness. `cli.py` names the concrete descriptor adapter and passes only the discovered value downstream. |
+| `CommandSource` | target repo → `RepoCommands` | Used during pre-flight readiness. `cli/` names the concrete descriptor adapter and passes only the discovered value downstream. |
 | `TestRunner` | a suite run → `SuiteResult` | The merge gate owns the single harness suite run, using `RepoCommands.test`. |
 | `Git` | worktree / merge / ff plumbing | `merge_finished` is how the gate asks whether an Integrator finished — git's own `MERGE_HEAD`, not the session's word and not a commit count, because a session that resolves everything and never commits leaves a count that reads exactly as it would on success. `discard_worktree` destroys the checkout **and the branch** — `git worktree add -b` refuses an existing name, so a branch that outlived its checkout could never be cut again. The scheduler calls it on both non-quarantine exits: after a landing (the commits are on integration already) and on a `revise` verdict (losing them is the point). |
 
@@ -217,8 +222,8 @@ Spec and findings are separate files because a revision may change one and leave
 
 ## 4. Adapters — `ralph/adapters/`
 
-All three unattended actors are chosen in `cli.py` from CLI arguments; nothing downstream knows which
-concrete adapter is running, and `cli.py` remains the only module that names one.
+All three unattended actors are chosen in `cli/` from CLI arguments; nothing downstream knows which
+concrete adapter is running, and `cli/` remains the only package that names one.
 
 | Vendor | Implementer transport | Integrator transport | Editor transport |
 |---|---|---|---|
@@ -237,7 +242,7 @@ The reason for keeping multiple vendors available on each unattended role lives 
 ### Command descriptor adapter
 
 The descriptor adapter ([commands.py](../ralph/adapters/commands.py)) reads `.ralph.toml` from the
-target repo and returns `RepoCommands` through the `CommandSource` port. `cli.py` is the only place
+target repo and returns `RepoCommands` through the `CommandSource` port. `cli/` is the only place
 that chooses that concrete adapter. Downstream code receives `RepoCommands`: `install_once()` gets
 the optional `install` command, `SubprocessTestRunner` gets the required `test` command, and the
 Editor allowlist receives that same `test` command.
@@ -335,7 +340,7 @@ One dispatch loop: read the graph once, then repeatedly dispatch every `eligible
   be exceeded where it matters. `_cycle` returning `None` means `revise` — go round again, clean.
 - A cycle is **spent when the Editor half begins**, not when it ends: `must_be_terminal` must already
   count this cycle, or a killed Editor would cost nothing and buy its sub-issue infinite Implementers.
-- **The `editor` is always an `Editor`.** The CLI names a concrete Editor, `cli.py` resolves it
+- **The `editor` is always an `Editor`.** The CLI names a concrete Editor, `cli/` resolves it
   before the scheduler starts, and any unknown name is a loud option failure. A failed
   Implementer session that routes to adjudication always reaches the Editor loop.
 - **The scheduler never dispatches the Integrator.** The merge gate does, inside its own lock, and
@@ -352,7 +357,7 @@ Append-only, one line per event, two kinds of thing only: session states and Edi
 spend is deliberately not a run-log event; per-session consumption is persisted through the
 `IssueStore`, and diffstats and failing-test output belong in the impasse report.
 
-`cli.py` wraps the JSONL writer in a `NarratedRunLog`, so every event reaching the file also reaches
+`cli/` wraps the JSONL writer in a `NarratedRunLog`, so every event reaching the file also reaches
 the terminal as it is written — file first, so the narration can never claim something the record
 does not. It is a **view**, not a second sink: same fields, same order, same UTC clock. Between the
 first session and the closing notification a run is otherwise silent for hours.
@@ -404,7 +409,7 @@ adapter wrote. `session_output` is the separate, parsed string the sentinels com
 `FileTranscripts` renders the footer. Keeping all of this apart is a design commitment, not a
 convenience; see [design.md](design.md#the-transcripts).
 
-### The pre-flight — [preflight.py](../ralph/harness/rules/preflight.py), gathered in `cli.py`
+### The pre-flight — [preflight.py](../ralph/harness/rules/preflight.py), gathered in `cli/`
 
 **It refuses; it does not warn.** Seven checks, each describing a run the harness would otherwise
 damage or misjudge:
@@ -420,7 +425,7 @@ damage or misjudge:
 | `invalid-issue-graph` | Read a source that read fine but holds a graph it cannot use. |
 
 The **rule is pure** (`RepoFacts` in, `Refusal`s out), so each refusal's sentence is tested without a
-repo to be wrong about; only the gathering is `cli.py`'s. It does not stop at the first refusal, and
+repo to be wrong about; only the gathering is `cli/`'s. It does not stop at the first refusal, and
 it does not *paraphrase* — the graph's refusal quotes `IssueParseError` verbatim, because a cycle and
 a missing acceptance criterion are different mornings. **`ralph run` runs the same checks and raises**
 — a check that fires only when a human remembers to ask is a check the run does not have.
