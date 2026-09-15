@@ -330,12 +330,28 @@ async def test_a_transcript_opens_with_what_the_harness_launched() -> None:
 
 
 async def test_kill_stops_the_codex_turn_stream_without_raising() -> None:
-    session = stub_session(mode="block")
-    reading = asyncio.create_task(collect(session))
+    """A session killed mid-stream keeps what it already said, and the stream ends quietly.
 
-    await asyncio.sleep(0.05)
+    The kill has to land *after* the stub has spoken and *while* the reader is suspended waiting
+    for the next line, which is the shape the bounding path kills in for real. So the test waits
+    for the first turn to arrive rather than sleeping a fixed 50ms and hoping: that sleep was a bet
+    on how long a Python interpreter takes to start, and on a cold cache it loses and the stream
+    yields nothing at all.
+    """
+    session = stub_session(mode="block")
+    turns: list[Turn] = []
+    spoke = asyncio.Event()
+
+    async def read() -> None:
+        async for turn in session.turns():
+            turns.append(turn)
+            spoke.set()
+
+    reading = asyncio.create_task(read())
+    # Bounded, because "it never spoke" has to fail the test rather than hang it.
+    await asyncio.wait_for(spoke.wait(), timeout=10.0)
     session.kill()
-    turns = await asyncio.wait_for(reading, timeout=5.0)
+    await asyncio.wait_for(reading, timeout=5.0)
 
     assert "done" in turns
     assert await session.wait() != 0
