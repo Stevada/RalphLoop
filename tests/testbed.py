@@ -48,7 +48,7 @@ wire format here — where the only writer lives — keeps the writer and the re
 
 
 class Behaviour(StrEnum):
-    """What the stand-in agent has been told to do. Ten shapes, and the harness must tell them
+    """What the stand-in agent has been told to do. Eleven shapes, and the harness must tell them
     apart: five of them exit in ways that look alike from the outside."""
 
     SUCCEED = "succeed"
@@ -83,6 +83,14 @@ class Behaviour(StrEnum):
     count survives the worktree being destroyed — which is the very thing being tested.
     """
 
+    HOLDS_UNTIL = "holds-until"
+    """Succeeds, but not before a named *other* agent has started. `holds_until` binds the name.
+
+    The only behaviour ordered against a sibling rather than a clock. `SLOW` buys a margin and
+    hopes no merge gate runs long; this makes the overlap a fact, so a test about concurrency
+    asserts one instead of racing for it.
+    """
+
 
 SLOW_S = 0.75
 """How long `SLOW` takes. Long enough that a `SUCCEED` sibling dispatched at the same moment
@@ -93,11 +101,19 @@ LEDGER_ENV = "RALPH_TESTBED_LEDGER"
 harness knows nothing about it, which is the only way it can be evidence *about* the harness."""
 
 
-def behaviour_spec(default: Behaviour, per_sub_issue: Mapping[str, Behaviour] | None = None) -> str:
+def behaviour_spec(default: Behaviour, per_sub_issue: Mapping[str, str] | None = None) -> str:
     """One agent, different behaviour per sub-issue — the shape every quarantine test needs, because
-    the whole claim is that one sub-issue can fail while its siblings land."""
-    table = [f"{tag}={b.value}" for tag, b in sorted((per_sub_issue or {}).items())]
+    the whole claim is that one sub-issue can fail while its siblings land.
+
+    A `Behaviour` is a `str`, so the table takes either a bare one or a bound `holds_until`.
+    """
+    table = [f"{tag}={b}" for tag, b in sorted((per_sub_issue or {}).items())]
     return ",".join([*table, f"*={default.value}"])
+
+
+def holds_until(tag: str) -> str:
+    """`Behaviour.HOLDS_UNTIL`, bound to the tag whose start releases it."""
+    return f"{Behaviour.HOLDS_UNTIL.value}:{tag}"
 
 
 def peak_concurrency(ledger: Path) -> int:
@@ -324,6 +340,7 @@ from pathlib import Path
 
 IMPASSE_OPEN, IMPASSE_CLOSE = "<impasse>", "</impasse>"
 SLOW_S = 0.75
+HOLD_TIMEOUT_S = 30.0
 
 
 def git(*args: str) -> None:
@@ -374,9 +391,32 @@ def sessions_so_far(tag: str) -> int:
     return before
 
 
+def hold_until(other: str) -> None:
+    """Block until `other` has marked its own start in the ledger we both write.
+
+    No constant decides the overlap: this process cannot exit before `other` has begun, so a test
+    asserting the two were alive together asserts a fact rather than winning a race. Bounded all
+    the same, because whether `other` is dispatched at all is the thing under test — a harness that
+    never dispatches it has to fail the test, not hang it.
+    """
+    ledger = os.environ.get("RALPH_TESTBED_LEDGER")
+    if not ledger:
+        raise RuntimeError("holds-until is evidence about concurrency and needs the ledger")
+    deadline = time.monotonic() + HOLD_TIMEOUT_S
+    while time.monotonic() < deadline:
+        if f"+{other}" in Path(ledger).read_text().split():
+            return
+        time.sleep(0.02)
+    raise TimeoutError(f"waited {HOLD_TIMEOUT_S}s for +{other}; it was never dispatched")
+
+
 def act(behaviour: str, tag: str, cwd: Path) -> int:
     if behaviour == "slow":
         time.sleep(SLOW_S)
+        behaviour = "succeed"
+
+    if behaviour.startswith("holds-until:"):
+        hold_until(behaviour.split(":", 1)[1])
         behaviour = "succeed"
 
     if behaviour == "impasse-once":
