@@ -16,14 +16,11 @@ import argparse
 import asyncio
 import importlib.util
 import logging
-import os
 import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
-
-from dotenv import load_dotenv
 
 from ralph.adapters.claude import claude_editor
 from ralph.adapters.codex import codex_editor, codex_implementer, codex_integrator
@@ -35,6 +32,25 @@ from ralph.adapters.copilot import (
 )
 from ralph.adapters.git import GitCli, git_metadata, run_git
 from ralph.adapters.suite import SubprocessTestRunner, install_once
+from ralph.cli.options import (
+    CLAUDE,
+    CODEX,
+    COPILOT,
+    DEFAULT_LOG_LEVEL,
+    DEFAULT_PROTECTED,
+    EDITORS,
+    FILESYSTEM,
+    IMPLEMENTERS,
+    INTEGRATORS,
+    LINEAR,
+    LINEAR_API_KEY,
+    NONE,
+    _add_option_flags,
+)
+from ralph.cli.options import ENV_FILE as ENV_FILE
+from ralph.cli.options import RunOptions as RunOptions
+from ralph.cli.options import _load_env as _load_env
+from ralph.cli.options import _options_for as _options_for
 from ralph.cli.presentation import (
     NarratedRunLog,
     Readiness,
@@ -74,18 +90,6 @@ from ralph.transcripts import FileTranscripts
 
 log = logging.getLogger("ralph")
 
-CODEX = "codex"
-CLAUDE = "claude"
-COPILOT = "copilot"
-NONE = "none"
-"""The role is unfilled on this run. Only the two roles that answer a *failure* may be switched off
-— an Implementer is the run, and a run without one has nothing to do."""
-
-IMPLEMENTERS = (CODEX, COPILOT)
-EDITORS = (CLAUDE, CODEX, COPILOT, NONE)
-INTEGRATORS = (CODEX, COPILOT, NONE)
-
-
 @dataclass(frozen=True, slots=True)
 class ActorRuntime:
     """What a concrete adapter needs on the machine before any of its sessions can open."""
@@ -105,23 +109,7 @@ ACTOR_RUNTIME: Mapping[str, ActorRuntime] = {
 """Here rather than in the adapters, because which actor is backed by which adapter is this module's
 secret — and the pre-flight has to answer the question without constructing either one."""
 
-FILESYSTEM = "filesystem"
-LINEAR = "linear"
-
-DEFAULT_ISSUE_MODE = FILESYSTEM
-DEFAULT_IMPLEMENTER = CODEX
-DEFAULT_EDITOR = NONE
-DEFAULT_INTEGRATOR = NONE
-DEFAULT_PROTECTED = ("main", "master")
-
-LINEAR_API_KEY = "LINEAR_API_KEY"
-ENV_FILE = ".env"
 PRE_COMMIT_CONFIGS = (".pre-commit-config.yaml", ".pre-commit-config.yml")
-
-# Operational verbosity is a command-line flag: the harness's own diagnostic
-# log, separate from the run log. `WARNING` keeps a clean run quiet.
-DEFAULT_LOG_LEVEL = "WARNING"
-
 
 class NoActor(RuntimeError):
     """The CLI named an Implementer or Editor the harness does not know. The harness will not
@@ -136,87 +124,6 @@ class Refused(RuntimeError):
 
 class IssueSourceError(ValueError):
     """The CLI was not given a coherent issue source."""
-
-
-@dataclass(frozen=True, slots=True)
-class RunOptions:
-    """The run's resolved CLI options and one secret."""
-
-    issue_mode: str = DEFAULT_ISSUE_MODE
-    implementer: str = DEFAULT_IMPLEMENTER
-    editor: str = DEFAULT_EDITOR
-    integrator: str = DEFAULT_INTEGRATOR
-    protected: frozenset[str] = frozenset(DEFAULT_PROTECTED)
-    linear_api_key: str | None = None
-
-    def loggable(self) -> str:
-        return (
-            f"issue_mode={self.issue_mode} "
-            f"implementer={self.implementer} "
-            f"editor={self.editor} "
-            f"integrator={self.integrator} "
-            f"protected={{{', '.join(sorted(self.protected))}}} "
-            f"linear_api_key={'set' if self.linear_api_key else 'unset'}"
-        )
-
-
-def _options_for(
-    env: Mapping[str, str] = os.environ,
-    *,
-    issue_mode: str = DEFAULT_ISSUE_MODE,
-    implementer: str = DEFAULT_IMPLEMENTER,
-    editor: str = DEFAULT_EDITOR,
-    integrator: str = DEFAULT_INTEGRATOR,
-    protected: Sequence[str] = DEFAULT_PROTECTED,
-) -> RunOptions:
-    return RunOptions(
-        issue_mode=issue_mode,
-        implementer=implementer,
-        editor=editor,
-        integrator=integrator,
-        protected=frozenset(protected),
-        linear_api_key=env.get(LINEAR_API_KEY),
-    )
-
-
-def _add_option_flags(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--issue-mode",
-        choices=(FILESYSTEM, LINEAR),
-        default=DEFAULT_ISSUE_MODE,
-        help=f"how to interpret issue_source. Defaults to {DEFAULT_ISSUE_MODE}.",
-    )
-    parser.add_argument(
-        "--implementer",
-        choices=IMPLEMENTERS,
-        default=DEFAULT_IMPLEMENTER,
-        help=f"the CLI that writes code. Defaults to {DEFAULT_IMPLEMENTER}.",
-    )
-    parser.add_argument(
-        "--editor",
-        choices=EDITORS,
-        default=DEFAULT_EDITOR,
-        help=(
-            f"the CLI that diagnoses failures. Defaults to {DEFAULT_EDITOR}. "
-            f"{NONE} sends every failure it would have adjudicated to the human instead."
-        ),
-    )
-    parser.add_argument(
-        "--integrator",
-        choices=INTEGRATORS,
-        default=DEFAULT_INTEGRATOR,
-        help=(
-            f"the CLI that reconciles merge conflicts. Defaults to {DEFAULT_INTEGRATOR}. "
-            f"{NONE} sends every merge conflict to the human instead."
-        ),
-    )
-    parser.add_argument(
-        "--protected",
-        action="append",
-        default=None,
-        metavar="BRANCH",
-        help="branch a run refuses to start from. Repeat for more. Defaults to main and master.",
-    )
 
 
 def validate_actors(options: RunOptions) -> None:
@@ -596,16 +503,6 @@ async def run(
     except Exception:  # noqa: BLE001 — stdout still carries the notification
         log.warning("could not publish the final notification to the issue store", exc_info=True)
     return report
-
-
-def _load_env(repo: Path) -> None:
-    """Load `<repo>/.env` into the environment — the one secret Ralph reads (`LINEAR_API_KEY`) and
-    the target repo's own variables alike, for the subprocesses that inherit it. A real export still
-    wins: the file is the default, the ambient environment the override. Nothing here is policed by
-    name; the one secret is absent-checked where it is used, only on an `issue_mode: linear` run."""
-    env_file = repo / ENV_FILE
-    if env_file.exists():
-        load_dotenv(env_file)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
