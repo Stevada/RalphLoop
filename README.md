@@ -110,6 +110,14 @@ leaves everything else points down to.
   ```bash
   npx skills@latest add mattpocock/skills
   ```
+- **Optional, for the Planner:** this repo's own `skills/` — `/ralph-init` writes a target repo's
+  `.ralph.toml`, and `/ralph-plan-issues` cuts a PRD into a sub-issue graph. Install them at user
+  level:
+  ```bash
+  ln -s "$PWD/skills/ralph-init" "$PWD/skills/ralph-plan-issues" ~/.claude/skills/
+  ```
+  They are plain Markdown that names only files in the *target* repo, so they work in any repo on
+  the machine — a target repo never needs a Ralph checkout.
 
 ## Issue format
 
@@ -253,8 +261,10 @@ Neither is a secret, so neither lives here.
    `.scratch/` for issues, `.ralph.toml` for commands, a repo-level agent context file
    (`CLAUDE.md` for Copilot, `AGENTS.md` or `CLAUDE.md` for Codex), and `.env` at the repo root.
 2. **Single-repo scope** — intra-repo dependencies only. Cross-repo sequencing is the user's.
-3. **Skills as references** — the prompt invokes `/tdd` by name. Skills are installed at user
-   level, never bundled here.
+3. **Skills as references** — the prompt invokes `/tdd` by name. Skills a *session* uses are
+   installed at user level, never bundled here. The `skills/` directory is not a counter-example:
+   those are Ralph's own Planner docs, read by a human before a run, and no
+   prompt invokes them.
 4. **Worktree isolation** — every session runs in its own worktree. Parallel sessions land one at
    a time, through the merge gate.
 5. **The merge gate runs the harness's only suite gate.** A model's exit code is its opinion; the suite is a
