@@ -58,7 +58,10 @@ ralph/
   mergegate.py     \  the merge gate and the scheduler, so not an adapter either
   scheduler.py      } orchestration — depends on ports only, never on a concrete adapter
   cli/             composition root — the only place a concrete adapter is named
-    __init__.py    the wiring, the pre-flight gathering, and the entry point
+    __init__.py      wires the run, runs it, and `main`
+    options.py       the flags, the values they resolve to, and `.env`. actor names are strings here
+    actors.py        name -> adapter, for every role and for the issue store. the wiring proper
+    preflight.py     gathers the facts `rules/preflight.py` judges; `validate` and `--dry-run`
     presentation.py  run-log narration and the final notification: values in, strings out
 
 tests/
