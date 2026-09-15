@@ -36,8 +36,8 @@ from ralph.cli.options import (
 )
 from ralph.cli.options import ENV_FILE as ENV_FILE
 from ralph.cli.options import RunOptions as RunOptions
-from ralph.cli.options import _load_env as _load_env
-from ralph.cli.options import _options_for as _options_for
+from ralph.cli.options import load_env as load_env
+from ralph.cli.options import options_for as options_for
 from ralph.cli.presentation import NarratedRunLog, render_readiness
 from ralph.cli.presentation import render as render
 from ralph.cli.presentation import render_refusals as render_refusals
@@ -75,7 +75,7 @@ async def run(
     the tests inject the scripted stand-in and a stub Editor through, and the reason no test in the
     suite calls a model."""
     repo = repo.resolve()
-    options = options or _options_for()
+    options = options or options_for()
     validate_actors(options)
 
     # The same checks `ralph validate` runs, and they are not advisory. A run that starts on `main`
@@ -185,8 +185,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     level = args.log_level.upper()
     logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
-    _load_env(args.repo)
-    options = _options_for(
+    load_env(args.repo)
+    options = options_for(
         issue_mode=args.issue_mode,
         implementer=args.implementer,
         editor=args.editor,

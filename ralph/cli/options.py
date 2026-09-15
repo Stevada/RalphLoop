@@ -64,7 +64,7 @@ class RunOptions:
         )
 
 
-def _options_for(
+def options_for(
     env: Mapping[str, str] = os.environ,
     *,
     issue_mode: str = DEFAULT_ISSUE_MODE,
@@ -123,7 +123,7 @@ def _add_option_flags(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _load_env(repo: Path) -> None:
+def load_env(repo: Path) -> None:
     """Load `<repo>/.env` into the environment — the one secret Ralph reads (`LINEAR_API_KEY`) and
     the target repo's own variables alike, for the subprocesses that inherit it. A real export still
     wins: the file is the default, the ambient environment the override. Nothing here is policed by

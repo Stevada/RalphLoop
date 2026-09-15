@@ -18,7 +18,7 @@ from ralph.cli.actors import (
     issue_store,
     validate_actors,
 )
-from ralph.cli.options import RunOptions, _options_for
+from ralph.cli.options import RunOptions, options_for
 from ralph.cli.presentation import Readiness
 from ralph.harness import Refusal, RepoFacts, build_order, refusals
 from ralph.issues import GraphError, IssueGraph, SubIssueId, SubIssueState
@@ -142,7 +142,7 @@ def readiness(
     integrator: Integrator | None = None,
 ) -> Readiness:
     """An actor passed here is one this run will not construct, so its runtime is not checked."""
-    options = options or _options_for()
+    options = options or options_for()
     validate_actors(options)
     facts, commands = _facts_and_commands(
         repo.resolve(), issue_source, options, command_source, implementer, editor, integrator
@@ -163,7 +163,7 @@ def render_plan(
     The cheapest possible dogfood — it parses every sub-issue, resolves every edge, and proves the
     graph is acyclic, and it costs nothing to run because no session is ever opened.
     """
-    options = options or _options_for()
+    options = options or options_for()
     validate_actors(options)
     graph, states = _read_graph(repo.resolve(), issue_source, options)
     edges = sum(len(sub.blocked_by) for sub in graph.sub_issues.values())
