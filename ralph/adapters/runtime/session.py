@@ -19,6 +19,16 @@ from pathlib import Path
 from ralph.adapters.runtime.bounding import Bound, run_bounded
 from ralph.ports import HARNESS_LINE, Budget
 
+STDOUT_LINE_LIMIT = 32 * 1024 * 1024
+"""How long one line of a session's stdout may be before the reader refuses it.
+
+`asyncio`'s default is 64 KiB, which is a session's output only if the session speaks in sentences.
+A JSONL transport puts a whole tool result on one line, and a single `rg` across a repository
+clears 64 KiB without trying — at which point `readline` raises `ValueError` rather than truncating,
+and an unhandled one takes the whole run down. Raised to a ceiling no real event reaches; the reader
+still buffers a line before yielding it, so this is memory the harness agrees to spend.
+"""
+
 
 class Transcript:
     """The session's stdout, accumulated in full for telemetry."""
@@ -70,7 +80,11 @@ async def run_session(argv: Sequence[str], cwd: Path, budget: Budget) -> Session
     launched = f"{HARNESS_LINE}launched: {shlex.join(argv)}\n"
 
     proc = await asyncio.create_subprocess_exec(
-        *argv, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+        *argv,
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        limit=STDOUT_LINE_LIMIT,
     )
     if proc.stdout is None:  # pragma: no cover — PIPE was asked for above
         raise RuntimeError("the session has no stdout to read")

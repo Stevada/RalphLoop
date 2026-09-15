@@ -12,7 +12,7 @@ from functools import partial
 from pathlib import Path
 
 from ralph.adapters.runtime.prompt import implementer_prompt
-from ralph.adapters.runtime.session import Session
+from ralph.adapters.runtime.session import STDOUT_LINE_LIMIT, Session
 from ralph.adapters.runtime.turn_stream import (
     AutoCompaction,
     Turn,
@@ -315,6 +315,7 @@ class CodexJsonSession(TurnStreamSession):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 start_new_session=True,
+                limit=STDOUT_LINE_LIMIT,
             )
             if self._proc.stdout is None:  # pragma: no cover — PIPE was asked for above
                 raise RuntimeError("the Codex session has no stdout to read")

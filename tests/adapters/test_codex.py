@@ -243,6 +243,35 @@ async def test_the_codex_json_session_streams_text_usage_and_compaction() -> Non
     assert '"type": "context_compacted"' in session.transcript
 
 
+STUB_CODEX_ONE_ENORMOUS_EVENT = """\
+import json, sys
+
+print(json.dumps({"type": "thread.started", "thread_id": "codex-thread-huge"}), flush=True)
+# One tool result, on one line. A single `rg` across a repository is this big.
+print(json.dumps({"type": "agent_message", "message": "y" * 200_000}), flush=True)
+"""
+
+
+async def test_an_event_larger_than_the_default_reader_limit_does_not_kill_the_run() -> None:
+    """The defect that ended a run three sub-issues in, from the Implementer running one grep.
+
+    Codex speaks JSONL, so a tool result is not a stream of lines — it is a line. Read under
+    `asyncio`'s default 64 KiB cap, `readline` raises `ValueError` rather than truncating, and
+    nothing between here and `main` catches it: the session, the bound, the scheduler and the run
+    all end on a session saying something ordinary at length.
+    """
+    session = CodexJsonSession(
+        TurnStreamAsk(prompt="build it", cwd=Path("/tmp")),
+        sandbox=IMPLEMENTER_SANDBOX,
+        build_argv=lambda _ask, _sandbox: (sys.executable, "-c", STUB_CODEX_ONE_ENORMOUS_EVENT),
+    )
+
+    completed = await run_turn_stream(session, GENEROUS)
+
+    assert "y" * 200_000 in completed.output
+    assert "codex-thread-huge" in completed.transcript
+
+
 STUB_CODEX_UNKNOWN_SCHEMA = """\
 import json, sys
 

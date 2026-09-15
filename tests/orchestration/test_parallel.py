@@ -19,6 +19,7 @@ import pytest
 from ralph.cli import run
 from ralph.harness import Outcome, Verdict
 from ralph.issues import SubIssueId
+from ralph.runlog import EventKind, JsonlRunLog
 from tests.builders import telemetry, verdict as editor_verdict
 from tests.fakes import FakeEditor
 from tests.testbed import (
@@ -28,6 +29,7 @@ from tests.testbed import (
     StandInAgent,
     TargetRepo,
     behaviour_spec,
+    holds_until,
     make_options,
     peak_concurrency,
     StandInIntegrator,
@@ -223,14 +225,19 @@ async def test_an_unreconciled_conflict_pages_a_human_and_its_siblings_still_lan
 async def test_a_sub_issue_is_dispatched_the_moment_its_blockers_land(
     repo: TargetRepo, agent: StandInAgent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A diamond. 04 waits for 02 and 03; 01 is slow and blocks nothing.
+    """A diamond. 04 waits for 02 and 03; 01 blocks nothing and holds until 04 has started.
 
     04 must run *while 01 is still going* — its blockers are satisfied, and 01 is nothing to do
     with it. A scheduler that drained a generation before starting the next would make 04 wait for
     a sub-issue it does not depend on.
+
+    The overlap is arranged rather than hoped for: 01 will not exit until it has seen 04's start
+    mark, so there is no duration to calibrate and nothing for a slow merge gate to spoil. A
+    harness with a wave barrier deadlocks 01 against a dependent it never dispatches, and 01's
+    bounded wait turns that into a failure instead of a hang.
     """
     repo.write_graph({"01": [], "02": [], "03": [], "04": ["02", "03"]})
-    spec = behaviour_spec(Behaviour.SUCCEED, {"01": Behaviour.SLOW})
+    spec = behaviour_spec(Behaviour.SUCCEED, {"01": holds_until("04")})
     ledger = with_ledger(monkeypatch, repo)
 
     report = await run(
@@ -242,8 +249,16 @@ async def test_a_sub_issue_is_dispatched_the_moment_its_blockers_land(
     )
 
     assert report.clean
-    assert report.landed[-1] == SubIssueId("01")  # the slow one finished last, blocking nobody
 
     marks = ledger.read_text().split()
     assert "+04" in marks
     assert marks.index("+04") < marks.index("-01"), "04 waited for a sub-issue it does not depend on"
+
+    # The same claim one layer up, on the authoritative record. The ledger proves the two agent
+    # processes overlapped; this proves the scheduler is the reason, by dispatching 04 while 01's
+    # session was still open.
+    log = JsonlRunLog(path=repo.path / ".scratch" / PARENT_ISSUE_NAME / "run.jsonl").events()
+    order = [(e.sub_issue, e.kind) for e in log]
+    assert order.index((SubIssueId("04"), EventKind.SESSION_STARTED)) < order.index(
+        (SubIssueId("01"), EventKind.SESSION_FINISHED)
+    )
