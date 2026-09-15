@@ -78,7 +78,7 @@ def validate_repo(
 def installed_runtimes(monkeypatch: pytest.MonkeyPatch) -> None:
     """`main` builds its actors from argv, so there is no seam to hand them through. The tests that
     go through it are about what the CLI prints, not about what this machine has installed."""
-    monkeypatch.setattr("ralph.cli._installed", lambda runtime: True)
+    monkeypatch.setattr("ralph.cli.actors._installed", lambda runtime: True)
 
 
 CLEAN = RepoFacts(
@@ -273,7 +273,7 @@ def test_an_actor_whose_runtime_is_not_installed_is_refused(
 ) -> None:
     """The refusal that would otherwise arrive as a hung Editor session, hours in, after a sub-issue
     has already failed and a wave of tokens has already been spent."""
-    monkeypatch.setattr("ralph.cli._installed", lambda runtime: runtime.name != "claude_agent_sdk")
+    monkeypatch.setattr("ralph.cli.actors._installed", lambda runtime: runtime.name != "claude_agent_sdk")
 
     (refused,) = validate(
         repo.path, None, make_options(editor="claude"), None, unengaged_implementer(), None
@@ -289,7 +289,7 @@ def test_an_actor_handed_in_is_not_checked_for_a_runtime_it_will_not_use(
 ) -> None:
     """Nothing is constructed for a role that was given an actor, so what the options *name* for
     that role is not a fact about this run — and the machine's install state is beside the point."""
-    monkeypatch.setattr("ralph.cli._installed", lambda runtime: False)
+    monkeypatch.setattr("ralph.cli.actors._installed", lambda runtime: False)
 
     assert validate_repo(repo) == ()
 
@@ -300,7 +300,7 @@ def test_a_role_switched_off_is_not_checked_for_a_runtime_it_will_not_use(
     """`--editor none` with no Claude SDK on the machine is a fine run: nothing will be constructed
     for a role nobody fills. Refusing it would make the off switch unreachable on exactly the
     machine that needs it."""
-    monkeypatch.setattr("ralph.cli._installed", lambda runtime: runtime.name != "claude_agent_sdk")
+    monkeypatch.setattr("ralph.cli.actors._installed", lambda runtime: runtime.name != "claude_agent_sdk")
 
     assert validate(repo.path, options=make_options(editor="none")) == ()
 
