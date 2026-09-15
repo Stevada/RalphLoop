@@ -5,5 +5,5 @@ turn-stream) under two role cores (Implementer and Editor), all bounded on the w
 adapters build on it: Codex and Copilot each fill both roles over one SDK session; Claude Code fills
 the Editor role. Each vendor adapter lives as a package beside `runtime/`.
 
-Nothing here is imported by orchestration. `cli.py` is the only module that names one.
+Nothing here is imported by orchestration. `cli/` is the only package that names one.
 """

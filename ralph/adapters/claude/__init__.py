@@ -1,6 +1,6 @@
 """Claude Code as an Editor package.
 
-`cli.py` names this package; nothing downstream does. Claude Code only fills the Editor role today,
+`cli/` names this package; nothing downstream does. Claude Code only fills the Editor role today,
 but it still has the same package shape as the other vendor adapters: `actors.py` owns the port
 implementation, and `session.py` owns the SDK boundary.
 """

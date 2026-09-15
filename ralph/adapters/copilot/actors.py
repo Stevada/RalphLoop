@@ -3,7 +3,7 @@ conflict, and an Editor that adjudicates — all on the SDK session in `session.
 
 Keeping two CLIs on each side is a **portfolio decision, not a hedge**: the Implementer and the
 Editor should not be the same model on the same failure, because an Editor adjudicating an impasse
-declared by *itself* is the least independent sensor the system could have. `cli.py` picks; this
+declared by *itself* is the least independent sensor the system could have. `cli/` picks; this
 module is picked.
 """
 

@@ -119,7 +119,7 @@ class RunLog(Protocol):
 
     A Protocol rather than a concrete JSONL writer because the merge gate and the scheduler both
     take one, and orchestration may not name a concrete adapter — that privilege belongs to
-    `cli.py` alone.
+    `cli/` alone.
     """
 
     async def write(self, e: Event) -> None: ...

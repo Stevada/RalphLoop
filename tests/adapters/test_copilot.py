@@ -465,7 +465,7 @@ async def _adjudicate(
     verdict: Verdict | None,
     seen: list[TurnStreamAsk] | None = None,
 ) -> tuple[SessionTelemetry, EditorVerdict | None]:
-    """The whole Editor, against a stub session through the same seam `cli.py` wires."""
+    """The whole Editor, against a stub session through the same seam `cli/` wires."""
     said = ""
     if verdict is not None:
         answer: dict[str, str] = {
