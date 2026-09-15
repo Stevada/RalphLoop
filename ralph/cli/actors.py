@@ -1,7 +1,8 @@
 """Which concrete adapter backs each role, and whether its runtime is on the machine.
 
 This is the composition root proper: the only place that knows an Implementer named `codex` means
-the Codex adapter. `options.py` resolves the name, this resolves the name into a thing.
+the Codex adapter, or that an issue mode named `linear` means the Linear store. `options.py`
+resolves the name, this resolves the name into a thing.
 """
 
 from __future__ import annotations
@@ -26,11 +27,17 @@ from ralph.cli.options import (
     CODEX,
     COPILOT,
     EDITORS,
+    FILESYSTEM,
     IMPLEMENTERS,
     INTEGRATORS,
+    LINEAR,
+    LINEAR_API_KEY,
     NONE,
     RunOptions,
 )
+from ralph.issues.filesystem import FilesystemIssueStore
+from ralph.issues.linear import LinearGraphQLClient, LinearIssueStore, LinearStateMap
+from ralph.issues.store import IssueStore
 from ralph.ports import CommandSource, Editor, Implementer, Integrator
 
 @dataclass(frozen=True, slots=True)
@@ -160,3 +167,55 @@ def implementer_of(options: RunOptions, git_metadata: Path) -> Implementer:
 
 def command_source_for() -> CommandSource:
     return DescriptorCommandSource()
+
+
+class IssueSourceError(ValueError):
+    """The CLI was not given a coherent issue source."""
+
+
+def find_issues_dir(repo: Path, given: Path | None) -> Path:
+    """`.scratch/<phase>/issues/` is discovered when no path is given — and an ambiguous discovery
+    is an error, not a guess. Two phases in flight means the human must say which."""
+    if given is not None:
+        return given
+    candidates = sorted((repo / ".scratch").glob("*/issues"))
+    if not candidates:
+        raise FileNotFoundError(f"no .scratch/<phase>/issues under {repo}")
+    if len(candidates) > 1:
+        names = ", ".join(str(c.relative_to(repo)) for c in candidates)
+        raise FileNotFoundError(f"several issue directories under {repo}: {names}. Name one.")
+    return candidates[0]
+
+
+def parent_issue_name(repo: Path, issue_source: str | None, options: RunOptions) -> str | None:
+    """The parent issue's name, when the harness can derive one.
+
+    Only filesystem mode has one: the `.scratch/<name>/issues/` directory Ralph discovered.
+    Linear mode names itself through `issue_source` and has no directory to derive a name from.
+    """
+    if options.issue_mode != FILESYSTEM:
+        return None
+    given = Path(issue_source) if issue_source is not None else None
+    return find_issues_dir(repo, given).parent.name
+
+
+def issue_store(repo: Path, issue_source: str | None, options: RunOptions) -> IssueStore:
+    """The store `options.issue_mode` names. `LinearStateMap()` is unconfigured on purpose: the four
+    Linear state names are Ralph's canonical sub-issue states, hardcoded, not a per-run argument."""
+    if options.issue_mode == FILESYSTEM:
+        return FilesystemIssueStore(
+            issues_dir=find_issues_dir(repo, Path(issue_source) if issue_source is not None else None)
+        )
+    if options.issue_mode == LINEAR:
+        if issue_source is None:
+            raise IssueSourceError(f"issue_mode: {LINEAR} needs an issue_source")
+        if not options.linear_api_key:
+            raise IssueSourceError(f"set {LINEAR_API_KEY} to use issue_mode: {LINEAR}")
+        return LinearIssueStore(
+            parent_identifier=issue_source,
+            client=LinearGraphQLClient(api_key=options.linear_api_key),
+            states=LinearStateMap(),
+        )
+    raise IssueSourceError(
+        f"issue_mode: {options.issue_mode!r} is not {FILESYSTEM} or {LINEAR}."
+    )

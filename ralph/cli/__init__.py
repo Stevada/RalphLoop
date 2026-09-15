@@ -22,7 +22,10 @@ from ralph.adapters.commands import DescriptorCommandError
 from ralph.adapters.git import GitCli, git_metadata, run_git
 from ralph.adapters.suite import SubprocessTestRunner, install_once
 from ralph.cli.actors import (
+    IssueSourceError,
     actor_runtime_error,
+    issue_store,
+    parent_issue_name,
     command_source_for,
     editor_of,
     implementer_of,
@@ -33,9 +36,6 @@ from ralph.cli.actors import validate_actors as validate_actors
 from ralph.cli.options import (
     DEFAULT_LOG_LEVEL,
     DEFAULT_PROTECTED,
-    FILESYSTEM,
-    LINEAR,
-    LINEAR_API_KEY,
     _add_option_flags,
 )
 from ralph.cli.options import ENV_FILE as ENV_FILE
@@ -57,15 +57,8 @@ from ralph.harness import (
     refusals,
 )
 from ralph.issues import GraphError, IssueGraph, SubIssueId, SubIssueState
-from ralph.issues.filesystem import FilesystemIssueStore, IssueParseError
-from ralph.issues.linear import (
-    LinearApiError,
-    LinearGraphQLClient,
-    LinearIssueStore,
-    LinearIssueStoreError,
-    LinearStateMap,
-)
-from ralph.issues.store import IssueStore
+from ralph.issues.filesystem import IssueParseError
+from ralph.issues.linear import LinearApiError, LinearIssueStoreError
 from ralph.mergegate import MergeGate
 from ralph.ports import (
     Budget,
@@ -88,58 +81,6 @@ class Refused(RuntimeError):
     """The pre-flight refused the run. Raised, not printed — `ralph run` does the same checks
     `ralph validate` does, and a check that only fires when a human remembers to ask for it is a
     check the run does not have."""
-
-
-class IssueSourceError(ValueError):
-    """The CLI was not given a coherent issue source."""
-
-
-def find_issues_dir(repo: Path, given: Path | None) -> Path:
-    """`.scratch/<phase>/issues/` is discovered when no path is given — and an ambiguous discovery
-    is an error, not a guess. Two phases in flight means the human must say which."""
-    if given is not None:
-        return given
-    candidates = sorted((repo / ".scratch").glob("*/issues"))
-    if not candidates:
-        raise FileNotFoundError(f"no .scratch/<phase>/issues under {repo}")
-    if len(candidates) > 1:
-        names = ", ".join(str(c.relative_to(repo)) for c in candidates)
-        raise FileNotFoundError(f"several issue directories under {repo}: {names}. Name one.")
-    return candidates[0]
-
-
-def parent_issue_name(repo: Path, issue_source: str | None, options: RunOptions) -> str | None:
-    """The parent issue's name, when the harness can derive one.
-
-    Only filesystem mode has one: the `.scratch/<name>/issues/` directory Ralph discovered.
-    Linear mode names itself through `issue_source` and has no directory to derive a name from.
-    """
-    if options.issue_mode != FILESYSTEM:
-        return None
-    given = Path(issue_source) if issue_source is not None else None
-    return find_issues_dir(repo, given).parent.name
-
-
-def issue_store(repo: Path, issue_source: str | None, options: RunOptions) -> IssueStore:
-    """The store `options.issue_mode` names. `LinearStateMap()` is unconfigured on purpose: the four
-    Linear state names are Ralph's canonical sub-issue states, hardcoded, not a per-run argument."""
-    if options.issue_mode == FILESYSTEM:
-        return FilesystemIssueStore(
-            issues_dir=find_issues_dir(repo, Path(issue_source) if issue_source is not None else None)
-        )
-    if options.issue_mode == LINEAR:
-        if issue_source is None:
-            raise IssueSourceError(f"issue_mode: {LINEAR} needs an issue_source")
-        if not options.linear_api_key:
-            raise IssueSourceError(f"set {LINEAR_API_KEY} to use issue_mode: {LINEAR}")
-        return LinearIssueStore(
-            parent_identifier=issue_source,
-            client=LinearGraphQLClient(api_key=options.linear_api_key),
-            states=LinearStateMap(),
-        )
-    raise IssueSourceError(
-        f"issue_mode: {options.issue_mode!r} is not {FILESYSTEM} or {LINEAR}."
-    )
 
 
 def _pre_commit(repo: Path) -> tuple[str | None, bool]:
